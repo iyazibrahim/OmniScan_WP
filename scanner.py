@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+"""WordPress Vulnerability Scanner - Multi-Tool Automated Security Pipeline.
+
+Usage:
+    python scanner.py                   # Interactive menu
+    python scanner.py --check-tools     # Show installed tools
+    python scanner.py --demo            # Generate demo report
+    python scanner.py --target URL      # Scan a specific URL
+    python scanner.py --target URL --mode active
+    python scanner.py --install          # Install missing tools
+
+CI/Cron Usage:
+    python scanner.py --target URL --ci                    # Headless scan
+    python scanner.py --target URL --ci --email             # Headless + email
+    python scanner.py --target URL --ci --output-dir /tmp   # Custom output dir
+"""
+
+import argparse
+import json
+import os
+import sys
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+
+# Ensure project root is on the path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from lib import ui, config
+from lib.tools import show_tool_status, run_all_tools, get_installed_tools
+from lib.parsers import parse_all_results
+from lib.enrichment import enrich_findings
+from lib.reports import save_reports
+from lib.installer import install_missing_tools, install_tool
+from lib.notifier import send_scan_email, configure_email
+
+
+def _is_ci() -> bool:
+    """Check if running in CI/headless mode."""
+    return ui.is_ci()
+
+
+# ── Demo Mode ───────────────────────────────────────────────────────────────────
+
+def run_demo(ci_mode: bool = False, send_email: bool = False):
+    """Generate a demo report with sample findings."""
+    ui.section("Demo Mode - Generating Sample Report")
+
+    start_time = datetime.now()
+    tools_used = ["nuclei", "wpscan", "nikto", "sslyze"]
+
+    # Sample findings
+    demo_findings = [
+        {
+            "title": "WordPress 5.8.1 - Outdated Core",
+            "severity": "critical",
+            "source_tool": "WPScan",
+            "description": "WordPress core is outdated with known SQL injection vulnerability.",
+            "cve": "CVE-2022-21661",
+            "evidence": "Detected version: 5.8.1, Latest: 6.4.2",
+            "fix": "",
+            "fix_steps": [],
+            "references": ["https://wordpress.org/news/category/security/"],
+        },
+        {
+            "title": "Plugin Contact Form 7 v5.3.2 - Arbitrary File Upload",
+            "severity": "high",
+            "source_tool": "WPScan",
+            "description": "Contact Form 7 allows unrestricted file upload.",
+            "cve": "CVE-2020-35489",
+            "evidence": "Version 5.3.2 detected",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "XML-RPC Endpoint Accessible",
+            "severity": "medium",
+            "source_tool": "Nuclei",
+            "description": "xmlrpc.php is accessible and can be used for brute-force amplification.",
+            "cve": "",
+            "evidence": "https://example.com/xmlrpc.php returns 200",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "Missing X-Frame-Options Header",
+            "severity": "medium",
+            "source_tool": "Nikto",
+            "description": "X-Frame-Options header not set, site vulnerable to clickjacking.",
+            "cve": "",
+            "evidence": "Header missing from HTTP response",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "TLS 1.0 Supported",
+            "severity": "high",
+            "source_tool": "SSLyze",
+            "description": "Server accepts TLS 1.0 connections which is deprecated.",
+            "cve": "",
+            "evidence": "3 TLS 1.0 cipher suites accepted",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "WordPress User Enumeration via REST API",
+            "severity": "low",
+            "source_tool": "Nuclei",
+            "description": "Usernames enumerable via /wp-json/wp/v2/users endpoint.",
+            "cve": "",
+            "evidence": "/wp-json/wp/v2/users returns user list",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "Directory Listing Enabled on /wp-content/uploads/",
+            "severity": "medium",
+            "source_tool": "Nuclei",
+            "description": "Directory listing reveals uploaded files.",
+            "cve": "",
+            "evidence": "https://example.com/wp-content/uploads/ shows index",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+        {
+            "title": "WP Debug Mode Enabled",
+            "severity": "medium",
+            "source_tool": "Nuclei",
+            "description": "WP_DEBUG is enabled exposing error details.",
+            "cve": "",
+            "evidence": "PHP errors visible in page source",
+            "fix": "",
+            "fix_steps": [],
+            "references": [],
+        },
+    ]
+
+    # Enrich with remediation data
+    enriched = enrich_findings(demo_findings)
+
+    # Generate reports
+    paths = save_reports(
+        findings=enriched,
+        target_url="https://demo-company.com",
+        scan_mode="Full (Passive + Active)",
+        start_time=start_time,
+        tools_used=tools_used,
+        output_dir=config.REPORTS_DIR,
+    )
+
+    ui.ok("Demo reports generated:")
+    print(f"  HTML: {paths['html']}")
+    print(f"  MD:   {paths['md']}")
+    print(f"  JSON: {paths['json']}")
+
+    # Send email if requested
+    if send_email:
+        duration = datetime.now() - start_time
+        dur_str = f"{int(duration.total_seconds()) // 60:02d}:{int(duration.total_seconds()) % 60:02d}"
+        send_scan_email(enriched, "https://demo-company.com", "Full (Passive + Active)", dur_str, paths)
+
+    # Only prompt in interactive mode
+    if not ci_mode:
+        print()
+        choice = input("  Open HTML report in browser? [y/N]: ").strip().lower()
+        if choice == "y":
+            webbrowser.open(str(paths["html"]))
+
+
+# ── Scan Mode ───────────────────────────────────────────────────────────────────
+
+def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
+             send_email: bool = False, output_dir: Path | None = None):
+    """Run a full scan on the given URL."""
+    ui.section(f"Starting {mode.upper()} scan on {url}")
+    start_time = datetime.now()
+    ts = start_time.strftime("%Y%m%d_%H%M%S")
+    scan_config = config.get_scan_config()
+    tokens = config.get_tokens()
+
+    # Create scan output directory
+    safe_host = url.replace("https://", "").replace("http://", "").replace("/", "_")
+    base_dir = output_dir if output_dir else config.REPORTS_DIR
+    scan_dir = base_dir / f"{safe_host}_{ts}"
+    scan_dir.mkdir(parents=True, exist_ok=True)
+
+    # Run tools
+    tools_used = run_all_tools(url, scan_dir, scan_config, tokens, mode)
+
+    if not tools_used:
+        ui.err("No tools were available to run. Install at least one tool first.")
+        return
+
+    # Parse results
+    ui.section("Parsing Results")
+    findings = parse_all_results(scan_dir)
+
+    if not findings:
+        ui.warn("No findings detected. The target may be well-secured or tools may need API tokens.")
+    else:
+        ui.ok(f"Total findings: {len(findings)}")
+
+    # Enrich
+    ui.section("Enriching Findings")
+    enriched = enrich_findings(findings)
+
+    # Generate reports
+    ui.section("Generating Reports")
+    mode_label = {"passive": "Passive", "active": "Active", "full": "Full (Passive + Active)"}
+    paths = save_reports(
+        findings=enriched,
+        target_url=url,
+        scan_mode=mode_label.get(mode, mode),
+        start_time=start_time,
+        tools_used=tools_used,
+        output_dir=scan_dir,
+    )
+
+    # Update target's last_scanned
+    targets = config.get_targets()
+    for t in targets:
+        if t["url"] == url:
+            t["last_scanned"] = start_time.strftime("%Y-%m-%d %I:%M %p")
+    config.save_targets(targets)
+
+    ui.section("Scan Complete")
+    ui.ok(f"Reports saved to: {scan_dir}")
+    print(f"  HTML: {paths['html']}")
+    print(f"  MD:   {paths['md']}")
+    print(f"  JSON: {paths['json']}")
+
+    # Send email if requested
+    if send_email:
+        duration = datetime.now() - start_time
+        dur_str = f"{int(duration.total_seconds()) // 60:02d}:{int(duration.total_seconds()) % 60:02d}"
+        send_scan_email(enriched, url, mode_label.get(mode, mode), dur_str, paths)
+
+    # Only prompt in interactive mode
+    if not ci_mode:
+        print()
+        choice = input("  Open HTML report in browser? [y/N]: ").strip().lower()
+        if choice == "y":
+            webbrowser.open(str(paths["html"]))
+
+    # In CI mode, exit with error if critical/high findings found
+    if ci_mode and enriched:
+        crit_high = sum(1 for f in enriched if f.get("severity") in ("critical", "high"))
+        if crit_high > 0:
+            ui.warn(f"CI gate: {crit_high} critical/high finding(s) detected.")
+            sys.exit(1)
+
+
+# ── Previous Reports ────────────────────────────────────────────────────────────
+
+def show_previous_reports():
+    """List previously generated reports."""
+    ui.section("Previous Reports")
+
+    html_files = sorted(config.REPORTS_DIR.rglob("*.html"), reverse=True)
+    if not html_files:
+        ui.warn("No previous reports found.")
+        return
+
+    for i, f in enumerate(html_files[:20], 1):
+        rel = f.relative_to(config.REPORTS_DIR)
+        size_kb = f.stat().st_size / 1024
+        print(f"  [{i}] {rel}  ({size_kb:.0f} KB)")
+
+    print()
+    choice = input("  Enter number to open (or press Enter to go back): ").strip()
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(html_files):
+            webbrowser.open(str(html_files[idx]))
+    except (ValueError, IndexError):
+        pass
+
+
+# ── Target Management ───────────────────────────────────────────────────────────
+
+def manage_targets():
+    """Interactive target management sub-menu."""
+    while True:
+        choice = ui.show_targets_menu()
+
+        if choice == "1":
+            targets = config.get_targets()
+            if not targets:
+                ui.warn("No targets saved.")
+            else:
+                ui.section("Saved Targets")
+                for i, t in enumerate(targets, 1):
+                    scanned = t.get("last_scanned") or "Never"
+                    print(f"  [{i}] {t['label']} - {t['url']} (Last scan: {scanned})")
+
+        elif choice == "2":
+            url = input("  Enter target URL: ").strip()
+            label = input("  Enter label/name: ").strip()
+            if url and label:
+                config.add_target(url, label)
+                ui.ok(f"Target added: {label} ({url})")
+            else:
+                ui.warn("URL and label are required.")
+
+        elif choice == "3":
+            targets = config.get_targets()
+            if not targets:
+                ui.warn("No targets to remove.")
+            else:
+                for i, t in enumerate(targets, 1):
+                    print(f"  [{i}] {t['label']} - {t['url']}")
+                idx_input = input("  Enter number to remove: ").strip()
+                try:
+                    idx = int(idx_input) - 1
+                    removed = config.remove_target(idx)
+                    if removed:
+                        ui.ok("Target removed.")
+                    else:
+                        ui.warn("Invalid selection.")
+                except ValueError:
+                    ui.warn("Invalid input.")
+
+        elif choice.upper() == "B":
+            break
+
+
+# ── Interactive Menu Loop ───────────────────────────────────────────────────────
+
+def interactive_menu():
+    """Main interactive menu loop."""
+    ui.print_banner()
+
+    while True:
+        choice = ui.show_menu()
+
+        if choice == "1":
+            # Scan a target
+            targets = config.get_targets()
+            selected = config.select_target(targets)
+            if selected:
+                mode = ui.select_scan_mode()
+                for target in selected:
+                    run_scan(target["url"], mode)
+
+        elif choice == "2":
+            manage_targets()
+
+        elif choice == "3":
+            config.configure_tokens()
+
+        elif choice == "4":
+            installed = show_tool_status()
+            # Offer to install missing tools
+            missing = sum(1 for v in installed.values() if not v)
+            if missing > 0:
+                print()
+                install_choice = input(f"  {missing} tool(s) missing. Install them? [y/N]: ").strip().lower()
+                if install_choice == "y":
+                    install_missing_tools(installed)
+
+        elif choice == "5":
+            install_missing_tools(get_installed_tools())
+
+        elif choice == "6":
+            show_previous_reports()
+
+        elif choice == "7":
+            run_demo()
+
+        elif choice == "8":
+            configure_email()
+
+        elif choice == "9":
+            config.configure_performance_profile()
+
+        elif choice.upper() == "Q":
+            print(f"\n  Goodbye!\n")
+            break
+
+        else:
+            ui.warn("Invalid option. Try again.")
+
+
+# ── CLI Entry Point ─────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="WordPress Vulnerability Scanner - Multi-Tool Security Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  python scanner.py                          Interactive menu
+  python scanner.py --check-tools            Show installed tools
+  python scanner.py --install                Install missing tools
+  python scanner.py --demo                   Generate demo report
+  python scanner.py --target https://example.com
+  python scanner.py --target https://example.com --mode active
+
+CI/Cron examples:
+  python scanner.py --target https://example.com --ci
+  python scanner.py --target https://example.com --ci --email
+  python scanner.py --demo --ci --email
+""",
+    )
+    parser.add_argument("--check-tools", action="store_true", help="Show installed tool status")
+    parser.add_argument("--install", action="store_true", help="Install missing security tools")
+    parser.add_argument("--demo", action="store_true", help="Generate a demo report with sample data")
+    parser.add_argument("--target", type=str, help="Target URL to scan")
+    parser.add_argument("--mode", choices=["passive", "active", "full"], default="passive",
+                        help="Scan mode (default: passive)")
+    parser.add_argument("--ci", action="store_true",
+                        help="CI/headless mode: skip all prompts, no browser open")
+    parser.add_argument("--email", action="store_true",
+                        help="Send email notification with scan results")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Custom output directory for reports")
+    parser.add_argument("--configure-email", action="store_true",
+                        help="Interactive email configuration")
+
+    args = parser.parse_args()
+
+    # CI mode also set via CI environment variable
+    ci_mode = args.ci or _is_ci()
+
+    if args.configure_email:
+        ui.print_banner()
+        configure_email()
+    elif args.check_tools:
+        ui.print_banner()
+        installed = show_tool_status()
+        if not ci_mode:
+            missing = sum(1 for v in installed.values() if not v)
+            if missing > 0:
+                print()
+                choice = input(f"  {missing} tool(s) missing. Install them? [y/N]: ").strip().lower()
+                if choice == "y":
+                    install_missing_tools(installed)
+    elif args.install:
+        ui.print_banner()
+        installed = get_installed_tools()
+        install_missing_tools(installed)
+    elif args.demo:
+        ui.print_banner()
+        run_demo(ci_mode=ci_mode, send_email=args.email)
+    elif args.target:
+        ui.print_banner()
+        out_dir = Path(args.output_dir) if args.output_dir else None
+        run_scan(args.target, args.mode, ci_mode=ci_mode,
+                 send_email=args.email, output_dir=out_dir)
+    else:
+        interactive_menu()
+
+
+if __name__ == "__main__":
+    main()

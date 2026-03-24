@@ -1,0 +1,369 @@
+{
+  "categories": {
+    "outdated-wp-core": {
+      "title": "Outdated WordPress Core",
+      "severity": "critical",
+      "description": "The WordPress core installation is running an outdated version with known security vulnerabilities.",
+      "impact": "Attackers can exploit known CVEs to gain unauthorized access, execute code, or steal data.",
+      "fix_summary": "Update WordPress core to the latest version immediately.",
+      "fix_steps": [
+        "BACKUP your site (database + files) before updating",
+        "Option A (WP Admin): Go to Dashboard > Updates > Click 'Update to version X.X'",
+        "Option B (WP-CLI): Run 'wp core update' from the server command line",
+        "Option C (Manual): Download latest from wordpress.org, replace wp-admin/ and wp-includes/ directories",
+        "After updating, verify the site loads correctly and check for plugin compatibility"
+      ],
+      "references": [
+        "https://wordpress.org/documentation/article/updating-wordpress/",
+        "https://developer.wordpress.org/advanced-administration/upgrade/upgrading/"
+      ]
+    },
+    "outdated-plugin": {
+      "title": "Outdated WordPress Plugin",
+      "severity": "high",
+      "description": "One or more WordPress plugins are running outdated versions with known vulnerabilities.",
+      "impact": "Vulnerable plugins are the #1 attack vector for WordPress sites. Attackers can exploit known plugin CVEs for remote code execution, SQL injection, or privilege escalation.",
+      "fix_summary": "Update the affected plugin(s) to the latest version.",
+      "fix_steps": [
+        "BACKUP your site before updating",
+        "Option A (WP Admin): Go to Plugins > select outdated plugin > Click 'Update Now'",
+        "Option B (WP-CLI): Run 'wp plugin update <plugin-name>' or 'wp plugin update --all'",
+        "If the plugin is no longer maintained, find an alternative or remove it",
+        "Test site functionality after updating"
+      ],
+      "references": [
+        "https://wordpress.org/documentation/article/manage-plugins/",
+        "https://developer.wordpress.org/plugins/security/"
+      ]
+    },
+    "outdated-theme": {
+      "title": "Outdated WordPress Theme",
+      "severity": "high",
+      "description": "The active WordPress theme or installed themes are running outdated versions.",
+      "impact": "Vulnerable themes can allow attackers to inject malicious code, deface the website, or gain backdoor access.",
+      "fix_summary": "Update the affected theme(s) to the latest version.",
+      "fix_steps": [
+        "BACKUP your site before updating",
+        "Option A (WP Admin): Go to Appearance > Themes > Click 'Update Now' on affected theme",
+        "Option B (WP-CLI): Run 'wp theme update <theme-name>' or 'wp theme update --all'",
+        "Remove any unused/inactive themes to reduce attack surface",
+        "Test site appearance and functionality after updating"
+      ],
+      "references": [
+        "https://developer.wordpress.org/themes/",
+        "https://developer.wordpress.org/advanced-administration/security/hardening/"
+      ]
+    },
+    "xmlrpc-enabled": {
+      "title": "XML-RPC Endpoint Enabled",
+      "severity": "medium",
+      "description": "The XML-RPC interface (xmlrpc.php) is accessible, which can be abused for brute-force attacks and DDoS amplification.",
+      "impact": "Attackers can perform credential brute-force attacks via XML-RPC's system.multicall method (much faster than wp-login) or use pingback for DDoS amplification.",
+      "fix_summary": "Disable XML-RPC if not needed, or restrict access.",
+      "fix_steps": [
+        "Check if you need XML-RPC (used by mobile apps, Jetpack, some plugins)",
+        "Option A (.htaccess): Add a <Files xmlrpc.php> block with 'Order Deny,Allow' and 'Deny from all' directives",
+        "Option B (Plugin): Install and activate the 'Disable XML-RPC' plugin from the WordPress plugin directory",
+        "Option C (Nginx): Add 'location = /xmlrpc.php { deny all; }' to your server block",
+        "Verify by accessing https://yoursite.com/xmlrpc.php - it should return a 403 Forbidden response"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/06-Test_HTTP_Methods"
+      ]
+    },
+    "directory-listing": {
+      "title": "Directory Listing Enabled",
+      "severity": "medium",
+      "description": "Web server directory listing is enabled, exposing file and directory structure to attackers.",
+      "impact": "Attackers can browse directories to discover sensitive files, backup files, configuration files, or hidden admin pages.",
+      "fix_summary": "Disable directory listing on the web server.",
+      "fix_steps": [
+        "Option A (.htaccess): Add 'Options -Indexes' to your .htaccess file",
+        "Option B (Nginx): Ensure 'autoindex off;' is set in your server block",
+        "Option C (Apache conf): Set 'Options -Indexes' in the <Directory> directive",
+        "Verify by accessing a directory URL (e.g., /wp-content/uploads/) - it should return 403 Forbidden"
+      ],
+      "references": [
+        "https://httpd.apache.org/docs/2.4/mod/core.html#options",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/04-Review_Old_Backup_and_Unreferenced_Files_for_Sensitive_Information"
+      ]
+    },
+    "missing-security-headers": {
+      "title": "Missing Security Headers",
+      "severity": "medium",
+      "description": "The web server is not sending one or more recommended security headers.",
+      "impact": "Missing headers like X-Frame-Options, Content-Security-Policy, or Strict-Transport-Security leave the site vulnerable to clickjacking, MIME sniffing, and downgrade attacks.",
+      "fix_summary": "Add the recommended security headers to your web server configuration.",
+      "fix_steps": [
+        "Apache (.htaccess): Add 'Header set' directives for X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Strict-Transport-Security, Content-Security-Policy, Referrer-Policy, and Permissions-Policy",
+        "Nginx (server block): Add corresponding 'add_header' directives with the 'always' flag for each header listed above",
+        "Test your headers at https://securityheaders.com to confirm they are applied correctly",
+        "Adjust Content-Security-Policy to match your site's needs (overly strict policies may break inline scripts or third-party resources)"
+      ],
+      "references": [
+        "https://owasp.org/www-project-secure-headers/",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy",
+        "https://securityheaders.com"
+      ]
+    },
+    "sql-injection": {
+      "title": "SQL Injection Vulnerability",
+      "severity": "critical",
+      "description": "The application is vulnerable to SQL injection, allowing attackers to execute arbitrary SQL queries.",
+      "impact": "Attackers can read, modify, or delete database contents, bypass authentication, or execute commands on the server.",
+      "fix_summary": "Use parameterized queries, validate all user inputs, and deploy a WAF.",
+      "fix_steps": [
+        "IMMEDIATE: Deploy a Web Application Firewall (WAF) like Wordfence or Sucuri to block SQLi attempts",
+        "Identify the vulnerable parameter/form from the scan results",
+        "In custom code: Replace direct SQL queries with WordPress $wpdb->prepare() method to use parameterized queries",
+        "If the vulnerability is in a plugin, update the plugin immediately or contact the developer",
+        "Validate and sanitize all user inputs using WordPress sanitization functions (sanitize_text_field, absint, etc.)",
+        "Apply the principle of least privilege to database user accounts"
+      ],
+      "references": [
+        "https://owasp.org/www-community/attacks/SQL_Injection",
+        "https://developer.wordpress.org/reference/classes/wpdb/prepare/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      ]
+    },
+    "xss": {
+      "title": "Cross-Site Scripting (XSS) Vulnerability",
+      "severity": "high",
+      "description": "The application is vulnerable to cross-site scripting, allowing injection of malicious scripts.",
+      "impact": "Attackers can steal session cookies, redirect users to malicious sites, deface the website, or perform actions as the victim user.",
+      "fix_summary": "Escape all output, validate inputs, and implement Content-Security-Policy headers.",
+      "fix_steps": [
+        "IMMEDIATE: Add Content-Security-Policy header to prevent inline script execution",
+        "Escape all dynamic output using WordPress functions: esc_html() for content, esc_attr() for attributes, esc_url() for URLs, esc_js() for JavaScript, wp_kses() for allowing specific HTML tags",
+        "Validate and sanitize all user inputs on the server side using sanitize_text_field(), wp_kses_post(), etc.",
+        "If the vulnerability is in a plugin or theme, update to the latest version immediately",
+        "Deploy a WAF with XSS protection rules enabled"
+      ],
+      "references": [
+        "https://owasp.org/www-community/attacks/xss/",
+        "https://developer.wordpress.org/apis/security/securing-output/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"
+      ]
+    },
+    "weak-tls": {
+      "title": "Weak TLS/SSL Configuration",
+      "severity": "high",
+      "description": "The server supports outdated or insecure TLS/SSL protocols or cipher suites.",
+      "impact": "Attackers can intercept encrypted traffic via downgrade attacks (POODLE, BEAST) or brute-force weak ciphers.",
+      "fix_summary": "Disable TLS 1.0/1.1 and weak ciphers; enable TLS 1.2+ with strong ciphers only.",
+      "fix_steps": [
+        "Apache (ssl.conf): Set 'SSLProtocol -all +TLSv1.2 +TLSv1.3' and configure SSLCipherSuite with ECDHE-based ciphers, then set 'SSLHonorCipherOrder on'",
+        "Nginx: Set 'ssl_protocols TLSv1.2 TLSv1.3;' and configure ssl_ciphers with ECDHE-based cipher suites, then set 'ssl_prefer_server_ciphers on;'",
+        "Test your configuration at https://www.ssllabs.com/ssltest/ - aim for an A or A+ rating",
+        "Ensure HSTS header is set (see Missing Security Headers fix if applicable)",
+        "Restart the web server after applying changes"
+      ],
+      "references": [
+        "https://ssl-config.mozilla.org/",
+        "https://www.ssllabs.com/ssltest/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
+      ]
+    },
+    "debug-mode": {
+      "title": "WordPress Debug Mode Enabled",
+      "severity": "medium",
+      "description": "WordPress debug mode (WP_DEBUG) is enabled on a production site, potentially exposing error messages and file paths.",
+      "impact": "Debug messages can reveal sensitive information like file paths, database queries, plugin internals, and PHP errors to attackers.",
+      "fix_summary": "Disable debug mode in wp-config.php for production.",
+      "fix_steps": [
+        "Open wp-config.php on your server",
+        "Find and change: define('WP_DEBUG', true) to define('WP_DEBUG', false)",
+        "Also ensure WP_DEBUG_DISPLAY and WP_DEBUG_LOG are both set to false",
+        "Remove any debug.log files from the wp-content/ directory",
+        "If you need debugging, use a staging environment instead of production"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/debug/debug-wordpress/",
+        "https://developer.wordpress.org/advanced-administration/security/hardening/"
+      ]
+    },
+    "file-editor-enabled": {
+      "title": "WordPress File Editor Enabled",
+      "severity": "medium",
+      "description": "The built-in theme/plugin file editor in WordPress admin is enabled.",
+      "impact": "If an attacker gains admin access, they can modify PHP files directly from the dashboard to inject malware or create backdoors.",
+      "fix_summary": "Disable the file editor in wp-config.php.",
+      "fix_steps": [
+        "Open wp-config.php on your server",
+        "Add define('DISALLOW_FILE_EDIT', true); before the line '/* That's all, stop editing! */'",
+        "Save the file and verify: In WP Admin, the 'Editor' option should no longer appear under Appearance or Plugins"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/#disable-file-editing"
+      ]
+    },
+    "default-admin-user": {
+      "title": "Default 'admin' Username Detected",
+      "severity": "low",
+      "description": "The default 'admin' username is in use, making brute-force attacks easier.",
+      "impact": "Attackers commonly target the 'admin' username in brute-force attempts. Using it halves the guessing work.",
+      "fix_summary": "Create a new administrator account with a unique username and delete the 'admin' account.",
+      "fix_steps": [
+        "Log in to WP Admin as 'admin'",
+        "Go to Users > Add New > Create a new user with a unique username and Administrator role",
+        "Log out and log in as the new admin user",
+        "Go to Users > Delete the 'admin' user > Attribute all content to your new user",
+        "Alternatively via WP-CLI: wp user create newadmin email@example.com --role=administrator"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/03-Identity_Management_Testing/04-Testing_for_Account_Enumeration_and_Guessable_User_Account"
+      ]
+    },
+    "weak-passwords": {
+      "title": "Weak Password Detected",
+      "severity": "high",
+      "description": "One or more user accounts have weak or commonly-used passwords.",
+      "impact": "Weak passwords can be cracked via brute-force or dictionary attacks, giving attackers full access to the affected account.",
+      "fix_summary": "Enforce strong passwords and enable two-factor authentication.",
+      "fix_steps": [
+        "Force password reset for all affected accounts immediately",
+        "Install a password policy plugin (e.g., 'Melapress Login Security' or 'Password Policy Manager')",
+        "Set minimum requirements: 12+ characters, uppercase, lowercase, numbers, special characters",
+        "Install and enable Two-Factor Authentication (2FA) using a plugin like 'WP 2FA'",
+        "Limit login attempts with a plugin like 'Limit Login Attempts Reloaded'",
+        "Add CAPTCHA to the login page using a plugin like 'reCaptcha by BestWebSoft'"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"
+      ]
+    },
+    "backup-files-exposed": {
+      "title": "Backup Files Exposed",
+      "severity": "medium",
+      "description": "Backup files (.sql, .zip, .bak, .old, .tar.gz) are accessible from the web.",
+      "impact": "Exposed backup files can contain the entire database (including passwords), source code, and configuration files.",
+      "fix_summary": "Remove or restrict access to backup files.",
+      "fix_steps": [
+        "IMMEDIATE: Remove exposed backup files from web-accessible directories",
+        "Move backups to a directory outside the web root (above public_html/)",
+        "Block access to backup file extensions in .htaccess using a <FilesMatch> directive for .sql, .bak, .old, .zip, .tar, .gz, .log, and .swp extensions",
+        "Use a backup plugin that stores backups off-site (e.g., UpdraftPlus with cloud storage like Google Drive or S3)",
+        "Set up automated backup cleanup policies to remove old local backups"
+      ],
+      "references": [
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/02-Configuration_and_Deployment_Management_Testing/04-Review_Old_Backup_and_Unreferenced_Files_for_Sensitive_Information",
+        "https://developer.wordpress.org/advanced-administration/security/backup/"
+      ]
+    },
+    "csrf": {
+      "title": "Cross-Site Request Forgery (CSRF) Vulnerability",
+      "severity": "medium",
+      "description": "The application does not properly validate CSRF tokens (nonces) in form submissions.",
+      "impact": "Attackers can trick authenticated users into performing unintended actions like changing settings, creating accounts, or deleting content.",
+      "fix_summary": "Implement WordPress nonce verification in all forms and AJAX requests.",
+      "fix_steps": [
+        "Add nonce field to all forms using wp_nonce_field('action_name', 'nonce_name')",
+        "Verify nonce on form submission using check_admin_referer('action_name', 'nonce_name')",
+        "For AJAX requests, use wp_create_nonce('action_name') on the client side and check_ajax_referer('action_name') on the server side",
+        "If the vulnerability is in a plugin, update it or contact the developer with a responsible disclosure report",
+        "Never use $_GET or $_POST values without nonce verification for state-changing operations"
+      ],
+      "references": [
+        "https://developer.wordpress.org/apis/security/nonces/",
+        "https://owasp.org/www-community/attacks/csrf",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+      ]
+    },
+    "information-disclosure": {
+      "title": "Information Disclosure",
+      "severity": "low",
+      "description": "The server is exposing version information, internal paths, or other sensitive details.",
+      "impact": "Disclosed information helps attackers fingerprint the server and find version-specific exploits.",
+      "fix_summary": "Hide version information and remove unnecessary exposure.",
+      "fix_steps": [
+        "Hide WordPress version by adding remove_action('wp_head', 'wp_generator') to your theme's functions.php",
+        "Hide PHP version by setting 'expose_php = Off' in php.ini",
+        "Hide server version - Apache: add 'ServerTokens Prod' and 'ServerSignature Off' to httpd.conf; Nginx: add 'server_tokens off;' to nginx.conf",
+        "Remove readme.html and license.txt from the WordPress root directory",
+        "Block web access to wp-includes/version.php using .htaccess or Nginx rules"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/02-Fingerprint_Web_Server"
+      ]
+    },
+    "user-enumeration": {
+      "title": "User Enumeration Possible",
+      "severity": "low",
+      "description": "WordPress usernames can be discovered via author archives (?author=1) or the REST API (/wp-json/wp/v2/users).",
+      "impact": "Knowing valid usernames makes targeted brute-force and phishing attacks more effective.",
+      "fix_summary": "Restrict user enumeration via REST API and author archives.",
+      "fix_steps": [
+        "Block author enumeration in .htaccess by adding a RewriteCond for 'author=' query strings with a RewriteRule to return 403",
+        "Restrict the REST API user endpoint by adding a filter on 'rest_endpoints' in functions.php to unset '/wp/v2/users' endpoints",
+        "Or install a security plugin that includes user enumeration protection (e.g., Wordfence, All In One WP Security)"
+      ],
+      "references": [
+        "https://developer.wordpress.org/advanced-administration/security/hardening/",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/03-Identity_Management_Testing/04-Testing_for_Account_Enumeration_and_Guessable_User_Account"
+      ]
+    }
+  },
+
+  "severity_order": ["critical", "high", "medium", "low", "info"],
+
+  "keyword_to_category_map": {
+    "wordpress version": "outdated-wp-core",
+    "wp core": "outdated-wp-core",
+    "outdated plugin": "outdated-plugin",
+    "plugin version": "outdated-plugin",
+    "vulnerable plugin": "outdated-plugin",
+    "outdated theme": "outdated-theme",
+    "theme version": "outdated-theme",
+    "vulnerable theme": "outdated-theme",
+    "xmlrpc": "xmlrpc-enabled",
+    "xml-rpc": "xmlrpc-enabled",
+    "directory listing": "directory-listing",
+    "directory index": "directory-listing",
+    "security header": "missing-security-headers",
+    "x-frame-options": "missing-security-headers",
+    "content-security-policy": "missing-security-headers",
+    "strict-transport-security": "missing-security-headers",
+    "hsts": "missing-security-headers",
+    "x-content-type": "missing-security-headers",
+    "sql injection": "sql-injection",
+    "sqli": "sql-injection",
+    "blind sql": "sql-injection",
+    "cross-site scripting": "xss",
+    "xss": "xss",
+    "reflected xss": "xss",
+    "stored xss": "xss",
+    "ssl": "weak-tls",
+    "tls": "weak-tls",
+    "certificate": "weak-tls",
+    "cipher": "weak-tls",
+    "heartbleed": "weak-tls",
+    "debug": "debug-mode",
+    "wp_debug": "debug-mode",
+    "error_log": "debug-mode",
+    "file editor": "file-editor-enabled",
+    "theme editor": "file-editor-enabled",
+    "plugin editor": "file-editor-enabled",
+    "admin user": "default-admin-user",
+    "username admin": "default-admin-user",
+    "weak password": "weak-passwords",
+    "brute force": "weak-passwords",
+    "password strength": "weak-passwords",
+    "backup": "backup-files-exposed",
+    ".bak": "backup-files-exposed",
+    ".sql": "backup-files-exposed",
+    ".old": "backup-files-exposed",
+    "csrf": "csrf",
+    "cross-site request": "csrf",
+    "nonce": "csrf",
+    "version disclosure": "information-disclosure",
+    "server version": "information-disclosure",
+    "php version": "information-disclosure",
+    "user enumeration": "user-enumeration",
+    "author enumeration": "user-enumeration",
+    "wp-json/wp/v2/users": "user-enumeration"
+  }
+}

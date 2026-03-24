@@ -1,0 +1,14 @@
+wordpress
+wp-plugin
+wp-theme
+cve
+xss
+sqli
+lfi
+rfi
+ssrf
+exposure
+misconfig
+tech
+default-login
+unauth

@@ -1,0 +1,22 @@
+{
+  "default_scan_mode": "passive",
+  "nuclei_severity": "low,medium,high,critical",
+  "nuclei_tags": "wordpress,wp-plugin,wp-theme,cve,xss,sqli,lfi,rfi,ssrf,exposure,misconfig",
+  "nuclei_rate_limit": 20,
+  "wpscan_enumerate": "vp,vt,u",
+  "wpscan_max_threads": 1,
+  "zap_scan_policy": "Default Policy",
+  "zap_ajax_spider": false,
+  "sqlmap_level": 1,
+  "sqlmap_risk": 1,
+  "nikto_tuning": "1234567890abc",
+  "nikto_pause_seconds": 1,
+  "sslyze_scan_commands": "certificate_info,ssl_2_0_cipher_suites,ssl_3_0_cipher_suites,tls_1_0_cipher_suites,tls_1_1_cipher_suites,tls_1_2_cipher_suites,tls_1_3_cipher_suites,heartbleed",
+  "whatweb_aggression": 1,
+  "whatweb_max_threads": 5,
+  "httpx_probes": "status-code,title,tech-detect,content-length,web-server",
+  "httpx_rate_limit": 10,
+  "output_formats": ["html", "markdown", "json"],
+  "parallel_scans": false,
+  "timeout_per_tool_seconds": 600
+}

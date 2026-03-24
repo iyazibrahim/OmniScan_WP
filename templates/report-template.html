@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WordPress Vulnerability Scan Report &mdash; {{TARGET_URL}}</title>
+    <style>
+        :root {
+            /* Pulau Pinang Color Scheme */
+            --primary: #3472CA;
+            --primary-light: #4A8BE0;
+            --primary-dark: #2A5BA3;
+            --primary-bg: rgba(52,114,202,0.08);
+            --bg: #FFFFFF;
+            --surface: #F4F7FB;
+            --surface-alt: #E8EDF5;
+            --border: #C8D6E5;
+            --border-light: #DDE6F0;
+            --text: #1A1A1A;
+            --text-muted: #5A6A7E;
+            --critical: #D32F2F;
+            --critical-bg: rgba(211,47,47,0.08);
+            --high: #E65100;
+            --high-bg: rgba(230,81,0,0.08);
+            --medium: #F9A825;
+            --medium-bg: rgba(249,168,37,0.10);
+            --low: #1565C0;
+            --low-bg: rgba(21,101,192,0.08);
+            --info: #78909C;
+            --info-bg: rgba(120,144,156,0.08);
+            --success: #2E7D32;
+            --accent: #3472CA;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: #FFFFFF; }
+        h2 { font-size: 1.4rem; margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; color: var(--primary-dark); }
+        h3 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; color: var(--primary-dark); }
+        .header {
+            background: linear-gradient(135deg, #3472CA, #2A5BA3);
+            border: none;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(52,114,202,0.25);
+        }
+        .header .subtitle { color: rgba(255,255,255,0.8); font-size: 0.95rem; }
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        .meta-item { background: rgba(255,255,255,0.15); border-radius: 8px; padding: 1rem; }
+        .meta-item .label { font-size: 0.75rem; text-transform: uppercase; color: rgba(255,255,255,0.7); letter-spacing: 0.05em; }
+        .meta-item .value { font-size: 1.1rem; font-weight: 600; margin-top: 0.25rem; color: #FFFFFF; }
+
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        .summary-card {
+            border-radius: 10px;
+            padding: 1.25rem;
+            text-align: center;
+            border: 1px solid var(--border-light);
+            background: var(--bg);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        .summary-card .count { font-size: 2.5rem; font-weight: 700; }
+        .summary-card .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.25rem; color: var(--text-muted); }
+        .card-critical { border-color: var(--critical); border-left: 4px solid var(--critical); }
+        .card-critical .count { color: var(--critical); }
+        .card-high { border-color: var(--high); border-left: 4px solid var(--high); }
+        .card-high .count { color: var(--high); }
+        .card-medium { border-color: var(--medium); border-left: 4px solid var(--medium); }
+        .card-medium .count { color: #D48E00; }
+        .card-low { border-color: var(--low); border-left: 4px solid var(--low); }
+        .card-low .count { color: var(--low); }
+        .card-info { border-color: var(--info); border-left: 4px solid var(--info); }
+        .card-info .count { color: var(--info); }
+        .card-total { border-color: var(--primary); border-left: 4px solid var(--primary); background: var(--primary-bg); }
+        .card-total .count { color: var(--primary); }
+
+        /* Tools used */
+        .tools-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+        .tool-badge {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.3rem 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .tool-badge.active { border-color: var(--primary); color: var(--primary); background: var(--primary-bg); font-weight: 600; }
+        .tool-badge.inactive { color: #B0BEC5; opacity: 0.6; }
+
+        /* Findings Table */
+        .findings-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        .findings-table th {
+            background: var(--primary);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            color: #FFFFFF;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            cursor: pointer;
+        }
+        .findings-table th:hover { background: var(--primary-light); }
+        .findings-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-light);
+            font-size: 0.9rem;
+            color: var(--text);
+        }
+        .findings-table tr:hover { background: var(--primary-bg); }
+        .severity-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .sev-critical { background: var(--critical-bg); color: var(--critical); }
+        .sev-high { background: var(--high-bg); color: var(--high); }
+        .sev-medium { background: var(--medium-bg); color: #D48E00; }
+        .sev-low { background: var(--low-bg); color: var(--low); }
+        .sev-info { background: var(--info-bg); color: var(--info); }
+
+        /* Finding Details */
+        .finding {
+            background: var(--surface);
+            border: 1px solid var(--border-light);
+            border-left: 4px solid var(--primary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+        .finding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+        .finding-title { font-size: 1.1rem; font-weight: 600; color: var(--text); }
+        .finding-meta { color: var(--text-muted); font-size: 0.85rem; margin: 0.5rem 0; }
+        .finding-section { margin: 1rem 0; }
+        .finding-section-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            color: var(--primary);
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+        .evidence-box {
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1rem;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            color: var(--text);
+        }
+        .fix-steps {
+            list-style: none;
+            counter-reset: fix-step;
+        }
+        .fix-steps li {
+            counter-increment: fix-step;
+            padding: 0.5rem 0 0.5rem 2rem;
+            position: relative;
+            color: var(--text);
+        }
+        .fix-steps li::before {
+            content: counter(fix-step);
+            position: absolute;
+            left: 0;
+            width: 1.5rem;
+            height: 1.5rem;
+            background: var(--primary);
+            color: #FFFFFF;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 1.5rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+        .code-inline {
+            background: var(--surface-alt);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 0.85em;
+        }
+
+        /* Checklist */
+        .checklist { list-style: none; }
+        .checklist li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--text);
+        }
+        .checklist .checkbox {
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 2px solid var(--primary);
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .priority-indicator {
+            font-size: 0.75rem;
+            padding: 0.1rem 0.5rem;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+
+        /* Reference links */
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; color: var(--primary-light); }
+        .ref-list { list-style: none; }
+        .ref-list li { padding: 0.25rem 0; }
+        .ref-list li::before { content: '\2192  '; color: var(--primary); }
+
+        /* Filter bar */
+        .filter-bar {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin: 1rem 0;
+        }
+        .filter-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.4rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .filter-btn:hover, .filter-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #FFFFFF;
+        }
+
+        /* Print styles */
+        @media print {
+            body { background: white; color: #1a1a1a; }
+            .filter-bar { display: none; }
+            .finding { break-inside: avoid; }
+            .header { background: var(--primary) !important; }
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 2px solid var(--primary);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header">
+        <h1>&#128274; WordPress Vulnerability Scan Report</h1>
+        <p class="subtitle">Automated security assessment generated by WP Vulnerability Scanner</p>
+        <div class="meta-grid">
+            <div class="meta-item">
+                <div class="label">Target URL</div>
+                <div class="value">{{TARGET_URL}}</div>
+            </div>
+            <div class="meta-item">
+                <div class="label">Scan Date</div>
+                <div class="value">{{SCAN_DATE}}</div>
+            </div>
+            <div class="meta-item">
+                <div class="label">Scan Mode</div>
+                <div class="value">{{SCAN_MODE}}</div>
+            </div>
+            <div class="meta-item">
+                <div class="label">Duration</div>
+                <div class="value">{{SCAN_DURATION}}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- EXECUTIVE SUMMARY -->
+    <h2>&#128202; Executive Summary</h2>
+    <div class="summary-grid">
+        <div class="summary-card card-total">
+            <div class="count">{{TOTAL_COUNT}}</div>
+            <div class="label">Total Findings</div>
+        </div>
+        <div class="summary-card card-critical">
+            <div class="count">{{CRITICAL_COUNT}}</div>
+            <div class="label">Critical</div>
+        </div>
+        <div class="summary-card card-high">
+            <div class="count">{{HIGH_COUNT}}</div>
+            <div class="label">High</div>
+        </div>
+        <div class="summary-card card-medium">
+            <div class="count">{{MEDIUM_COUNT}}</div>
+            <div class="label">Medium</div>
+        </div>
+        <div class="summary-card card-low">
+            <div class="count">{{LOW_COUNT}}</div>
+            <div class="label">Low</div>
+        </div>
+        <div class="summary-card card-info">
+            <div class="count">{{INFO_COUNT}}</div>
+            <div class="label">Info</div>
+        </div>
+    </div>
+
+    <!-- TOOLS USED -->
+    <h3>Tools Used</h3>
+    <div class="tools-list">
+        {{TOOL_BADGES}}
+    </div>
+
+    <!-- FINDINGS OVERVIEW TABLE -->
+    <h2>&#128203; Findings Overview</h2>
+    <div class="filter-bar">
+        <button class="filter-btn active" onclick="filterFindings('all')">All</button>
+        <button class="filter-btn" onclick="filterFindings('critical')">Critical</button>
+        <button class="filter-btn" onclick="filterFindings('high')">High</button>
+        <button class="filter-btn" onclick="filterFindings('medium')">Medium</button>
+        <button class="filter-btn" onclick="filterFindings('low')">Low</button>
+        <button class="filter-btn" onclick="filterFindings('info')">Info</button>
+    </div>
+    <table class="findings-table" id="findingsTable">
+        <thead>
+            <tr>
+                <th onclick="sortTable(0)">#</th>
+                <th onclick="sortTable(1)">Severity</th>
+                <th onclick="sortTable(2)">Finding</th>
+                <th onclick="sortTable(3)">CVE</th>
+                <th onclick="sortTable(4)">Tool</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{FINDINGS_TABLE_ROWS}}
+        </tbody>
+    </table>
+
+    <!-- DETAILED FINDINGS -->
+    <h2>&#128269; Detailed Findings</h2>
+    {{DETAILED_FINDINGS}}
+
+    <!-- REMEDIATION CHECKLIST -->
+    <h2>&#9989; Remediation Checklist</h2>
+    <p style="color: var(--text-muted); margin-bottom: 1rem;">Prioritized list of fixes &mdash; address critical and high items first.</p>
+    <ul class="checklist">
+        {{REMEDIATION_CHECKLIST}}
+    </ul>
+
+    <!-- FOOTER -->
+    <div class="footer">
+        <p>Generated by <strong>WP Vulnerability Scanner</strong> on {{SCAN_DATE}}</p>
+        <p>This report is for authorized internal use only.</p>
+    </div>
+</div>
+
+<script>
+function filterFindings(severity) {
+    const rows = document.querySelectorAll('#findingsTable tbody tr');
+    const findings = document.querySelectorAll('.finding');
+    const btns = document.querySelectorAll('.filter-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    rows.forEach(row => {
+        if (severity === 'all' || row.dataset.severity === severity) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+    findings.forEach(f => {
+        if (severity === 'all' || f.dataset.severity === severity) {
+            f.style.display = '';
+        } else {
+            f.style.display = 'none';
+        }
+    });
+}
+function sortTable(col) {
+    const table = document.getElementById('findingsTable');
+    const tbody = table.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const sevOrder = {critical:0, high:1, medium:2, low:3, info:4};
+    rows.sort((a, b) => {
+        let aVal = a.cells[col].textContent.trim().toLowerCase();
+        let bVal = b.cells[col].textContent.trim().toLowerCase();
+        if (col === 1) { return (sevOrder[aVal]||5) - (sevOrder[bVal]||5); }
+        if (col === 0) { return parseInt(aVal) - parseInt(bVal); }
+        return aVal.localeCompare(bVal);
+    });
+    rows.forEach(r => tbody.appendChild(r));
+}
+</script>
+</body>
+</html>

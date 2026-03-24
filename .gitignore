@@ -1,0 +1,22 @@
+# API tokens (sensitive)
+config/tokens.json
+config/email-config.json
+
+# Generated reports
+reports/
+
+# Scan logs
+logs/
+
+# Tool caches
+.nuclei/
+.wpscan/
+.zap/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS files
+Thumbs.db
+desktop.ini
