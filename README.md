@@ -23,55 +23,56 @@ Security testing a WordPress site often requires juggling multiple separate, com
 - **Python 3.10+**
 
 ### 1. Setup Environment
-Clone the repository and install the initial Python requirements:
+Clone the repository and make the auto-launcher script executable:
 ```bash
 git clone <repository_url> wp-tester
 cd wp-tester
-pip install -r requirements.txt
+chmod +x wp-tester.sh
 ```
 
 ### 2. Auto-Install Dependencies & Tools
-You can install the required system dependencies and security tools using the built-in python installer. It natively supports Ubuntu Server (`apt-get`) and Windows:
+You can install the required system dependencies and security tools using the built-in installer. We provide a smart launcher script (`wp-tester.sh`) that automatically creates a secure Python virtual environment (preventing `externally-managed-environment` errors on Linux) and installs its own requirements:
 
 ```bash
-python scanner.py --install
+./wp-tester.sh --install
 ```
+*Note: On Windows, use standard Python commands instead: `python -m venv venv`, `venv\Scripts\activate`, `pip install -r requirements.txt`, `python scanner.py --install`.*
 *Note: Only **Nuclei** is strictly required to run a scan, but installing more tools provides significantly broader testing coverage.*
 
 ## How to Use
 
 ### Using the Web Dashboard (Recommended)
-You can start the Flask web application to access the interactive dashboard interface. 
+You can start the Flask web application to access the interactive dashboard interface natively through the launcher:
 ```bash
-python app.py
+./wp-tester.sh app
 ```
 By default, the server binds to `0.0.0.0:5000`. Navigate to `http://localhost:5000` (or your Ubuntu Server's IP address) in your browser to manage targets, configure API keys, and launch scans graphically.
 
 ### Using the Command Line Interface (CLI)
-You can also run scans headless or via the interactive terminal menu:
+You can also run scans headless or via the interactive terminal menu using the launcher:
 
 ```bash
 # Start the interactive CLI menu
-python scanner.py
+./wp-tester.sh
 
 # Run a headless passive scan on a specific URL
-python scanner.py --target https://example.com --ci
+./wp-tester.sh --target https://example.com --ci
 
 # Run an active (deep) scan
-python scanner.py --target https://example.com --mode active --ci
+./wp-tester.sh --target https://example.com --mode active --ci
 
 # Run a headless scan with email notifications
-python scanner.py --target https://example.com --mode full --ci --email
+./wp-tester.sh --target https://example.com --mode full --ci --email
 
 # Generate a demo report (no scanning needed)
-python scanner.py --demo
+./wp-tester.sh --demo
 ```
 
 ### Scheduling Scans (Linux Cron)
-You can automate weekly headless scans using standard cron jobs:
+You can automate weekly headless scans using standard cron jobs combined with the launcher script:
 ```bash
 # Add to crontab (runs every Monday at 6 AM)
-0 6 * * 1 cd /path/to/wp-tester && /usr/bin/python3 scanner.py --target https://example.com --ci --email
+0 6 * * 1 cd /path/to/wp-tester && ./wp-tester.sh --target https://example.com --ci --email
 ```
 
 ## Architecture & Process Flow
