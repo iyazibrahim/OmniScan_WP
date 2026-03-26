@@ -41,10 +41,12 @@ def _pip_install(package: str) -> bool:
     return _run([sys.executable, "-m", "pip", "install", package])
 
 
-def _apt_install(package: str) -> bool:
-    """Install a package via apt (Linux only)."""
-    ui.status(f"Installing {package} via apt...")
-    return _run(["sudo", "apt-get", "install", "-y", package])
+def _apt_install(packages: list[str] | str) -> bool:
+    """Install packages via apt (Linux only)."""
+    if isinstance(packages, str):
+        packages = [packages]
+    ui.status(f"Installing {', '.join(packages)} via apt...")
+    return _run(["sudo", "apt-get", "install", "-y"] + packages)
 
 
 def _go_available() -> bool:
@@ -405,6 +407,21 @@ def install_missing_tools(installed: dict[str, bool]) -> int:
 
     if choice.upper() == "B":
         return 0
+
+    ui.section("Checking and Installing System Dependencies")
+    if _is_linux():
+        ui.info("Linux detected. Installing build tools, Ruby, Git, Go, Python pip, Java...")
+        if _run(["which", "apt-get"], check=False):
+            _run(["sudo", "apt-get", "update"])
+            deps = ["git", "ruby", "ruby-dev", "build-essential", "perl", "golang-go", "python3-pip", "default-jre"]
+            _apt_install(deps)
+            ui.ok("System dependencies checked/installed.")
+        else:
+            ui.warn("apt-get not found. Please manually install: git, ruby, go, perl, python3-pip, java")
+    elif _is_windows():
+        ui.info("Windows detected. Some tools require Git, Go, Ruby, or Perl.")
+        ui.info("Please ensure they are installed, or install them via winget:")
+        ui.info("  winget install Git.Git GoLang.Go RubyInstallerTeam.RubyWithDevKit")
 
     count = 0
     if choice.upper() == "A":
