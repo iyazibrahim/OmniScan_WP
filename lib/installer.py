@@ -359,18 +359,115 @@ def install_cmsmap() -> bool:
     return False
 
 
+def _git_clone_tool(name: str, repo: str, pip_reqs: bool = False) -> bool:
+    if _git_available():
+        install_dir = Path.home() / "tools" / name.lower()
+        if not install_dir.exists():
+            ui.status(f"Cloning {name} from GitHub...")
+            ok = _run(["git", "clone", repo, str(install_dir)])
+            if ok:
+                if pip_reqs:
+                    req_file = install_dir / "requirements.txt"
+                    if req_file.exists():
+                        ui.status(f"Installing {name} pip requirements...")
+                        _run([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
+                ui.ok(f"{name} cloned to {install_dir}")
+                ui.info(f"Please ensure {install_dir} or its executable script is in your PATH.")
+                return True
+        else:
+            ui.ok(f"{name} already exists at {install_dir}")
+            return True
+    ui.warn(f"{name} requires Git. Install from https://git-scm.com/")
+    return False
+
+def install_ffuf() -> bool:
+    ui.section("Installing ffuf")
+    if _go_available():
+        ok = _run(["go", "install", "-v", "github.com/ffuf/ffuf/v2@latest"])
+        if ok:
+            ui.ok("ffuf installed via go install.")
+            return True
+    ui.warn("Go is required. Install from https://go.dev/dl/")
+    return False
+
+def install_dalfox() -> bool:
+    ui.section("Installing Dalfox")
+    if _go_available():
+        ok = _run(["go", "install", "-v", "github.com/hahwul/dalfox/v2@latest"])
+        if ok:
+            ui.ok("Dalfox installed via go install.")
+            return True
+    ui.warn("Go is required.")
+    return False
+
+def install_subfinder() -> bool:
+    ui.section("Installing Subfinder")
+    if _go_available():
+        ok = _run(["go", "install", "-v", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"])
+        if ok:
+            ui.ok("Subfinder installed via go install.")
+            return True
+    ui.warn("Go is required.")
+    return False
+
+def install_gitleaks() -> bool:
+    ui.section("Installing Gitleaks")
+    if _go_available():
+        ok = _run(["go", "install", "-v", "github.com/zricethezav/gitleaks/v8@latest"])
+        if ok:
+            ui.ok("Gitleaks installed via go install.")
+            return True
+    ui.warn("Go is required.")
+    return False
+
+def install_wapiti() -> bool:
+    ui.section("Installing Wapiti")
+    if _pip_install("wapiti3"):
+        ui.ok("Wapiti installed via pip.")
+        return True
+    return False
+
+def install_droopescan() -> bool:
+    ui.section("Installing Droopescan")
+    if _pip_install("droopescan"):
+        ui.ok("Droopescan installed via pip.")
+        return True
+    return False
+
+def install_corsy() -> bool:
+    ui.section("Installing Corsy")
+    return _git_clone_tool("Corsy", "https://github.com/s0md3v/Corsy.git", pip_reqs=True)
+
+def install_commix() -> bool:
+    ui.section("Installing Commix")
+    return _git_clone_tool("Commix", "https://github.com/commixproject/commix.git", pip_reqs=False)
+
+def install_joomscan() -> bool:
+    ui.section("Installing JoomScan")
+    return _git_clone_tool("JoomScan", "https://github.com/OWASP/joomscan.git", pip_reqs=False)
+
+
 # ── Install registry ───────────────────────────────────────────────────────────
 
 INSTALLERS = {
-    "nuclei":  {"fn": install_nuclei,  "label": "Nuclei",    "method_win": "go install / binary download",  "method_linux": "go install / binary download"},
-    "wpscan":  {"fn": install_wpscan,  "label": "WPScan",    "method_win": "gem install",                    "method_linux": "apt / gem install"},
-    "nikto":   {"fn": install_nikto,   "label": "Nikto",     "method_win": "git clone + perl",               "method_linux": "apt install"},
-    "zap-cli": {"fn": install_zap,     "label": "OWASP ZAP", "method_win": "manual download + pip",          "method_linux": "apt install"},
-    "sqlmap":  {"fn": install_sqlmap,  "label": "SQLMap",    "method_win": "pip install",                    "method_linux": "apt / pip install"},
-    "sslyze":  {"fn": install_sslyze,  "label": "SSLyze",    "method_win": "pip install",                    "method_linux": "pip install"},
-    "whatweb": {"fn": install_whatweb, "label": "WhatWeb",   "method_win": "git clone + ruby",               "method_linux": "apt install"},
-    "httpx":   {"fn": install_httpx,   "label": "httpx",     "method_win": "go install",                     "method_linux": "go install / binary download"},
-    "cmsmap":  {"fn": install_cmsmap,  "label": "CMSMap",    "method_win": "git clone + pip",                "method_linux": "git clone + pip"},
+    "nuclei":    {"fn": install_nuclei,  "label": "Nuclei",    "method_win": "go install / binary download",  "method_linux": "go install / binary download"},
+    "wpscan":    {"fn": install_wpscan,  "label": "WPScan",    "method_win": "gem install",                    "method_linux": "apt / gem install"},
+    "nikto":     {"fn": install_nikto,   "label": "Nikto",     "method_win": "git clone + perl",               "method_linux": "apt install"},
+    "zap-cli":   {"fn": install_zap,     "label": "OWASP ZAP", "method_win": "manual download + pip",          "method_linux": "apt install"},
+    "sqlmap":    {"fn": install_sqlmap,  "label": "SQLMap",    "method_win": "pip install",                    "method_linux": "apt / pip install"},
+    "sslyze":    {"fn": install_sslyze,  "label": "SSLyze",    "method_win": "pip install",                    "method_linux": "pip install"},
+    "whatweb":   {"fn": install_whatweb, "label": "WhatWeb",   "method_win": "git clone + ruby",               "method_linux": "apt install"},
+    "httpx":     {"fn": install_httpx,   "label": "httpx",     "method_win": "go install",                     "method_linux": "go install / binary download"},
+    "cmsmap":    {"fn": install_cmsmap,  "label": "CMSMap",    "method_win": "git clone + pip",                "method_linux": "git clone + pip"},
+    "ffuf":      {"fn": install_ffuf,    "label": "ffuf",      "method_win": "go install",                     "method_linux": "go install"},
+    "dalfox":    {"fn": install_dalfox,  "label": "Dalfox",    "method_win": "go install",                     "method_linux": "go install"},
+    "subfinder": {"fn": install_subfinder,"label": "Subfinder", "method_win": "go install",                     "method_linux": "go install"},
+    "gitleaks":  {"fn": install_gitleaks, "label": "Gitleaks",  "method_win": "go install",                     "method_linux": "go install"},
+    "wapiti":    {"fn": install_wapiti,  "label": "Wapiti",    "method_win": "pip install",                    "method_linux": "pip install"},
+    "droopescan":{"fn": install_droopescan,"label":"Droopescan","method_win": "pip install",                    "method_linux": "pip install"},
+    "corsy":     {"fn": install_corsy,   "label": "Corsy",     "method_win": "git clone + pip",                "method_linux": "git clone + pip"},
+    "commix":    {"fn": install_commix,  "label": "Commix",    "method_win": "git clone",                      "method_linux": "git clone"},
+    "joomscan":  {"fn": install_joomscan,"label": "JoomScan",  "method_win": "git clone",                      "method_linux": "git clone"},
 }
 
 

@@ -19,7 +19,7 @@
                         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
                     </svg>
                 </div>
-                <h2>WP Scanner</h2>
+                <h2>OmniScan</h2>
             </div>
 
             <nav class="nav-menu" id="navMenu">
@@ -79,7 +79,7 @@
             <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
                 <span></span><span></span><span></span>
             </button>
-            <h2>WP Scanner</h2>
+            <h2>OmniScan</h2>
         </div>
         <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
@@ -163,6 +163,13 @@
                                         <option value="active">Active</option>
                                         <option value="full">Full</option>
                                     </select>
+                                    <select id="quickProfile">
+                                        <option value="wordpress">WordPress</option>
+                                        <option value="joomla">Joomla</option>
+                                        <option value="drupal">Drupal</option>
+                                        <option value="webapp">Web App</option>
+                                        <option value="api">Custom API</option>
+                                    </select>
                                     <button type="submit" class="btn-primary btn-icon" id="quickScanBtn">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                                     </button>
@@ -217,6 +224,16 @@
                                             <option value="passive">Passive (Safe Recon)</option>
                                             <option value="active">Active (Deep Testing)</option>
                                             <option value="full">Full (Both)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="scanProfile">Profile</label>
+                                        <select id="scanProfile">
+                                            <option value="wordpress">WordPress</option>
+                                            <option value="joomla">Joomla</option>
+                                            <option value="drupal">Drupal</option>
+                                            <option value="webapp">Web App</option>
+                                            <option value="api">Custom API</option>
                                         </select>
                                     </div>
                                 </div>
@@ -281,6 +298,13 @@
                             <div class="input-row">
                                 <input type="text" id="newTargetUrl" placeholder="https://example.com" required>
                                 <input type="text" id="newTargetLabel" placeholder="Site Label" required>
+                                <select id="newTargetProfile" required style="max-width: 150px;">
+                                    <option value="wordpress">WordPress</option>
+                                    <option value="joomla">Joomla</option>
+                                    <option value="drupal">Drupal</option>
+                                    <option value="webapp">Web App</option>
+                                    <option value="api">Custom API</option>
+                                </select>
                                 <button type="submit" class="btn-primary btn-icon">
                                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                                 </button>
@@ -301,12 +325,13 @@
                                         <th>#</th>
                                         <th>Label</th>
                                         <th>URL</th>
+                                        <th>Profile</th>
                                         <th>Last Scanned</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="targetsBody">
-                                    <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                                    <tr><td colspan="6" class="empty-state">Loading...</td></tr>
                                 </tbody>
                             </table>
                         </div>

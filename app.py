@@ -52,6 +52,7 @@ def add_target():
     body = request.json or {}
     url = body.get('url', '').strip().rstrip('/')
     label = body.get('label', '').strip()
+    profile = body.get('profile', 'wordpress').strip().lower()
     if not url or not label:
         return jsonify({"error": "url and label are required"}), 400
 
@@ -59,7 +60,7 @@ def add_target():
     if not isinstance(data, list):
         data = []
 
-    target = {"url": url, "label": label, "last_scanned": None}
+    target = {"url": url, "label": label, "profile": profile, "last_scanned": None}
     data.append(target)
     _save_json(TARGETS_FILE, data)
     return jsonify(target), 201
@@ -244,12 +245,13 @@ def start_scan():
     data = request.json
     target = data.get('target')
     mode = data.get('mode', 'passive')
+    profile = data.get('profile', 'wordpress').strip().lower()
 
     if not target:
         return jsonify({"error": "Target is required"}), 400
 
     from scanner import run_scan
-    thread = threading.Thread(target=run_scan, args=(target, mode, True, False, None))
+    thread = threading.Thread(target=run_scan, args=(target, mode, True, False, None, profile))
     thread.start()
 
     return jsonify({"message": f"Scan started successfully on {target} in {mode} mode", "status": "running"})

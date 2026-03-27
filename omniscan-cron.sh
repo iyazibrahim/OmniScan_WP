@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# WP Vulnerability Scanner - Cron Wrapper Script
+# OmniScan - Cron Wrapper Script
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # This script is designed to be called by cron for automated scanning.

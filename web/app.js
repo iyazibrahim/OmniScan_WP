@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
- * WP Scanner Dashboard – app.js
+ * OmniScan Dashboard – app.js
  * Single-page application with client-side routing and full API integration
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -179,8 +179,9 @@ const App = {
             e.preventDefault();
             const target = document.getElementById('quickTarget').value.trim();
             const mode = document.getElementById('quickMode').value;
+            const profile = document.getElementById('quickProfile').value;
             if (!target) return;
-            await this.startScan(target, mode, 'quickScanStatus', 'quickScanBtn');
+            await this.startScan(target, mode, profile, 'quickScanStatus', 'quickScanBtn');
         };
     },
 
@@ -245,11 +246,21 @@ const App = {
         sel.innerHTML = '<option value="">— pick saved target —</option>';
         if (Array.isArray(targets)) {
             targets.forEach(t => {
-                sel.innerHTML += `<option value="${this.esc(t.url)}">${this.esc(t.label)}</option>`;
+                const opt = document.createElement('option');
+                opt.value = t.url;
+                opt.textContent = `${t.label} (${t.profile || 'wordpress'})`;
+                opt.dataset.profile = t.profile || 'wordpress';
+                sel.appendChild(opt);
             });
         }
         sel.onchange = () => {
-            if (sel.value) document.getElementById('scanTarget').value = sel.value;
+            if (sel.value) {
+                document.getElementById('scanTarget').value = sel.value;
+                const selectedOpt = sel.options[sel.selectedIndex];
+                if (selectedOpt && selectedOpt.dataset.profile) {
+                    document.getElementById('scanProfile').value = selectedOpt.dataset.profile;
+                }
+            }
         };
 
         // Tools list
@@ -272,12 +283,13 @@ const App = {
             e.preventDefault();
             const target = document.getElementById('scanTarget').value.trim();
             const mode = document.getElementById('scanMode').value;
+            const profile = document.getElementById('scanProfile').value;
             if (!target) return;
-            await this.startScan(target, mode, 'scanFormStatus', 'scanSubmitBtn');
+            await this.startScan(target, mode, profile, 'scanFormStatus', 'scanSubmitBtn');
         };
     },
 
-    async startScan(target, mode, statusId, btnId) {
+    async startScan(target, mode, profile, statusId, btnId) {
         const btn = document.getElementById(btnId);
         const statusDiv = document.getElementById(statusId);
         const origHTML = btn.innerHTML;
@@ -290,7 +302,7 @@ const App = {
             const res = await fetch('/api/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ target, mode })
+                body: JSON.stringify({ target, mode, profile })
             });
             const result = await res.json();
 
@@ -369,13 +381,14 @@ const App = {
         const tbody = document.getElementById('targetsBody');
 
         if (!Array.isArray(targets) || targets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No targets added yet. Use the form above to add one.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No targets added yet. Use the form above to add one.</td></tr>';
         } else {
             tbody.innerHTML = targets.map((t, i) => `
                 <tr>
                     <td>${i + 1}</td>
                     <td><strong>${this.esc(t.label)}</strong></td>
                     <td><a href="${this.esc(t.url)}" target="_blank" class="link-accent">${this.esc(t.url)}</a></td>
+                    <td><span class="badge" style="background:var(--surface-alt);color:var(--text);">${this.esc(t.profile || 'wordpress')}</span></td>
                     <td>${t.last_scanned || 'Never'}</td>
                     <td>
                         <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteTarget(${i})">
@@ -392,13 +405,14 @@ const App = {
             e.preventDefault();
             const url = document.getElementById('newTargetUrl').value.trim();
             const label = document.getElementById('newTargetLabel').value.trim();
+            const profile = document.getElementById('newTargetProfile').value;
             if (!url || !label) return;
 
             try {
                 const res = await fetch('/api/targets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, label })
+                    body: JSON.stringify({ url, label, profile })
                 });
                 if (res.ok) {
                     this.toast('Target added!', 'success');

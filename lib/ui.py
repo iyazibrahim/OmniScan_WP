@@ -1,4 +1,4 @@
-"""Colored terminal output and interactive menu for the WP Vulnerability Scanner."""
+"""Colored terminal output and interactive menu for the OmniScan."""
 
 import os
 import sys
@@ -24,7 +24,7 @@ except ImportError:
 def print_banner():
     print()
     print(f"{Fore.CYAN}  ==============================================")
-    print(f"{Fore.CYAN}    WordPress Vulnerability Scanner v2.0")
+    print(f"{Fore.CYAN}    OmniScan v2.0")
     print(f"{Fore.CYAN}    Multi-Tool Automated Security Pipeline")
     print(f"{Fore.CYAN}    Python Edition")
     print(f"{Fore.CYAN}  ==============================================")

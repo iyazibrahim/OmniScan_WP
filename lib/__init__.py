@@ -1,1 +1,1 @@
-# WordPress Vulnerability Scanner - Library Package
+# OmniScan - Library Package

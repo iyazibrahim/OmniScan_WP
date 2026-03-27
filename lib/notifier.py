@@ -144,7 +144,7 @@ def _build_summary(findings: list[dict], target_url: str,
     lines.append("")
     lines.append("Full report is attached as HTML.")
     lines.append("")
-    lines.append("-- WP Vulnerability Scanner (automated)")
+    lines.append("-- OmniScan (automated)")
 
     return "\n".join(lines)
 

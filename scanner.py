@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WordPress Vulnerability Scanner - Multi-Tool Automated Security Pipeline.
+"""OmniScan - Multi-Tool Automated Security Pipeline.
 
 Usage:
     python scanner.py                   # Interactive menu
@@ -176,9 +176,9 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
 # ── Scan Mode ───────────────────────────────────────────────────────────────────
 
 def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
-             send_email: bool = False, output_dir: Path | None = None):
+             send_email: bool = False, output_dir: Path | None = None, profile: str = "wordpress"):
     """Run a full scan on the given URL."""
-    ui.section(f"Starting {mode.upper()} scan on {url}")
+    ui.section(f"Starting {mode.upper()} scan on {url} (Profile: {profile.upper()})")
     start_time = datetime.now()
     ts = start_time.strftime("%Y%m%d_%H%M%S")
     scan_config = config.get_scan_config()
@@ -191,7 +191,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     scan_dir.mkdir(parents=True, exist_ok=True)
 
     # Run tools
-    tools_used = run_all_tools(url, scan_dir, scan_config, tokens, mode)
+    tools_used = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile)
 
     if not tools_used:
         ui.err("No tools were available to run. Install at least one tool first.")
@@ -297,14 +297,19 @@ def manage_targets():
                 ui.section("Saved Targets")
                 for i, t in enumerate(targets, 1):
                     scanned = t.get("last_scanned") or "Never"
-                    print(f"  [{i}] {t['label']} - {t['url']} (Last scan: {scanned})")
+                    prof = t.get("profile", "wordpress")
+                    print(f"  [{i}] {t['label']} - {t['url']} (Profile: {prof}, Last scan: {scanned})")
 
         elif choice == "2":
             url = input("  Enter target URL: ").strip()
             label = input("  Enter label/name: ").strip()
+            prof = input("  Enter profile (wordpress/joomla/drupal/webapp/api) [wordpress]: ").strip().lower() or "wordpress"
             if url and label:
-                config.add_target(url, label)
-                ui.ok(f"Target added: {label} ({url})")
+                # Add profile manually since the old method didn't. We'll read existing dict and append.
+                tList = config.get_targets()
+                tList.append({"url": url, "label": label, "profile": prof, "last_scanned": None})
+                config.save_targets(tList)
+                ui.ok(f"Target added: {label} ({url}) as {prof}")
             else:
                 ui.warn("URL and label are required.")
 
@@ -346,7 +351,7 @@ def interactive_menu():
             if selected:
                 mode = ui.select_scan_mode()
                 for target in selected:
-                    run_scan(target["url"], mode)
+                    run_scan(target["url"], mode, profile=target.get("profile", "wordpress"))
 
         elif choice == "2":
             manage_targets()
@@ -391,7 +396,7 @@ def interactive_menu():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="WordPress Vulnerability Scanner - Multi-Tool Security Pipeline",
+        description="OmniScan - Multi-Tool Security Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   python scanner.py                          Interactive menu
@@ -413,6 +418,8 @@ CI/Cron examples:
     parser.add_argument("--target", type=str, help="Target URL to scan")
     parser.add_argument("--mode", choices=["passive", "active", "full"], default="passive",
                         help="Scan mode (default: passive)")
+    parser.add_argument("--profile", choices=["wordpress", "joomla", "drupal", "webapp", "api"], default="wordpress",
+                        help="Target profile type (default: wordpress)")
     parser.add_argument("--ci", action="store_true",
                         help="CI/headless mode: skip all prompts, no browser open")
     parser.add_argument("--email", action="store_true",
@@ -451,7 +458,7 @@ CI/Cron examples:
         ui.print_banner()
         out_dir = Path(args.output_dir) if args.output_dir else None
         run_scan(args.target, args.mode, ci_mode=ci_mode,
-                 send_email=args.email, output_dir=out_dir)
+                 send_email=args.email, output_dir=out_dir, profile=args.profile)
     else:
         interactive_menu()
 

@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
- * WP Scanner Dashboard – style.css
+ * OmniScan Dashboard – style.css
  * Premium dark theme with glassmorphism, micro-animations & responsive design
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -772,7 +772,19 @@ input::placeholder { color: var(--text-muted); }
 
 .data-table tbody tr:hover { background: var(--bg-hover); }
 
-.link-accent { color: var(--brand); font-size: 0.82rem; }
+.link-accent { 
+    color: var(--brand); 
+    font-size: 0.82rem; 
+    overflow-wrap: anywhere; 
+    word-break: break-all;
+}
+
+.target-url-sm {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+}
 
 /* ── Settings Tabs ──────────────────────────────────────────────────────────── */
 
