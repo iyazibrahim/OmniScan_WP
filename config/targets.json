@@ -2,6 +2,7 @@
   {
     "url": "https://demo.example.com",
     "label": "Demo Target",
+    "profile": "auto",
     "last_scanned": null
   }
 ]

@@ -154,7 +154,8 @@ const App = {
         document.getElementById('statCritical').textContent = critCount;
 
         const toolCount = Array.isArray(tools) ? tools.filter(t => t.installed).length : 0;
-        document.getElementById('statTools').textContent = `${toolCount}/9`;
+        const totalTools = Array.isArray(tools) ? tools.length : 0;
+        document.getElementById('statTools').textContent = `${toolCount}/${totalTools}`;
 
         // Recent targets list
         const list = document.getElementById('dashTargetList');
@@ -248,8 +249,8 @@ const App = {
             targets.forEach(t => {
                 const opt = document.createElement('option');
                 opt.value = t.url;
-                opt.textContent = `${t.label} (${t.profile || 'wordpress'})`;
-                opt.dataset.profile = t.profile || 'wordpress';
+                opt.textContent = `${t.label} (${t.profile || 'auto'})`;
+                opt.dataset.profile = t.profile || 'auto';
                 sel.appendChild(opt);
             });
         }
@@ -353,8 +354,9 @@ const App = {
             return `
                 <div class="report-card">
                     <div class="report-info">
-                        <h4 class="report-name">${this.esc(r.folder || r.name)}</h4>
+                        <h4 class="report-name">${this.esc(r.target_url || r.folder || r.name)}</h4>
                         <span class="report-date">${date}</span>
+                        ${r.profile ? `<span class="report-size">Profile: ${this.esc(r.profile)}</span>` : ''}
                         <span class="report-size">${r.size_kb} KB</span>
                     </div>
                     <div class="report-badges">
@@ -388,7 +390,7 @@ const App = {
                     <td>${i + 1}</td>
                     <td><strong>${this.esc(t.label)}</strong></td>
                     <td><a href="${this.esc(t.url)}" target="_blank" class="link-accent">${this.esc(t.url)}</a></td>
-                    <td><span class="badge" style="background:var(--surface-alt);color:var(--text);">${this.esc(t.profile || 'wordpress')}</span></td>
+                    <td><span class="badge" style="background:var(--surface-alt);color:var(--text);">${this.esc(t.profile || 'auto')}</span></td>
                     <td>${t.last_scanned || 'Never'}</td>
                     <td>
                         <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteTarget(${i})">

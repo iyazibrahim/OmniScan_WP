@@ -23,6 +23,52 @@ Security testing a web app or CMS often requires juggling multiple separate, com
 ### Prerequisites
 - **Python 3.10+**
 
+### Docker Deployment (Recommended for Linux VPS / NUC)
+If host-level tool installation keeps failing, use the Docker deployment instead. This bakes the Python app and the scanner toolchain into one container and serves the dashboard on port `5000`.
+
+Prerequisites:
+- Docker Engine
+- Docker Compose plugin (`docker compose`)
+
+Build and start:
+```bash
+git clone <repository_url> omniscan
+cd omniscan
+docker compose build
+docker compose up -d
+```
+
+Then open:
+```text
+http://<your-server-ip>:5000
+```
+
+Useful Docker commands:
+```bash
+# View logs
+docker compose logs -f
+
+# Stop the stack
+docker compose down
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Run a one-off CLI scan inside the container
+docker compose run --rm omniscan scanner --target https://example.com --mode full --profile auto --ci
+```
+
+Persistent data:
+- `./config` stores targets, tokens, and scan settings
+- `./reports` stores generated reports
+- `./logs` stores container-side logs
+
+Optional:
+```bash
+# Update nuclei templates on container startup
+UPDATE_NUCLEI_TEMPLATES=1 docker compose up -d
+```
+
 ### 1. Setup Environment
 Clone the repository and make the auto-launcher script executable:
 ```bash
@@ -47,6 +93,8 @@ You can start the Flask web application to access the interactive dashboard inte
 ./omniscan.sh app
 ```
 By default, the server binds to `0.0.0.0:5000`. Navigate to `http://localhost:5000` to manage targets, set target profiles (e.g., Joomla or Generic Web App), configure API keys, and launch scans graphically.
+
+On Linux servers, prefer the Docker deployment above if you want a single-step runtime with the toolchain bundled.
 
 ### Using the Command Line Interface (CLI)
 You can also run scans headless or via the interactive terminal menu using the launcher:

@@ -44,6 +44,9 @@ def _save_json(path: Path, obj):
 def get_targets():
     data = _load_json(TARGETS_FILE)
     if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and not item.get("profile"):
+                item["profile"] = "auto"
         return jsonify(data)
     return jsonify([])
 
@@ -52,7 +55,7 @@ def add_target():
     body = request.json or {}
     url = body.get('url', '').strip().rstrip('/')
     label = body.get('label', '').strip()
-    profile = body.get('profile', 'wordpress').strip().lower()
+    profile = body.get('profile', 'auto').strip().lower()
     if not url or not label:
         return jsonify({"error": "url and label are required"}), 400
 
@@ -60,7 +63,7 @@ def add_target():
     if not isinstance(data, list):
         data = []
 
-    target = {"url": url, "label": label, "profile": profile, "last_scanned": None}
+    target = {"url": url, "label": label, "profile": profile or "auto", "last_scanned": None}
     data.append(target)
     _save_json(TARGETS_FILE, data)
     return jsonify(target), 201
@@ -138,17 +141,9 @@ def update_tokens():
 @app.route('/api/tools-status', methods=['GET'])
 def tools_status():
     import shutil
-    tools = [
-        {"name": "nuclei",  "label": "Nuclei",    "phase": "passive"},
-        {"name": "wpscan",  "label": "WPScan",    "phase": "passive"},
-        {"name": "nikto",   "label": "Nikto",     "phase": "passive"},
-        {"name": "zap-cli", "label": "OWASP ZAP", "phase": "active"},
-        {"name": "sqlmap",  "label": "SQLMap",     "phase": "active"},
-        {"name": "sslyze",  "label": "SSLyze",    "phase": "passive"},
-        {"name": "whatweb", "label": "WhatWeb",    "phase": "passive"},
-        {"name": "httpx",   "label": "httpx",      "phase": "passive"},
-        {"name": "cmsmap",  "label": "CMSMap",     "phase": "active"},
-    ]
+    from lib.tools import TOOLS
+    
+    tools = [dict(t) for t in TOOLS]
     for t in tools:
         t["installed"] = shutil.which(t["name"]) is not None
     return jsonify(tools)
@@ -174,9 +169,17 @@ def list_reports():
                 json_companion = json_files[0] if json_files else None
 
             severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            target_url = ""
+            effective_profile = ""
             if json_companion and json_companion.exists():
                 try:
-                    findings = json.loads(json_companion.read_text(encoding='utf-8'))
+                    report_data = json.loads(json_companion.read_text(encoding='utf-8'))
+                    if isinstance(report_data, dict):
+                        findings = report_data.get("findings", [])
+                        target_url = report_data.get("target_url", "")
+                        effective_profile = report_data.get("overview", {}).get("effective_profile", "")
+                    else:
+                        findings = report_data
                     if isinstance(findings, list):
                         for f in findings:
                             sev = f.get('severity', 'low').lower()
@@ -189,6 +192,8 @@ def list_reports():
                 "path": str(rel).replace('\\', '/'),
                 "name": html_file.stem,
                 "folder": str(rel.parent).replace('\\', '/'),
+                "target_url": target_url,
+                "profile": effective_profile,
                 "size_kb": round(size_kb, 1),
                 "modified": mtime,
                 "severities": severity_counts,
@@ -218,7 +223,8 @@ def get_monthly_stats():
                 continue
             try:
                 with open(json_file, 'r', encoding='utf-8') as f:
-                    findings = json.load(f)
+                    report_data = json.load(f)
+                    findings = report_data.get("findings", []) if isinstance(report_data, dict) else report_data
                     for finding in findings:
                         sev = finding.get('severity', 'low').lower()
                         if sev in stats[month_str]:
@@ -245,7 +251,7 @@ def start_scan():
     data = request.json
     target = data.get('target')
     mode = data.get('mode', 'passive')
-    profile = data.get('profile', 'wordpress').strip().lower()
+    profile = data.get('profile', 'auto').strip().lower()
 
     if not target:
         return jsonify({"error": "Target is required"}), 400

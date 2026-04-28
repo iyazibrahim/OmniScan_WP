@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WP Security Dashboard</title>
-    <meta name="description" content="WordPress Security Scanner - Multi-Tool Pentesting Dashboard">
+    <title>OmniScan Security Dashboard</title>
+    <meta name="description" content="Multi-target security scanning dashboard with broad web, CMS, and API coverage">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -164,6 +164,7 @@
                                         <option value="full">Full</option>
                                     </select>
                                     <select id="quickProfile">
+                                        <option value="auto">Auto Detect</option>
                                         <option value="wordpress">WordPress</option>
                                         <option value="joomla">Joomla</option>
                                         <option value="drupal">Drupal</option>
@@ -229,6 +230,7 @@
                                     <div class="form-group">
                                         <label for="scanProfile">Profile</label>
                                         <select id="scanProfile">
+                                            <option value="auto">Auto Detect</option>
                                             <option value="wordpress">WordPress</option>
                                             <option value="joomla">Joomla</option>
                                             <option value="drupal">Drupal</option>
@@ -299,6 +301,7 @@
                                 <input type="text" id="newTargetUrl" placeholder="https://example.com" required>
                                 <input type="text" id="newTargetLabel" placeholder="Site Label" required>
                                 <select id="newTargetProfile" required style="max-width: 150px;">
+                                    <option value="auto">Auto Detect</option>
                                     <option value="wordpress">WordPress</option>
                                     <option value="joomla">Joomla</option>
                                     <option value="drupal">Drupal</option>

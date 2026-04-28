@@ -1,0 +1,17 @@
+services:
+  omniscan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: omniscan:latest
+    container_name: omniscan
+    ports:
+      - "5000:5000"
+    environment:
+      UPDATE_NUCLEI_TEMPLATES: "0"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./config:/app/config
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    restart: unless-stopped

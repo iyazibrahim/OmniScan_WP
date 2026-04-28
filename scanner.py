@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib import ui, config
 from lib.tools import show_tool_status, run_all_tools, get_installed_tools
-from lib.parsers import parse_all_results
+from lib.parsers import parse_all_results, collect_scan_overview
 from lib.enrichment import enrich_findings
 from lib.reports import save_reports
 from lib.installer import install_missing_tools, install_tool
@@ -47,7 +47,6 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
     ui.section("Demo Mode - Generating Sample Report")
 
     start_time = datetime.now()
-    tools_used = ["nuclei", "wpscan", "nikto", "sslyze"]
 
     # Sample findings
     demo_findings = [
@@ -145,12 +144,48 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
     enriched = enrich_findings(demo_findings)
 
     # Generate reports
+    demo_overview = {
+        "requested_profile": "auto",
+        "effective_profile": "wordpress",
+        "fingerprint": {
+            "title": "Demo Company",
+            "status_code": 200,
+            "technologies": ["WordPress", "PHP", "Nginx"],
+            "webserver": "nginx",
+            "whatweb_plugins": ["WordPress", "PHP", "Nginx"],
+        },
+        "discovery": {
+            "subdomains": ["blog.demo-company.com", "cdn.demo-company.com"],
+            "subdomain_count": 2,
+            "parameters": ["id", "redirect", "search"],
+            "parameter_count": 3,
+            "sample_urls": {
+                "gau": ["https://demo-company.com/wp-login.php", "https://demo-company.com/wp-json/wp/v2/users"],
+                "katana": ["https://demo-company.com/contact", "https://demo-company.com/search?q=test"],
+                "ffuf": ["https://demo-company.com/.git/", "https://demo-company.com/backup.zip"],
+                "feroxbuster": ["https://demo-company.com/admin/"],
+            },
+            "gau_count": 2,
+            "katana_count": 2,
+            "ffuf_count": 2,
+            "feroxbuster_count": 1,
+        },
+        "tool_runs": [
+            {"name": "httpx", "label": "httpx", "phase": "passive", "status": "completed", "duration_seconds": 4.2, "output_files": ["httpx.json"], "primary_output": "httpx.json", "command": ["httpx"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+            {"name": "whatweb", "label": "WhatWeb", "phase": "passive", "status": "completed", "duration_seconds": 2.9, "output_files": ["whatweb.json"], "primary_output": "whatweb.json", "command": ["whatweb"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+            {"name": "nuclei", "label": "Nuclei", "phase": "passive", "status": "completed", "duration_seconds": 15.8, "output_files": ["nuclei.jsonl"], "primary_output": "nuclei.jsonl", "command": ["nuclei"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+            {"name": "wpscan", "label": "WPScan", "phase": "passive", "status": "completed", "duration_seconds": 18.4, "output_files": ["wpscan.json"], "primary_output": "wpscan.json", "command": ["wpscan"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+            {"name": "nikto", "label": "Nikto", "phase": "passive", "status": "completed", "duration_seconds": 12.1, "output_files": ["nikto.json"], "primary_output": "nikto.json", "command": ["nikto"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+            {"name": "dalfox", "label": "Dalfox", "phase": "active", "status": "completed", "duration_seconds": 9.3, "output_files": ["dalfox.json"], "primary_output": "dalfox.json", "command": ["dalfox"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
+        ],
+    }
+
     paths = save_reports(
         findings=enriched,
         target_url="https://demo-company.com",
         scan_mode="Full (Passive + Active)",
         start_time=start_time,
-        tools_used=tools_used,
+        scan_overview=demo_overview,
         output_dir=config.REPORTS_DIR,
     )
 
@@ -176,7 +211,7 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
 # ── Scan Mode ───────────────────────────────────────────────────────────────────
 
 def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
-             send_email: bool = False, output_dir: Path | None = None, profile: str = "wordpress"):
+             send_email: bool = False, output_dir: Path | None = None, profile: str = "auto"):
     """Run a full scan on the given URL."""
     ui.section(f"Starting {mode.upper()} scan on {url} (Profile: {profile.upper()})")
     start_time = datetime.now()
@@ -191,7 +226,9 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     scan_dir.mkdir(parents=True, exist_ok=True)
 
     # Run tools
-    tools_used = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile)
+    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile)
+    tools_used = execution.get("tools_used", [])
+    tool_runs = execution.get("tools", [])
 
     if not tools_used:
         ui.err("No tools were available to run. Install at least one tool first.")
@@ -200,6 +237,13 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     # Parse results
     ui.section("Parsing Results")
     findings = parse_all_results(scan_dir)
+    overview = collect_scan_overview(
+        scan_dir=scan_dir,
+        target_url=url,
+        requested_profile=execution.get("requested_profile", profile),
+        effective_profile=execution.get("effective_profile", profile),
+        tool_runs=tool_runs,
+    )
 
     if not findings:
         ui.warn("No findings detected. The target may be well-secured or tools may need API tokens.")
@@ -218,7 +262,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         target_url=url,
         scan_mode=mode_label.get(mode, mode),
         start_time=start_time,
-        tools_used=tools_used,
+        scan_overview=overview,
         output_dir=scan_dir,
     )
 
@@ -297,13 +341,13 @@ def manage_targets():
                 ui.section("Saved Targets")
                 for i, t in enumerate(targets, 1):
                     scanned = t.get("last_scanned") or "Never"
-                    prof = t.get("profile", "wordpress")
+                    prof = t.get("profile", "auto")
                     print(f"  [{i}] {t['label']} - {t['url']} (Profile: {prof}, Last scan: {scanned})")
 
         elif choice == "2":
             url = input("  Enter target URL: ").strip()
             label = input("  Enter label/name: ").strip()
-            prof = input("  Enter profile (wordpress/joomla/drupal/webapp/api) [wordpress]: ").strip().lower() or "wordpress"
+            prof = input("  Enter profile (auto/wordpress/joomla/drupal/webapp/api) [auto]: ").strip().lower() or "auto"
             if url and label:
                 # Add profile manually since the old method didn't. We'll read existing dict and append.
                 tList = config.get_targets()
@@ -351,7 +395,7 @@ def interactive_menu():
             if selected:
                 mode = ui.select_scan_mode()
                 for target in selected:
-                    run_scan(target["url"], mode, profile=target.get("profile", "wordpress"))
+                    run_scan(target["url"], mode, profile=target.get("profile", "auto"))
 
         elif choice == "2":
             manage_targets()
@@ -418,8 +462,8 @@ CI/Cron examples:
     parser.add_argument("--target", type=str, help="Target URL to scan")
     parser.add_argument("--mode", choices=["passive", "active", "full"], default="passive",
                         help="Scan mode (default: passive)")
-    parser.add_argument("--profile", choices=["wordpress", "joomla", "drupal", "webapp", "api"], default="wordpress",
-                        help="Target profile type (default: wordpress)")
+    parser.add_argument("--profile", choices=["auto", "wordpress", "joomla", "drupal", "webapp", "api"], default="auto",
+                        help="Target profile type (default: auto)")
     parser.add_argument("--ci", action="store_true",
                         help="CI/headless mode: skip all prompts, no browser open")
     parser.add_argument("--email", action="store_true",

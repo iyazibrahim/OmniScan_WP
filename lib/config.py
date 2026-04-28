@@ -56,7 +56,7 @@ def save_targets(targets: list[dict]):
 
 def add_target(url: str, label: str) -> dict:
     targets = get_targets()
-    target = {"url": url.strip().rstrip("/"), "label": label.strip(), "last_scanned": None}
+    target = {"url": url.strip().rstrip("/"), "label": label.strip(), "profile": "auto", "last_scanned": None}
     targets.append(target)
     save_targets(targets)
     return target
@@ -74,6 +74,7 @@ def remove_target(index: int) -> bool:
 def select_target(targets: list[dict]) -> list[dict] | None:
     """Interactive target selector. Returns list of selected target(s) or None."""
     from lib import ui
+    from colorama import Fore, Style
 
     if not targets:
         ui.warn("No targets saved. Add one first.")
@@ -92,7 +93,6 @@ def select_target(targets: list[dict]) -> list[dict] | None:
     print(f"  {Fore.YELLOW}[A]{Style.RESET_ALL} Scan ALL targets")
     print()
 
-    from colorama import Fore, Style
     choice = input(f"  {Fore.CYAN}Select target number (or A for all): {Style.RESET_ALL}").strip()
     if choice.upper() == "A":
         return targets
@@ -163,9 +163,19 @@ def get_scan_config() -> dict:
         return data
     return {
         "nuclei_tags": "wordpress,wp-plugin,wp-theme,cve,exposure,misconfiguration",
-        "nuclei_severity": "critical,high,medium,low",
-        "nuclei_rate_limit": 150,
+        "nuclei_tags_wordpress": "wordpress,wp-plugin,wp-theme,cve,xss,sqli,lfi,ssrf,exposure,misconfig",
+        "nuclei_tags_joomla": "joomla,cve,exposure,misconfig,default-login",
+        "nuclei_tags_drupal": "drupal,cve,exposure,misconfig,default-login",
+        "nuclei_tags_api": "api,graphql,cve,exposure,misconfig,default-login",
+        "nuclei_tags_broad": "cve,rce,lfi,sqli,xss,ssrf,exposure,misconfig,default-login,redirect,takeover,credentials",
+        "nuclei_severity": "critical,high,medium,low,info",
+        "nuclei_rate_limit": 25,
         "wpscan_enumerate": "vp,vt,u",
+        "wpscan_max_threads": 1,
+        "whatweb_max_threads": 8,
+        "httpx_rate_limit": 25,
+        "nikto_pause_seconds": 1,
+        "content_wordlist": "",
     }
 
 
