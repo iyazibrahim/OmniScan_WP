@@ -350,14 +350,22 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str) -> dict:
     return result
 
 
-def run_nikto(url: str, config: dict, scan_dir: Path) -> dict:
+def run_nikto(url: str, config: dict, scan_dir: Path, profile: str = "webapp") -> dict:
     ui.status("Running Nikto scan...")
     output_file = scan_dir / "nikto.json"
     pause = str(config.get("nikto_pause_seconds", 0))
+    if profile == "wordpress":
+        max_time = int(config.get("nikto_maxtime_wordpress_seconds", 180))
+        hard_timeout = int(config.get("nikto_timeout_wordpress_seconds", max_time + 90))
+        tuning = str(config.get("nikto_tuning_wordpress", config.get("nikto_tuning", "123bde")))
+    else:
+        max_time = int(config.get("nikto_maxtime_seconds", 180))
+        hard_timeout = int(config.get("nikto_timeout_seconds", max_time + 90))
+        tuning = str(config.get("nikto_tuning", "123456789"))
     # -maxtime limits nikto's own internal runtime so it exits gracefully before the hard timeout
     cmd = ["nikto", "-h", url, "-Format", "json", "-output", str(output_file),
-        "-Pause", pause, "-nointeractive", "-maxtime", "240s", "-Tuning", "123456789"]
-    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=300)
+        "-Pause", pause, "-nointeractive", "-maxtime", f"{max_time}s", "-Tuning", tuning]
+    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=hard_timeout)
     if result["status"].startswith("completed"):
         ui.ok("Nikto complete.")
     return result
@@ -456,11 +464,25 @@ def run_droopescan(url: str, scan_dir: Path) -> dict:
     return result
 
 
-def run_cmsmap(url: str, scan_dir: Path) -> dict:
+def run_cmsmap(url: str, scan_dir: Path, profile: str = "webapp") -> dict:
     ui.status("Running CMSMap...")
     output_file = scan_dir / "cmsmap.json"
     cmd = ["cmsmap", "-t", url, "-o", str(output_file), "-f", "J"]
-    result = _run_tool(cmd, "cmsmap", "CMSMap", "active", scan_dir, output_files=[output_file], timeout=900)
+    import os as _os
+    _env = _os.environ.copy()
+    _env["PYTHONWARNINGS"] = "ignore"
+    cmsmap_timeout = 600 if profile == "wordpress" else 480
+    result = _run_tool(
+        cmd,
+        "cmsmap",
+        "CMSMap",
+        "active",
+        scan_dir,
+        output_files=[output_file],
+        timeout=cmsmap_timeout,
+        extra_env=_env,
+        acceptable_returncodes={0, 1},
+    )
     if result["status"].startswith("completed"):
         ui.ok("CMSMap complete.")
     return result
@@ -486,14 +508,83 @@ def run_sqlmap(url: str, scan_dir: Path, profile: str) -> dict:
     return result
 
 
-def run_ffuf(url: str, config: dict, scan_dir: Path) -> dict:
+def run_ffuf(url: str, config: dict, scan_dir: Path, profile: str = "webapp") -> dict:
     ui.status("Running ffuf...")
-    wordlist = _resolve_wordlist(config)
-    if not wordlist:
-        return _result_template("ffuf", "ffuf", "active", [], "skipped", "No compatible content-discovery wordlist found.")
     output_file = scan_dir / "ffuf.json"
-    cmd = ["ffuf", "-u", f"{url.rstrip('/')}/FUZZ", "-w", wordlist, "-o", str(output_file), "-of", "json", "-s"]
-    result = _run_tool(cmd, "ffuf", "ffuf", "active", scan_dir, output_files=[output_file], timeout=1200)
+    ffuf_threads = str(config.get("ffuf_threads", 35))
+    ffuf_timeout = int(config.get("ffuf_timeout_seconds", 900))
+    ffuf_maxtime = str(config.get("ffuf_maxtime_seconds", 420))
+    status_match = str(config.get("ffuf_match_codes", "200,204,301,302,307,401,403"))
+    status_filter = str(config.get("ffuf_filter_codes", "400,404,405,500,501,502,503"))
+
+    if profile == "wordpress":
+        wp_wordlist_file = scan_dir / "ffuf-wp-wordlist.txt"
+        wp_entries = [
+            "wp-login.php",
+            "xmlrpc.php",
+            "wp-admin/",
+            "wp-content/",
+            "wp-content/plugins/",
+            "wp-content/themes/",
+            "wp-content/uploads/",
+            "wp-json/",
+            "wp-cron.php",
+            "readme.html",
+            "license.txt",
+            ".htaccess",
+            "debug.log",
+            "backup.zip",
+            "database.sql",
+        ]
+        _write_text(wp_wordlist_file, "\n".join(wp_entries) + "\n")
+        cmd = [
+            "ffuf",
+            "-u",
+            f"{url.rstrip('/')}/FUZZ",
+            "-w",
+            str(wp_wordlist_file),
+            "-o",
+            str(output_file),
+            "-of",
+            "json",
+            "-s",
+            "-ac",
+            "-mc",
+            status_match,
+            "-fc",
+            status_filter,
+            "-t",
+            ffuf_threads,
+            "-maxtime",
+            ffuf_maxtime,
+        ]
+    else:
+        wordlist = _resolve_wordlist(config)
+        if not wordlist:
+            return _result_template("ffuf", "ffuf", "active", [], "skipped", "No compatible content-discovery wordlist found.")
+        cmd = [
+            "ffuf",
+            "-u",
+            f"{url.rstrip('/')}/FUZZ",
+            "-w",
+            wordlist,
+            "-o",
+            str(output_file),
+            "-of",
+            "json",
+            "-s",
+            "-ac",
+            "-mc",
+            status_match,
+            "-fc",
+            status_filter,
+            "-t",
+            ffuf_threads,
+            "-maxtime",
+            ffuf_maxtime,
+        ]
+
+    result = _run_tool(cmd, "ffuf", "ffuf", "active", scan_dir, output_files=[output_file], timeout=ffuf_timeout)
     if result["status"].startswith("completed"):
         ui.ok("ffuf complete.")
     return result
@@ -710,8 +801,11 @@ def run_all_tools(
 
     dynamic_plan: list[tuple[str, str, callable]] = []
     if mode in ("passive", "full"):
+        nikto_enabled = bool(config.get("run_nikto", True))
+        nikto_wordpress_enabled = bool(config.get("run_nikto_wordpress", False))
         dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile)))
-        dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir)))
+        if nikto_enabled and (effective_profile != "wordpress" or nikto_wordpress_enabled):
+            dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir, effective_profile)))
         if effective_profile == "wordpress":
             dynamic_plan.append(("wpscan", "passive", lambda: run_wpscan(url, config, tokens, scan_dir, local_target)))
         elif effective_profile == "joomla":
@@ -720,18 +814,28 @@ def run_all_tools(
             dynamic_plan.append(("droopescan", "passive", lambda: run_droopescan(url, scan_dir)))
 
     if mode in ("active", "full"):
-        if effective_profile in ("wordpress", "joomla", "drupal"):
+        run_content_wordpress = bool(config.get("run_content_discovery_wordpress", False))
+        if effective_profile in ("joomla", "drupal"):
             dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir)))
+        elif effective_profile == "wordpress" and bool(config.get("run_cmsmap_wordpress", False)):
+            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir, effective_profile)))
+
+        include_content_tools = effective_profile != "wordpress" or run_content_wordpress
         dynamic_plan.extend(
             [
                 ("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile)),
-                ("ffuf", "active", lambda: run_ffuf(url, config, scan_dir)),
-                ("feroxbuster", "active", lambda: run_feroxbuster(url, config, scan_dir)),
                 ("arjun", "active", lambda: run_arjun(url, scan_dir)),
                 ("dalfox", "active", lambda: run_dalfox(url, scan_dir)),
                 ("wapiti", "active", lambda: run_wapiti(url, scan_dir)),
             ]
         )
+        if include_content_tools:
+            dynamic_plan.extend(
+                [
+                    ("ffuf", "active", lambda: run_ffuf(url, config, scan_dir, effective_profile)),
+                    ("feroxbuster", "active", lambda: run_feroxbuster(url, config, scan_dir)),
+                ]
+            )
         if effective_profile in ("webapp", "api"):
             dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir)))
 

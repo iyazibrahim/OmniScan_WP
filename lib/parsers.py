@@ -100,7 +100,22 @@ def parse_nuclei(results_file: Path) -> list[dict]:
         title = info.get("name", item.get("template-id", "Unknown"))
         severity = info.get("severity", "info")
         desc = info.get("description", "")
-        matched = item.get("matched-at", "")
+        evidence_parts = []
+        if item.get("matched-at"):
+            evidence_parts.append(f"matched_at: {item.get('matched-at')}")
+        if item.get("host"):
+            evidence_parts.append(f"host: {item.get('host')}")
+        if item.get("ip"):
+            evidence_parts.append(f"ip: {item.get('ip')}")
+        if item.get("template-id"):
+            evidence_parts.append(f"template: {item.get('template-id')}")
+        if item.get("matcher-name"):
+            evidence_parts.append(f"matcher: {item.get('matcher-name')}")
+        extracted = item.get("extracted-results")
+        if isinstance(extracted, list) and extracted:
+            evidence_parts.append(f"extracted: {', '.join(str(x) for x in extracted[:8])}")
+        if item.get("curl-command"):
+            evidence_parts.append(f"curl: {item.get('curl-command')}")
 
         cve = ""
         classification = info.get("classification", {})
@@ -122,7 +137,7 @@ def parse_nuclei(results_file: Path) -> list[dict]:
                 tool="Nuclei",
                 description=desc,
                 cve=cve,
-                evidence=matched,
+                evidence="\n".join(evidence_parts)[:2000],
                 references=refs,
             )
         )
@@ -152,7 +167,11 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                     tool="WPScan",
                     description=f"WordPress core vulnerability on version {version_info.get('number', 'unknown')}.",
                     cve=cve,
-                    evidence=f"Detected version: {version_info.get('number', 'unknown')}",
+                    evidence=(
+                        f"component: wordpress-core\n"
+                        f"detected_version: {version_info.get('number', 'unknown')}\n"
+                        f"location: {data.get('target_url', '') or 'site root'}"
+                    ),
                     references=refs_data.get("url", []) if isinstance(refs_data, dict) else [],
                 )
             )
@@ -176,7 +195,11 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                         tool="WPScan",
                         description=f"Plugin vulnerability in {plugin_name}.",
                         cve=cve,
-                        evidence=f"Plugin: {plugin_name} v{plugin_data.get('version', {}).get('number', 'unknown')}",
+                        evidence=(
+                            f"component: plugin/{plugin_name}\n"
+                            f"detected_version: {plugin_data.get('version', {}).get('number', 'unknown')}\n"
+                            f"likely_path: /wp-content/plugins/{plugin_name}/"
+                        ),
                         references=refs_data.get("url", []) if isinstance(refs_data, dict) else [],
                     )
                 )
@@ -190,7 +213,11 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                     severity=vuln.get("severity") or "high",
                     tool="WPScan",
                     description="Theme vulnerability detected by WPScan.",
-                    evidence=f"Theme: {theme.get('slug', 'unknown')} v{theme.get('version', {}).get('number', 'unknown')}",
+                    evidence=(
+                        f"component: theme/{theme.get('slug', 'unknown')}\n"
+                        f"detected_version: {theme.get('version', {}).get('number', 'unknown')}\n"
+                        f"likely_path: /wp-content/themes/{theme.get('slug', 'unknown')}/"
+                    ),
                 )
             )
     return findings
@@ -209,13 +236,24 @@ def parse_nikto(results_file: Path) -> list[dict]:
         for vuln in host_result.get("vulnerabilities", []):
             osvdb_id = vuln.get("OSVDB", "")
             refs = [f"https://vulners.com/osvdb/OSVDB:{osvdb_id}"] if osvdb_id else []
+            uri = vuln.get("uri", "")
+            method = vuln.get("method", "GET")
+            msg = vuln.get("msg", "Nikto Finding")
+            evidence_parts = []
+            if uri:
+                evidence_parts.append(f"url: {uri}")
+            if method:
+                evidence_parts.append(f"method: {method}")
+            if osvdb_id:
+                evidence_parts.append(f"osvdb: {osvdb_id}")
+            evidence_parts.append(f"message: {msg}")
             findings.append(
                 _make_finding(
-                    title=vuln.get("msg", "Nikto Finding"),
+                    title=msg,
                     severity="medium",
                     tool="Nikto",
-                    description=vuln.get("msg", "Nikto Finding"),
-                    evidence=f"OSVDB-{osvdb_id}" if osvdb_id else vuln.get("uri", ""),
+                    description=msg,
+                    evidence="\n".join(evidence_parts)[:1200],
                     references=refs,
                 )
             )
@@ -305,7 +343,12 @@ def parse_ffuf(results_file: Path) -> list[dict]:
         if status_code not in {200, 204, 301, 302, 307, 401, 403}:
             continue
         url = item.get("url", "")
-        evidence = f"Status {status_code}, words={item.get('words', '?')}, length={item.get('length', '?')}"
+        evidence = (
+            f"url: {url}\n"
+            f"status: {status_code}\n"
+            f"words: {item.get('words', '?')}\n"
+            f"length: {item.get('length', '?')}"
+        )
         severity = "low" if status_code in {401, 403} else "medium"
         findings.append(
             _make_finding(
@@ -313,7 +356,7 @@ def parse_ffuf(results_file: Path) -> list[dict]:
                 severity=severity,
                 tool="ffuf",
                 description="Directory or endpoint discovered during content enumeration.",
-                evidence=f"{url}\n{evidence}",
+                evidence=evidence,
             )
         )
     return findings
@@ -336,7 +379,7 @@ def parse_feroxbuster(results_file: Path) -> list[dict]:
                 severity="low" if status in {401, 403} else "medium",
                 tool="Feroxbuster",
                 description="Feroxbuster identified an accessible path or resource.",
-                evidence=f"{url}\nStatus {status}",
+                evidence=f"url: {url}\nstatus: {status}",
             )
         )
     return findings
@@ -353,13 +396,17 @@ def parse_joomscan(results_file: Path) -> list[dict]:
             continue
         lower = clean.lower()
         if "[!]" in clean or "vulnerab" in lower or "exposed" in lower:
+            location = ""
+            url_match = re.search(r"https?://\S+", clean)
+            if url_match:
+                location = url_match.group(0)
             findings.append(
                 _make_finding(
                     title="Joomla Exposure or Vulnerability",
                     severity="medium",
                     tool="JoomScan",
                     description="JoomScan reported a potentially actionable exposure.",
-                    evidence=clean,
+                    evidence=f"location: {location}\nraw: {clean}" if location else clean,
                 )
             )
     return findings
@@ -400,6 +447,11 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
     data = _safe_load_json(results_file)
     text = json.dumps(data, ensure_ascii=False) if data is not None else _safe_read_text(results_file)
     for match in re.findall(r"(CVE-\d{4}-\d+)", text, flags=re.IGNORECASE):
+        around = ""
+        for line in text.splitlines():
+            if match.lower() in line.lower():
+                around = line.strip()[:350]
+                break
         findings.append(
             _make_finding(
                 title="CMS Vulnerability Reference",
@@ -407,7 +459,7 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
                 tool="CMSMap",
                 description="CMSMap output contains an explicit vulnerability reference.",
                 cve=match.upper(),
-                evidence=match.upper(),
+                evidence=f"cve: {match.upper()}\nlocation: {around}" if around else match.upper(),
             )
         )
     if not findings and text:
@@ -429,22 +481,81 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
 def parse_dalfox(results_file: Path) -> list[dict]:
     findings = []
     data = _safe_load_json(results_file)
-    items = data if isinstance(data, list) else [data] if data else []
+
+    def _string_value(value):
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
+
+    # Dalfox output varies across versions; flatten likely container keys first.
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        for key in ("results", "issues", "vulnerabilities", "data"):
+            maybe = data.get(key)
+            if isinstance(maybe, list):
+                items = maybe
+                break
+        else:
+            items = [data]
+    else:
+        items = []
+
     for item in items:
         if not isinstance(item, dict):
             continue
-        vuln_type = item.get("type") or item.get("issue") or "XSS Finding"
-        evidence_parts = []
-        for key in ("url", "param", "payload", "evidence"):
+
+        vuln_type = (
+            item.get("type")
+            or item.get("issue")
+            or item.get("name")
+            or item.get("message")
+            or "XSS Finding"
+        )
+
+        location_parts = []
+        for label, key in [
+            ("url", "url"),
+            ("target", "target"),
+            ("endpoint", "endpoint"),
+            ("path", "path"),
+            ("parameter", "param"),
+            ("method", "method"),
+        ]:
             if item.get(key):
-                evidence_parts.append(f"{key}: {item.get(key)}")
+                location_parts.append(f"{label}: {_string_value(item.get(key))}")
+
+        for label, key in [
+            ("payload", "payload"),
+            ("poc", "poc"),
+            ("matched", "evidence"),
+            ("data", "data"),
+        ]:
+            if item.get(key):
+                location_parts.append(f"{label}: {_string_value(item.get(key))}")
+
+        if item.get("request"):
+            location_parts.append(f"request: {_string_value(item.get('request'))}")
+        if item.get("response"):
+            location_parts.append(f"response: {_string_value(item.get('response'))}")
+
+        evidence_text = "\n".join(location_parts).strip()
+        if not evidence_text:
+            # Fallback to raw record so operators still see exact detector payload.
+            evidence_text = _string_value(item)
+
         findings.append(
             _make_finding(
                 title=str(vuln_type),
                 severity="high",
                 tool="Dalfox",
                 description="Dalfox detected a reflected or DOM-based XSS condition.",
-                evidence="\n".join(evidence_parts)[:1000],
+                evidence=evidence_text[:2000],
             )
         )
     return findings
@@ -490,13 +601,17 @@ def parse_commix(results_file: Path) -> list[dict]:
     for line in text.splitlines():
         lower = line.lower()
         if "command injection" in lower or "vulnerable" in lower:
+            location = ""
+            url_match = re.search(r"https?://\S+", line)
+            if url_match:
+                location = url_match.group(0)
             findings.append(
                 _make_finding(
                     title="Potential Command Injection",
                     severity="critical",
                     tool="Commix",
                     description="Commix reported a command injection condition.",
-                    evidence=line.strip()[:500],
+                    evidence=f"location: {location}\nraw: {line.strip()[:460]}" if location else line.strip()[:500],
                 )
             )
     return findings
