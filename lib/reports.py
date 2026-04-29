@@ -1,5 +1,7 @@
 """Comprehensive HTML, Markdown, and JSON report generation."""
 
+from __future__ import annotations
+
 import html
 import json
 from datetime import datetime
@@ -28,13 +30,47 @@ def _tool_status_badge(status: str) -> str:
     return f"<span class='pill {cls}'>{html.escape(status.replace('_', ' '))}</span>"
 
 
-def _json_ready_tool_runs(tool_runs: list[dict]) -> list[dict]:
-    output = []
-    for run in tool_runs:
-        item = dict(run)
-        item["command"] = " ".join(run.get("command", []))
-        output.append(item)
-    return output
+def _assessment_summary(assessment: dict | None) -> dict:
+    if not isinstance(assessment, dict):
+        return {}
+    return assessment.get("summary", {}) if isinstance(assessment.get("summary"), dict) else {}
+
+
+def _build_executive_summary(payload: dict) -> list[str]:
+    findings = payload.get("findings", [])
+    severity_counts = payload.get("summary", {}).get("severity_counts", {})
+    overview = payload.get("overview", {})
+    tool_summary = overview.get("tool_summary", {})
+    assessment_summary = _assessment_summary(payload.get("assessment"))
+    case_status = assessment_summary.get("case_status", {})
+    verification_status = assessment_summary.get("verification_status", {})
+
+    lines = []
+    if severity_counts.get("critical", 0) or severity_counts.get("high", 0):
+        lines.append(
+            f"{severity_counts.get('critical', 0)} critical and {severity_counts.get('high', 0)} high-severity automated findings require immediate triage."
+        )
+    elif findings:
+        lines.append(f"No critical or high automated findings were parsed, but {len(findings)} lower-severity issues still require review.")
+    else:
+        lines.append("No automated findings were parsed from the available tool outputs. Review coverage and tool failures before assuming the target is clean.")
+
+    failed = tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0)
+    if failed:
+        lines.append(f"Tool coverage was incomplete: {failed} tool run(s) failed, timed out, or were unavailable.")
+
+    if case_status:
+        total_cases = sum(case_status.values())
+        not_started = case_status.get("not_started", 0)
+        lines.append(f"Guided manual assessment coverage: {total_cases - not_started}/{total_cases} case(s) have at least some analyst activity.")
+    if verification_status:
+        confirmed = verification_status.get("confirmed", 0) + verification_status.get("reproduced", 0)
+        fixed = verification_status.get("fixed", 0)
+        lines.append(f"Verification workflow currently records {confirmed} confirmed/reproduced case(s) and {fixed} fixed case(s).")
+
+    if not lines:
+        lines.append("Automated and manual assessment data are limited. Continue guided testing before drawing strong conclusions.")
+    return lines
 
 
 def build_report_payload(
@@ -43,11 +79,12 @@ def build_report_payload(
     scan_mode: str,
     start_time: datetime,
     scan_overview: dict | None,
+    assessment: dict | None = None,
 ) -> dict:
     duration = datetime.now() - start_time
     duration_seconds = int(duration.total_seconds())
-    return {
-        "report_version": 2,
+    payload = {
+        "report_version": 3,
         "target_url": target_url,
         "scan_mode": scan_mode,
         "scan_started_at": start_time.isoformat(),
@@ -57,29 +94,58 @@ def build_report_payload(
             "severity_counts": _severity_counts(findings),
         },
         "overview": scan_overview or {},
+        "assessment": assessment or {},
         "findings": findings,
     }
+    payload["summary"]["executive_summary"] = _build_executive_summary(payload)
+    return payload
+
+
+def _render_metric_cards(summary: dict, assessment_summary: dict, overview: dict) -> str:
+    severity_counts = summary.get("severity_counts", {})
+    tool_summary = overview.get("tool_summary", {})
+    note_count = assessment_summary.get("note_count", 0)
+    verified = assessment_summary.get("verification_status", {}).get("confirmed", 0) + assessment_summary.get("verification_status", {}).get("reproduced", 0)
+    metrics = [
+        ("Critical", severity_counts.get("critical", 0), "critical"),
+        ("High", severity_counts.get("high", 0), "high"),
+        ("Medium", severity_counts.get("medium", 0), "medium"),
+        ("Low", severity_counts.get("low", 0), "low"),
+        ("Tool Failures", tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0), "info"),
+        ("Verified Cases", verified, "good"),
+        ("Analyst Notes", note_count, "info"),
+        ("Total Findings", summary.get("finding_count", 0), "total"),
+    ]
+    return "".join(
+        f"<div class='metric-card {css}'><div class='label'>{html.escape(label)}</div><div class='value'>{value}</div></div>"
+        for label, value, css in metrics
+    )
 
 
 def generate_html_report(payload: dict) -> str:
     findings = payload.get("findings", [])
     summary = payload.get("summary", {})
-    severity_counts = summary.get("severity_counts", {})
     overview = payload.get("overview", {})
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
     tool_runs = overview.get("tool_runs", [])
+    assessment = payload.get("assessment", {})
+    workbook = assessment.get("workbook", {}) if isinstance(assessment, dict) else {}
+    assessment_summary = _assessment_summary(assessment)
+    executive_summary = summary.get("executive_summary", [])
 
     tools_rows = []
     for run in tool_runs:
         outputs = run.get("output_files", [])
         output_html = "<br>".join(html.escape(Path(path).name) for path in outputs[:4]) or "None"
+        command = html.escape(" ".join(run.get("command", []))) or "-"
         tools_rows.append(
             "<tr>"
             f"<td>{html.escape(run.get('label', run.get('name', 'tool')))}</td>"
             f"<td>{html.escape(run.get('phase', ''))}</td>"
             f"<td>{_tool_status_badge(run.get('status', 'unknown'))}</td>"
             f"<td>{run.get('duration_seconds', 0)}</td>"
+            f"<td><code>{command}</code></td>"
             f"<td>{output_html}</td>"
             f"<td>{html.escape(run.get('note', '') or '-')}</td>"
             "</tr>"
@@ -143,43 +209,99 @@ def generate_html_report(payload: dict) -> str:
             """
         )
 
+    category_rows = []
+    for category, data in assessment_summary.get("category_coverage", {}).items():
+        category_rows.append(
+            f"<tr><td>{html.escape(category)}</td><td>{data.get('total', 0)}</td><td>{data.get('completed', 0)}</td><td>{data.get('confirmed', 0)}</td></tr>"
+        )
+
+    workbook_cases = workbook.get("cases", [])
+    case_rows = []
+    for case in workbook_cases:
+        case_rows.append(
+            "<tr>"
+            f"<td>{html.escape(case.get('category', ''))}</td>"
+            f"<td>{html.escape(case.get('title', ''))}</td>"
+            f"<td><span class='pill muted'>{html.escape(case.get('status', 'not_started').replace('_', ' '))}</span></td>"
+            f"<td><span class='pill muted'>{html.escape(case.get('verification_status', 'not_verified').replace('_', ' '))}</span></td>"
+            f"<td>{html.escape(case.get('owner', '') or '-')}</td>"
+            f"<td>{html.escape((case.get('notes', '') or '')[:220] or '-')}</td>"
+            "</tr>"
+        )
+
+    notes_html = ""
+    for note in workbook.get("operator_notes", []):
+        notes_html += (
+            "<div class='note-card'>"
+            f"<div class='note-head'><strong>{html.escape(note.get('title', 'Untitled note'))}</strong><span>{html.escape(note.get('type', 'analysis'))}</span></div>"
+            f"<div class='note-meta'>{html.escape(note.get('author', '') or 'Unassigned analyst')} | {html.escape(note.get('updated_at', note.get('created_at', '')))}</div>"
+            f"<p>{html.escape(note.get('body', '') or '')}</p>"
+            "</div>"
+        )
+
+    verification_html = ""
+    for run in workbook.get("verification_runs", []):
+        verification_html += (
+            "<div class='note-card'>"
+            f"<div class='note-head'><strong>{html.escape(run.get('title', 'Verification run'))}</strong><span>{html.escape(run.get('outcome', 'pending'))}</span></div>"
+            f"<div class='note-meta'>{html.escape(run.get('created_at', ''))}</div>"
+            f"<p><strong>Scope:</strong> {html.escape(run.get('scope', '') or '-')}</p>"
+            f"<p>{html.escape(run.get('notes', '') or '')}</p>"
+            "</div>"
+        )
+
     scan_date = datetime.fromisoformat(payload["scan_started_at"]).strftime("%Y-%m-%d %H:%M:%S")
     duration_seconds = payload.get("scan_duration_seconds", 0)
+    auth_context_notes = html.escape(workbook.get("auth_context_notes", "") or "Not documented.")
+    attack_hypotheses = html.escape(workbook.get("attack_path_hypotheses", "") or "No attack path hypotheses recorded yet.")
+    verification_strategy = html.escape(workbook.get("verification_strategy", "") or "No explicit verification strategy recorded yet.")
+    assessment_summary_text = html.escape(assessment_summary.get("summary", "") or "No analyst summary has been recorded for this target.")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OmniScan Report - {html.escape(payload.get('target_url', 'target'))}</title>
+    <title>OmniScan Assessment Report - {html.escape(payload.get('target_url', 'target'))}</title>
     <style>
         :root {{
-            --bg: #0f172a;
-            --panel: #111827;
-            --panel-2: #172033;
-            --text: #e5edf8;
-            --muted: #9fb0c9;
-            --border: #23314d;
-            --accent: #38bdf8;
+            --bg: #08101d;
+            --panel: #101826;
+            --panel-2: #162133;
+            --text: #e6eef8;
+            --muted: #91a3c1;
+            --border: #283750;
+            --accent: #46b7ff;
             --critical: #ef4444;
             --high: #f97316;
             --medium: #f59e0b;
             --low: #60a5fa;
             --info: #94a3b8;
-            --good: #10b981;
+            --good: #22c55e;
+            --violet: #8b5cf6;
         }}
         * {{ box-sizing: border-box; }}
-        body {{ margin: 0; font-family: Segoe UI, Arial, sans-serif; background: linear-gradient(180deg, #08101f, #111827 30%); color: var(--text); }}
-        .wrap {{ max-width: 1240px; margin: 0 auto; padding: 24px; }}
-        .hero {{ background: linear-gradient(135deg, #0f172a, #172554); border: 1px solid var(--border); border-radius: 18px; padding: 28px; box-shadow: 0 20px 60px rgba(2, 6, 23, 0.35); }}
-        .hero h1 {{ margin: 0 0 8px; font-size: 30px; }}
+        body {{ margin: 0; font-family: Segoe UI, Arial, sans-serif; background: radial-gradient(circle at top left, rgba(70,183,255,0.12), transparent 35%), linear-gradient(180deg, #07101d, #101826 28%); color: var(--text); }}
+        .wrap {{ max-width: 1320px; margin: 0 auto; padding: 28px; }}
+        .hero {{ background: linear-gradient(135deg, rgba(16,24,38,0.95), rgba(23,37,84,0.92)); border: 1px solid var(--border); border-radius: 22px; padding: 28px; box-shadow: 0 18px 60px rgba(2, 6, 23, 0.35); }}
+        .hero h1 {{ margin: 0 0 8px; font-size: 32px; }}
         .hero p {{ margin: 0; color: var(--muted); }}
         .grid {{ display: grid; gap: 16px; }}
-        .meta-grid {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 18px; }}
-        .summary-grid {{ grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); margin: 24px 0; }}
-        .card {{ background: rgba(17, 24, 39, 0.92); border: 1px solid var(--border); border-radius: 16px; padding: 18px; }}
-        .metric {{ font-size: 34px; font-weight: 700; margin-top: 8px; }}
-        h2 {{ margin: 28px 0 12px; font-size: 22px; }}
+        .meta-grid {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 20px; }}
+        .metrics {{ grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 24px 0; }}
+        .two {{ grid-template-columns: 1.15fr 1fr; }}
+        .three {{ grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }}
+        .card, .metric-card {{ background: rgba(16,24,38,0.94); border: 1px solid var(--border); border-radius: 18px; padding: 18px; }}
+        .metric-card .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
+        .metric-card .value {{ font-size: 34px; font-weight: 800; margin-top: 8px; }}
+        .metric-card.critical .value {{ color: var(--critical); }}
+        .metric-card.high .value {{ color: var(--high); }}
+        .metric-card.medium .value {{ color: var(--medium); }}
+        .metric-card.low .value {{ color: var(--low); }}
+        .metric-card.info .value {{ color: var(--info); }}
+        .metric-card.good .value {{ color: var(--good); }}
+        .metric-card.total .value {{ color: var(--accent); }}
+        h2 {{ margin: 30px 0 12px; font-size: 22px; }}
         h3 {{ margin-top: 0; }}
         table {{ width: 100%; border-collapse: collapse; }}
         th, td {{ text-align: left; padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
@@ -190,51 +312,53 @@ def generate_html_report(payload: dict) -> str:
         .sev.medium {{ background: rgba(245,158,11,0.14); color: var(--medium); }}
         .sev.low {{ background: rgba(96,165,250,0.14); color: var(--low); }}
         .sev.info {{ background: rgba(148,163,184,0.14); color: var(--info); }}
-        .pill.good {{ background: rgba(16,185,129,0.15); color: #6ee7b7; }}
+        .pill.good {{ background: rgba(34,197,94,0.15); color: #86efac; }}
         .pill.bad {{ background: rgba(239,68,68,0.15); color: #fca5a5; }}
         .pill.warn {{ background: rgba(245,158,11,0.15); color: #fcd34d; }}
         .pill.muted {{ background: rgba(148,163,184,0.15); color: #cbd5e1; }}
-        .two {{ grid-template-columns: 1.2fr 1fr; }}
-        .three {{ grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }}
+        .exec-list {{ margin: 0; padding-left: 20px; }}
         .finding {{ border-left: 4px solid var(--border); margin-bottom: 16px; }}
         .finding.critical {{ border-left-color: var(--critical); }}
         .finding.high {{ border-left-color: var(--high); }}
         .finding.medium {{ border-left-color: var(--medium); }}
         .finding.low {{ border-left-color: var(--low); }}
         .finding.info {{ border-left-color: var(--info); }}
-        .finding-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
-        .meta {{ color: var(--muted); }}
-        pre {{ background: #0b1220; border: 1px solid var(--border); color: #dbeafe; padding: 12px; border-radius: 12px; white-space: pre-wrap; overflow-x: auto; }}
+        .finding-head, .note-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; }}
+        .meta, .note-meta {{ color: var(--muted); font-size: 13px; }}
+        pre, code {{ background: #09111f; border: 1px solid var(--border); color: #dbeafe; border-radius: 10px; }}
+        pre {{ padding: 12px; white-space: pre-wrap; overflow-x: auto; }}
+        code {{ padding: 2px 6px; }}
         ul, ol {{ padding-left: 20px; }}
         a {{ color: #7dd3fc; }}
-        .muted {{ color: var(--muted); }}
-        @media (max-width: 900px) {{
-            .two {{ grid-template-columns: 1fr; }}
-        }}
+        .narrative {{ white-space: pre-wrap; line-height: 1.6; }}
+        .note-card {{ background: rgba(22,33,51,0.75); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }}
+        @media (max-width: 980px) {{ .two {{ grid-template-columns: 1fr; }} }}
     </style>
 </head>
 <body>
     <div class="wrap">
         <section class="hero">
-            <h1>OmniScan Comprehensive Security Report</h1>
+            <h1>OmniScan Comprehensive Assessment Report</h1>
             <p>{html.escape(payload.get('target_url', ''))}</p>
             <div class="grid meta-grid">
-                <div class="card"><div class="muted">Scan Started</div><div class="metric" style="font-size:18px">{scan_date}</div></div>
-                <div class="card"><div class="muted">Mode</div><div class="metric" style="font-size:18px">{html.escape(payload.get('scan_mode', ''))}</div></div>
-                <div class="card"><div class="muted">Requested Profile</div><div class="metric" style="font-size:18px">{html.escape(overview.get('requested_profile', ''))}</div></div>
-                <div class="card"><div class="muted">Effective Profile</div><div class="metric" style="font-size:18px">{html.escape(overview.get('effective_profile', ''))}</div></div>
-                <div class="card"><div class="muted">Duration</div><div class="metric" style="font-size:18px">{duration_seconds}s</div></div>
+                <div class="card"><div class="meta">Scan Started</div><div>{scan_date}</div></div>
+                <div class="card"><div class="meta">Mode</div><div>{html.escape(payload.get('scan_mode', ''))}</div></div>
+                <div class="card"><div class="meta">Requested Profile</div><div>{html.escape(overview.get('requested_profile', ''))}</div></div>
+                <div class="card"><div class="meta">Effective Profile</div><div>{html.escape(overview.get('effective_profile', ''))}</div></div>
+                <div class="card"><div class="meta">Duration</div><div>{duration_seconds}s</div></div>
             </div>
         </section>
 
-        <section class="grid summary-grid">
-            <div class="card"><div class="muted">Critical</div><div class="metric" style="color:var(--critical)">{severity_counts.get('critical', 0)}</div></div>
-            <div class="card"><div class="muted">High</div><div class="metric" style="color:var(--high)">{severity_counts.get('high', 0)}</div></div>
-            <div class="card"><div class="muted">Medium</div><div class="metric" style="color:var(--medium)">{severity_counts.get('medium', 0)}</div></div>
-            <div class="card"><div class="muted">Low</div><div class="metric" style="color:var(--low)">{severity_counts.get('low', 0)}</div></div>
-            <div class="card"><div class="muted">Info</div><div class="metric" style="color:var(--info)">{severity_counts.get('info', 0)}</div></div>
-            <div class="card"><div class="muted">Total Findings</div><div class="metric">{summary.get('finding_count', 0)}</div></div>
+        <section class="grid metrics">
+            {_render_metric_cards(summary, assessment_summary, overview)}
         </section>
+
+        <h2>Executive Summary</h2>
+        <div class="card">
+            <ul class="exec-list">
+                {''.join(f'<li>{html.escape(item)}</li>' for item in executive_summary)}
+            </ul>
+        </div>
 
         <h2>Target Overview</h2>
         <div class="grid two">
@@ -261,6 +385,54 @@ def generate_html_report(payload: dict) -> str:
             </div>
         </div>
 
+        <h2>Assessment Narrative</h2>
+        <div class="grid two">
+            <div class="card">
+                <h3>Analyst Summary</h3>
+                <div class="narrative">{assessment_summary_text}</div>
+            </div>
+            <div class="card">
+                <h3>Authentication Context</h3>
+                <div class="narrative">{auth_context_notes}</div>
+            </div>
+            <div class="card">
+                <h3>Attack Path Hypotheses</h3>
+                <div class="narrative">{attack_hypotheses}</div>
+            </div>
+            <div class="card">
+                <h3>Verification Strategy</h3>
+                <div class="narrative">{verification_strategy}</div>
+            </div>
+        </div>
+
+        <h2>Manual Assessment Analytics</h2>
+        <div class="grid two">
+            <div class="card">
+                <h3>Case Status</h3>
+                <table>
+                    <tr><th>Status</th><th>Count</th></tr>
+                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('case_status', {}).items()) or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>"}
+                </table>
+            </div>
+            <div class="card">
+                <h3>Verification Status</h3>
+                <table>
+                    <tr><th>Status</th><th>Count</th></tr>
+                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('verification_status', {}).items()) or "<tr><td colspan='2'>No verification records yet.</td></tr>"}
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Category Coverage</h3>
+            <table>
+                <thead><tr><th>Category</th><th>Total Cases</th><th>Worked</th><th>Verified</th></tr></thead>
+                <tbody>
+                    {''.join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+
         <h2>Scan Coverage</h2>
         <div class="card">
             <table>
@@ -270,12 +442,13 @@ def generate_html_report(payload: dict) -> str:
                         <th>Phase</th>
                         <th>Status</th>
                         <th>Seconds</th>
+                        <th>Command</th>
                         <th>Outputs</th>
                         <th>Notes</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {''.join(tools_rows) or "<tr><td colspan='6'>No tool telemetry captured.</td></tr>"}
+                    {''.join(tools_rows) or "<tr><td colspan='7'>No tool telemetry captured.</td></tr>"}
                 </tbody>
             </table>
         </div>
@@ -283,6 +456,35 @@ def generate_html_report(payload: dict) -> str:
         <h2>Discovery Artifacts</h2>
         <div class="grid three">
             {''.join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>"}
+        </div>
+
+        <h2>Guided Manual Test Cases</h2>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Case</th>
+                        <th>Status</th>
+                        <th>Verification</th>
+                        <th>Owner</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+
+        <h2>Operator Notes</h2>
+        <div class="card">
+            {notes_html or "<p>No operator notes recorded.</p>"}
+        </div>
+
+        <h2>Verification Runs</h2>
+        <div class="card">
+            {verification_html or "<p>No verification runs recorded.</p>"}
         </div>
 
         <h2>Findings Index</h2>
@@ -320,9 +522,12 @@ def generate_markdown_report(payload: dict) -> str:
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
     tool_runs = overview.get("tool_runs", [])
+    assessment = payload.get("assessment", {})
+    workbook = assessment.get("workbook", {}) if isinstance(assessment, dict) else {}
+    assessment_summary = _assessment_summary(assessment)
 
     lines = [
-        "# OmniScan Comprehensive Security Report",
+        "# OmniScan Comprehensive Assessment Report",
         "",
         f"- Target: {payload.get('target_url', '')}",
         f"- Scan started: {payload.get('scan_started_at', '')}",
@@ -331,28 +536,43 @@ def generate_markdown_report(payload: dict) -> str:
         f"- Effective profile: {overview.get('effective_profile', '')}",
         f"- Duration: {payload.get('scan_duration_seconds', 0)}s",
         "",
-        "## Summary",
+        "## Executive Summary",
         "",
-        f"- Total findings: {summary.get('finding_count', 0)}",
-        f"- Critical: {severity_counts.get('critical', 0)}",
-        f"- High: {severity_counts.get('high', 0)}",
-        f"- Medium: {severity_counts.get('medium', 0)}",
-        f"- Low: {severity_counts.get('low', 0)}",
-        f"- Info: {severity_counts.get('info', 0)}",
-        "",
-        "## Fingerprint",
-        "",
-        f"- Title: {fingerprint.get('title', '') or '-'}",
-        f"- Status code: {fingerprint.get('status_code', '') or '-'}",
-        f"- Web server: {fingerprint.get('webserver', '') or '-'}",
-        f"- Technologies: {', '.join(fingerprint.get('technologies', [])) or '-'}",
-        f"- WhatWeb plugins: {', '.join(fingerprint.get('whatweb_plugins', [])) or '-'}",
-        "",
-        "## Scan Coverage",
-        "",
-        "| Tool | Phase | Status | Seconds | Note |",
-        "|------|-------|--------|---------|------|",
     ]
+    lines.extend([f"- {item}" for item in summary.get("executive_summary", [])])
+    lines.extend(
+        [
+            "",
+            "## Severity Summary",
+            "",
+            f"- Total findings: {summary.get('finding_count', 0)}",
+            f"- Critical: {severity_counts.get('critical', 0)}",
+            f"- High: {severity_counts.get('high', 0)}",
+            f"- Medium: {severity_counts.get('medium', 0)}",
+            f"- Low: {severity_counts.get('low', 0)}",
+            f"- Info: {severity_counts.get('info', 0)}",
+            "",
+            "## Fingerprint",
+            "",
+            f"- Title: {fingerprint.get('title', '') or '-'}",
+            f"- Status code: {fingerprint.get('status_code', '') or '-'}",
+            f"- Web server: {fingerprint.get('webserver', '') or '-'}",
+            f"- Technologies: {', '.join(fingerprint.get('technologies', [])) or '-'}",
+            f"- WhatWeb plugins: {', '.join(fingerprint.get('whatweb_plugins', [])) or '-'}",
+            "",
+            "## Manual Assessment Narrative",
+            "",
+            f"- Analyst summary: {assessment_summary.get('summary', '') or 'Not recorded'}",
+            f"- Authentication context: {workbook.get('auth_context_notes', '') or 'Not recorded'}",
+            f"- Attack path hypotheses: {workbook.get('attack_path_hypotheses', '') or 'Not recorded'}",
+            f"- Verification strategy: {workbook.get('verification_strategy', '') or 'Not recorded'}",
+            "",
+            "## Scan Coverage",
+            "",
+            "| Tool | Phase | Status | Seconds | Note |",
+            "|------|-------|--------|---------|------|",
+        ]
+    )
 
     for run in tool_runs:
         lines.append(
@@ -372,11 +592,36 @@ def generate_markdown_report(payload: dict) -> str:
             f"- ffuf hits: {discovery.get('ffuf_count', 0)}",
             f"- Feroxbuster hits: {discovery.get('feroxbuster_count', 0)}",
             "",
-            "## Findings",
+            "## Guided Manual Cases",
             "",
+            "| Category | Case | Status | Verification | Owner |",
+            "|----------|------|--------|--------------|-------|",
         ]
     )
 
+    for case in workbook.get("cases", []):
+        lines.append(
+            f"| {case.get('category', '')} | {case.get('title', '')} | {case.get('status', '')} | "
+            f"{case.get('verification_status', '')} | {case.get('owner', '') or '-'} |"
+        )
+
+    lines.extend(["", "## Operator Notes", ""])
+    for note in workbook.get("operator_notes", []):
+        lines.append(f"### {note.get('title', 'Note')} [{note.get('type', 'analysis')}]")
+        lines.append(f"- Author: {note.get('author', '') or 'Unassigned analyst'}")
+        lines.append(f"- Updated: {note.get('updated_at', note.get('created_at', ''))}")
+        lines.append(f"- Body: {note.get('body', '')}")
+        lines.append("")
+
+    lines.extend(["## Verification Runs", ""])
+    for run in workbook.get("verification_runs", []):
+        lines.append(f"### {run.get('title', 'Verification run')} ({run.get('outcome', 'pending')})")
+        lines.append(f"- Created: {run.get('created_at', '')}")
+        lines.append(f"- Scope: {run.get('scope', '') or '-'}")
+        lines.append(f"- Notes: {run.get('notes', '') or '-'}")
+        lines.append("")
+
+    lines.extend(["## Findings", ""])
     for finding in findings:
         lines.append(f"### [{finding.get('severity', 'info').upper()}] {finding.get('id', '')} {finding.get('title', '')}")
         lines.append(f"- Source: {finding.get('source_tool', '')}")
@@ -407,6 +652,7 @@ def save_reports(
     scan_mode: str,
     start_time: datetime,
     scan_overview: dict | None = None,
+    assessment: dict | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Path]:
     """Generate and save comprehensive HTML, markdown, and JSON reports."""
@@ -417,7 +663,7 @@ def save_reports(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     ts = start_time.strftime("%Y%m%d_%H%M%S")
-    payload = build_report_payload(findings, target_url, scan_mode, start_time, scan_overview)
+    payload = build_report_payload(findings, target_url, scan_mode, start_time, scan_overview, assessment)
 
     html_path = report_dir / f"report_{ts}.html"
     html_path.write_text(generate_html_report(payload), encoding="utf-8")

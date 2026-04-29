@@ -1,0 +1,111 @@
+[
+  {
+    "id": "business-logic-flaws",
+    "category": "Business Logic",
+    "title": "Business Logic Abuse Review",
+    "priority": "high",
+    "objective": "Identify workflow abuse that violates intended business rules without relying on classic technical exploits.",
+    "automation_support": "Use scan output to map forms, endpoints, parameters, and hidden workflow URLs before manual chaining.",
+    "guided_steps": [
+      "Identify core workflows such as purchase, approval, account recovery, rewards, booking, or submission flows.",
+      "Attempt step skipping, replay, duplicate submission, negative values, stale state reuse, and race-condition style repetition.",
+      "Compare client-side restrictions with server-side enforcement and capture evidence for inconsistent state transitions."
+    ],
+    "evidence_expectations": [
+      "Affected workflow name",
+      "Sequence of requests or steps",
+      "Observed business impact",
+      "Server-side response proving the flaw"
+    ]
+  },
+  {
+    "id": "complex-auth-bypass",
+    "category": "Authentication",
+    "title": "Complex Authentication Bypass",
+    "priority": "critical",
+    "objective": "Test multi-step authentication and recovery paths for bypasses across login, password reset, MFA, invite, and activation flows.",
+    "automation_support": "Use discovery results to locate login, reset, invitation, and callback endpoints.",
+    "guided_steps": [
+      "Map all authentication entry points including SSO callbacks, password reset, OTP, invite acceptance, and device trust flows.",
+      "Test state tampering, token reuse, replay after logout, and alternate identity provider abuse.",
+      "Validate whether MFA, email verification, or account activation can be bypassed by direct API or step desynchronization."
+    ],
+    "evidence_expectations": [
+      "Preconditions and account state",
+      "Bypass path or token handling issue",
+      "Impact on account takeover or privilege gain"
+    ]
+  },
+  {
+    "id": "real-access-control-testing",
+    "category": "Access Control",
+    "title": "Real Access Control Testing",
+    "priority": "critical",
+    "objective": "Validate authorization boundaries using role, ownership, horizontal, and vertical access-control tests instead of only status codes.",
+    "automation_support": "Use crawler, parameter, and content-discovery output to enumerate object IDs, admin URLs, and API resources.",
+    "guided_steps": [
+      "Establish at least two user roles and two users in the same role when possible.",
+      "Replay requests across roles, tenants, and object owners with only identifiers changed.",
+      "Check both UI and direct API access to privileged actions, exports, admin functions, and hidden resources."
+    ],
+    "evidence_expectations": [
+      "Actor role and target object owner",
+      "Original authorized request and unauthorized variant",
+      "Observed unauthorized data access or action success"
+    ]
+  },
+  {
+    "id": "multi-step-abuse-paths",
+    "category": "Abuse Paths",
+    "title": "Multi-Step Abuse Path Mapping",
+    "priority": "high",
+    "objective": "Chain individually weak controls into a practical attack path that creates meaningful business impact.",
+    "automation_support": "Use fingerprinting, discovery, and automated findings as candidate starting points for chaining.",
+    "guided_steps": [
+      "List low- and medium-severity findings that could assist later stages such as endpoint discovery, open redirects, verbose errors, and missing validation.",
+      "Model at least one path from reconnaissance to impact using multiple weaknesses.",
+      "Capture prerequisites, transition points, and where a defensive control should have interrupted the path."
+    ],
+    "evidence_expectations": [
+      "Attack path narrative",
+      "Linked findings or assumptions",
+      "Business impact if executed end to end"
+    ]
+  },
+  {
+    "id": "tenant-isolation-failures",
+    "category": "Multi-Tenancy",
+    "title": "Tenant Isolation Review",
+    "priority": "critical",
+    "objective": "Validate hard tenant boundaries across identifiers, exports, search, shared resources, and caching layers.",
+    "automation_support": "Use parameter discovery and API endpoint mapping to locate tenant identifiers and cross-tenant object references.",
+    "guided_steps": [
+      "Compare requests from multiple tenants and identify all tenant identifiers in headers, paths, query strings, and payloads.",
+      "Test whether tenant IDs can be swapped, omitted, or overruled by hidden parameters or cached artifacts.",
+      "Check exports, attachments, logs, notifications, and background jobs for cross-tenant data leakage."
+    ],
+    "evidence_expectations": [
+      "Tenant A and Tenant B context",
+      "Cross-tenant object or data exposed",
+      "Whether access was read-only or write-capable"
+    ]
+  },
+  {
+    "id": "subtle-api-authorization-bugs",
+    "category": "API Authorization",
+    "title": "Subtle API Authorization Bugs",
+    "priority": "critical",
+    "objective": "Look for fine-grained API authorization gaps that do not appear as obvious 200/403 mismatches.",
+    "automation_support": "Use API discovery, parameter extraction, and replay of authenticated traffic to build test cases.",
+    "guided_steps": [
+      "Inspect create, update, bulk action, export, and search endpoints for hidden fields and ownership controls.",
+      "Test field-level authorization, mass assignment, object reassignment, and scope confusion between list and detail endpoints.",
+      "Compare API behavior against UI restrictions and role documentation to find mismatched enforcement."
+    ],
+    "evidence_expectations": [
+      "Affected endpoint and method",
+      "Unauthorized field, object, or action",
+      "Observed response proving the authorization gap"
+    ]
+  }
+]

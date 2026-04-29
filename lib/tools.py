@@ -548,7 +548,15 @@ def _run_registered_tool(
     return runner()
 
 
-def run_all_tools(url: str, scan_dir: Path, config: dict, tokens: dict, mode: str, profile: str = "auto") -> dict:
+def run_all_tools(
+    url: str,
+    scan_dir: Path,
+    config: dict,
+    tokens: dict,
+    mode: str,
+    profile: str = "auto",
+    progress_callback=None,
+) -> dict:
     """Run the scan plan and return rich execution metadata."""
     installed = get_installed_tools()
     parsed_url = urlparse(url)
@@ -557,56 +565,116 @@ def run_all_tools(url: str, scan_dir: Path, config: dict, tokens: dict, mode: st
     scan_dir.mkdir(parents=True, exist_ok=True)
 
     tool_runs: list[dict] = []
+    completed_count = 0
 
+    def _emit(event: dict):
+        if progress_callback:
+            progress_callback(event)
+
+    def _with_progress(total_tools: int, tool_name: str, phase: str, runner):
+        nonlocal completed_count
+
+        tool_meta = next((t for t in TOOLS if t["name"] == tool_name), {"label": tool_name})
+        _emit(
+            {
+                "event": "tool_started",
+                "tool": tool_name,
+                "tool_label": tool_meta.get("label", tool_name),
+                "phase": phase,
+                "completed_tools": completed_count,
+                "total_tools": total_tools,
+                "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
+                "message": f"Running {tool_meta.get('label', tool_name)}.",
+            }
+        )
+
+        result = _run_registered_tool(tool_name, phase, installed, runner)
+        completed_count += 1
+
+        _emit(
+            {
+                "event": "tool_finished",
+                "tool": tool_name,
+                "tool_label": tool_meta.get("label", tool_name),
+                "phase": phase,
+                "status": result.get("status", "unknown"),
+                "duration_seconds": result.get("duration_seconds", 0),
+                "completed_tools": completed_count,
+                "total_tools": total_tools,
+                "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
+                "message": f"{tool_meta.get('label', tool_name)} completed with status {result.get('status', 'unknown')}.",
+            }
+        )
+        return result
+
+    static_plan: list[tuple[str, str, callable]] = []
     if mode in ("passive", "full"):
-        generic_passive = [
-            ("httpx", lambda: run_httpx(url, config, scan_dir)),
-            ("whatweb", lambda: run_whatweb(url, config, scan_dir)),
-            ("corsy", lambda: run_corsy(url, scan_dir)),
-            ("gau", lambda: run_gau(hostname, scan_dir)),
-            ("katana", lambda: run_katana(url, scan_dir)),
-        ]
-        for tool_name, runner in generic_passive:
-            tool_runs.append(_run_registered_tool(tool_name, "passive", installed, runner))
-
+        static_plan.extend(
+            [
+                ("httpx", "passive", lambda: run_httpx(url, config, scan_dir)),
+                ("whatweb", "passive", lambda: run_whatweb(url, config, scan_dir)),
+                ("corsy", "passive", lambda: run_corsy(url, scan_dir)),
+                ("gau", "passive", lambda: run_gau(hostname, scan_dir)),
+                ("katana", "passive", lambda: run_katana(url, scan_dir)),
+            ]
+        )
         if not local_target and parsed_url.scheme == "https":
-            tool_runs.append(_run_registered_tool("sslyze", "passive", installed, lambda: run_sslyze(hostname, scan_dir)))
+            static_plan.append(("sslyze", "passive", lambda: run_sslyze(hostname, scan_dir)))
 
         try:
             is_private_ip = ipaddress.ip_address(hostname).is_private
         except ValueError:
             is_private_ip = False
         if not local_target and not is_private_ip:
-            tool_runs.append(_run_registered_tool("subfinder", "passive", installed, lambda: run_subfinder(hostname, scan_dir)))
+            static_plan.append(("subfinder", "passive", lambda: run_subfinder(hostname, scan_dir)))
+
+    _emit({"event": "plan_updated", "phase": "tool_execution", "total_tools": len(static_plan), "message": "Initial scan plan prepared."})
+
+    for tool_name, phase, runner in static_plan:
+        tool_runs.append(_with_progress(len(static_plan), tool_name, phase, runner))
 
     profile_info = detect_profile_from_artifacts(scan_dir, url, profile)
     effective_profile = profile_info["effective_profile"]
 
+    dynamic_plan: list[tuple[str, str, callable]] = []
     if mode in ("passive", "full"):
-        tool_runs.append(_run_registered_tool("nuclei", "passive", installed, lambda: run_nuclei(url, config, scan_dir, effective_profile)))
-        tool_runs.append(_run_registered_tool("nikto", "passive", installed, lambda: run_nikto(url, config, scan_dir)))
+        dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile)))
+        dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir)))
         if effective_profile == "wordpress":
-            tool_runs.append(_run_registered_tool("wpscan", "passive", installed, lambda: run_wpscan(url, config, tokens, scan_dir, local_target)))
+            dynamic_plan.append(("wpscan", "passive", lambda: run_wpscan(url, config, tokens, scan_dir, local_target)))
         elif effective_profile == "joomla":
-            tool_runs.append(_run_registered_tool("joomscan", "passive", installed, lambda: run_joomscan(url, scan_dir)))
+            dynamic_plan.append(("joomscan", "passive", lambda: run_joomscan(url, scan_dir)))
         elif effective_profile == "drupal":
-            tool_runs.append(_run_registered_tool("droopescan", "passive", installed, lambda: run_droopescan(url, scan_dir)))
+            dynamic_plan.append(("droopescan", "passive", lambda: run_droopescan(url, scan_dir)))
 
     if mode in ("active", "full"):
         if effective_profile in ("wordpress", "joomla", "drupal"):
-            tool_runs.append(_run_registered_tool("cmsmap", "active", installed, lambda: run_cmsmap(url, scan_dir)))
-        active_tools = [
-            ("sqlmap", lambda: run_sqlmap(url, scan_dir, effective_profile)),
-            ("ffuf", lambda: run_ffuf(url, config, scan_dir)),
-            ("feroxbuster", lambda: run_feroxbuster(url, config, scan_dir)),
-            ("arjun", lambda: run_arjun(url, scan_dir)),
-            ("dalfox", lambda: run_dalfox(url, scan_dir)),
-            ("wapiti", lambda: run_wapiti(url, scan_dir)),
-        ]
+            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir)))
+        dynamic_plan.extend(
+            [
+                ("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile)),
+                ("ffuf", "active", lambda: run_ffuf(url, config, scan_dir)),
+                ("feroxbuster", "active", lambda: run_feroxbuster(url, config, scan_dir)),
+                ("arjun", "active", lambda: run_arjun(url, scan_dir)),
+                ("dalfox", "active", lambda: run_dalfox(url, scan_dir)),
+                ("wapiti", "active", lambda: run_wapiti(url, scan_dir)),
+            ]
+        )
         if effective_profile in ("webapp", "api"):
-            active_tools.append(("commix", lambda: run_commix(url, scan_dir)))
-        for tool_name, runner in active_tools:
-            tool_runs.append(_run_registered_tool(tool_name, "active", installed, runner))
+            dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir)))
+
+    total_tools = len(static_plan) + len(dynamic_plan)
+    _emit(
+        {
+            "event": "plan_updated",
+            "phase": "tool_execution",
+            "total_tools": total_tools,
+            "message": f"Profile resolved as {effective_profile}; updated scan plan has {total_tools} tools.",
+        }
+    )
+
+    for tool_name, phase, runner in dynamic_plan:
+        tool_runs.append(_with_progress(total_tools, tool_name, phase, runner))
 
     completed = [item["name"] for item in tool_runs if item["status"] in ("completed", "completed_no_output")]
     profile_info["tools_completed"] = completed

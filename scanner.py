@@ -22,6 +22,7 @@ import sys
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 # Ensure project root is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,6 +34,7 @@ from lib.enrichment import enrich_findings
 from lib.reports import save_reports
 from lib.installer import install_missing_tools, install_tool
 from lib.notifier import send_scan_email, configure_email
+from lib.assessments import get_workbook, summarize_workbook
 
 
 def _is_ci() -> bool:
@@ -179,6 +181,31 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
             {"name": "dalfox", "label": "Dalfox", "phase": "active", "status": "completed", "duration_seconds": 9.3, "output_files": ["dalfox.json"], "primary_output": "dalfox.json", "command": ["dalfox"], "note": "", "stdout_log": "", "stderr_log": "", "returncode": 0},
         ],
     }
+    demo_assessment = {
+        "workbook": {
+            "target_url": "https://demo-company.com",
+            "updated_at": start_time.isoformat(),
+            "summary": "Manual analyst review suggests the application has both known WordPress hygiene issues and at least one realistic abuse path through exposed administrative surface and weak update hygiene.",
+            "auth_context_notes": "Anonymous review only. No authenticated admin session was provided for deeper access-control testing.",
+            "attack_path_hypotheses": "An attacker could chain exposed plugin versioning, directory listing, and weak update hygiene into plugin exploitation or account compromise attempts.",
+            "verification_strategy": "Prioritize retesting of update hygiene, harden exposed paths, then repeat CMS and content-discovery testing with authenticated coverage.",
+            "operator_notes": [
+                {"id": "note-demo-1", "created_at": start_time.isoformat(), "updated_at": start_time.isoformat(), "title": "Scope note", "body": "Demo assessment only covers public unauthenticated surface.", "type": "context", "author": "OmniScan Demo"}
+            ],
+            "verification_runs": [
+                {"id": "verify-demo-1", "created_at": start_time.isoformat(), "title": "Demo validation pass", "scope": "Public web surface", "outcome": "confirmed", "notes": "Sample findings mapped to evidence successfully.", "related_case_ids": ["business-logic-flaws"], "related_finding_ids": ["F-001"]}
+            ],
+            "cases": [
+                {"id": "business-logic-flaws", "category": "Business Logic", "title": "Business Logic Abuse Review", "priority": "high", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "needs_evidence", "verification_status": "not_verified", "owner": "", "notes": "No authenticated transactional flow available in demo scope.", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": start_time.isoformat(), "retest_notes": "", "remediation_advice": ""},
+                {"id": "complex-auth-bypass", "category": "Authentication", "title": "Complex Authentication Bypass", "priority": "critical", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "not_started", "verification_status": "not_verified", "owner": "", "notes": "", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": "", "retest_notes": "", "remediation_advice": ""},
+                {"id": "real-access-control-testing", "category": "Access Control", "title": "Real Access Control Testing", "priority": "critical", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "not_started", "verification_status": "not_verified", "owner": "", "notes": "", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": "", "retest_notes": "", "remediation_advice": ""},
+                {"id": "multi-step-abuse-paths", "category": "Abuse Paths", "title": "Multi-Step Abuse Path Mapping", "priority": "high", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "in_progress", "verification_status": "reproduced", "owner": "", "notes": "Chaining concept documented from public surface evidence.", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": start_time.isoformat(), "retest_notes": "", "remediation_advice": ""},
+                {"id": "tenant-isolation-failures", "category": "Multi-Tenancy", "title": "Tenant Isolation Review", "priority": "critical", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "not_started", "verification_status": "not_verified", "owner": "", "notes": "", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": "", "retest_notes": "", "remediation_advice": ""},
+                {"id": "subtle-api-authorization-bugs", "category": "API Authorization", "title": "Subtle API Authorization Bugs", "priority": "critical", "objective": "", "automation_support": "", "guided_steps": [], "evidence_expectations": [], "status": "not_started", "verification_status": "not_verified", "owner": "", "notes": "", "evidence": "", "attack_path_link": "", "related_finding_ids": [], "last_tested_at": "", "retest_notes": "", "remediation_advice": ""}
+            ]
+        }
+    }
+    demo_assessment["summary"] = summarize_workbook(demo_assessment["workbook"])
 
     paths = save_reports(
         findings=enriched,
@@ -186,6 +213,7 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
         scan_mode="Full (Passive + Active)",
         start_time=start_time,
         scan_overview=demo_overview,
+        assessment=demo_assessment,
         output_dir=config.REPORTS_DIR,
     )
 
@@ -211,10 +239,24 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
 # ── Scan Mode ───────────────────────────────────────────────────────────────────
 
 def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
-             send_email: bool = False, output_dir: Path | None = None, profile: str = "auto"):
+             send_email: bool = False, output_dir: Path | None = None, profile: str = "auto",
+             progress_callback: Callable[[dict], None] | None = None,
+             ci_fail_on_findings: bool = True):
     """Run a full scan on the given URL."""
+
+    def _emit(event: dict):
+        if progress_callback:
+            progress_callback(event)
+
     ui.section(f"Starting {mode.upper()} scan on {url} (Profile: {profile.upper()})")
     start_time = datetime.now()
+    _emit({
+        "event": "stage",
+        "stage": "initializing",
+        "progress": 2,
+        "current_tool": "Initializing",
+        "message": f"Starting {mode} scan for {url}.",
+    })
     ts = start_time.strftime("%Y%m%d_%H%M%S")
     scan_config = config.get_scan_config()
     tokens = config.get_tokens()
@@ -226,16 +268,31 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     scan_dir.mkdir(parents=True, exist_ok=True)
 
     # Run tools
-    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile)
+    _emit({
+        "event": "stage",
+        "stage": "tool_execution",
+        "progress": 4,
+        "current_tool": "Tool orchestration",
+        "message": "Launching scan tools.",
+    })
+    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile, progress_callback=_emit)
     tools_used = execution.get("tools_used", [])
     tool_runs = execution.get("tools", [])
 
     if not tools_used:
         ui.err("No tools were available to run. Install at least one tool first.")
+        _emit({"event": "error", "message": "No tools were available to run."})
         return
 
     # Parse results
     ui.section("Parsing Results")
+    _emit({
+        "event": "stage",
+        "stage": "parsing",
+        "progress": 84,
+        "current_tool": "Parsing outputs",
+        "message": "Parsing tool output files.",
+    })
     findings = parse_all_results(scan_dir)
     overview = collect_scan_overview(
         scan_dir=scan_dir,
@@ -244,6 +301,11 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         effective_profile=execution.get("effective_profile", profile),
         tool_runs=tool_runs,
     )
+    assessment_workbook = get_workbook(url)
+    assessment = {
+        "workbook": assessment_workbook,
+        "summary": summarize_workbook(assessment_workbook),
+    }
 
     if not findings:
         ui.warn("No findings detected. The target may be well-secured or tools may need API tokens.")
@@ -252,10 +314,24 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
 
     # Enrich
     ui.section("Enriching Findings")
+    _emit({
+        "event": "stage",
+        "stage": "enrichment",
+        "progress": 90,
+        "current_tool": "Enriching findings",
+        "message": "Correlating findings with remediation guidance.",
+    })
     enriched = enrich_findings(findings)
 
     # Generate reports
     ui.section("Generating Reports")
+    _emit({
+        "event": "stage",
+        "stage": "reporting",
+        "progress": 96,
+        "current_tool": "Generating reports",
+        "message": "Building HTML, Markdown, and JSON reports.",
+    })
     mode_label = {"passive": "Passive", "active": "Active", "full": "Full (Passive + Active)"}
     paths = save_reports(
         findings=enriched,
@@ -263,6 +339,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         scan_mode=mode_label.get(mode, mode),
         start_time=start_time,
         scan_overview=overview,
+        assessment=assessment,
         output_dir=scan_dir,
     )
 
@@ -292,11 +369,18 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         if choice == "y":
             webbrowser.open(str(paths["html"]))
 
+    _emit({
+        "event": "complete",
+        "message": "Scan completed successfully.",
+        "report_paths": {key: str(val) for key, val in paths.items()},
+    })
+
     # In CI mode, exit with error if critical/high findings found
-    if ci_mode and enriched:
+    if ci_mode and ci_fail_on_findings and enriched:
         crit_high = sum(1 for f in enriched if f.get("severity") in ("critical", "high"))
         if crit_high > 0:
             ui.warn(f"CI gate: {crit_high} critical/high finding(s) detected.")
+            _emit({"event": "error", "message": f"CI gate failed: {crit_high} critical/high findings."})
             sys.exit(1)
 
 

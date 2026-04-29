@@ -48,6 +48,13 @@
                     </svg>
                     <span>Reports</span>
                 </a>
+                <a href="#" class="nav-item" data-view="assessments" id="nav-assessments">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 12l2 2 4-4"></path>
+                        <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path>
+                    </svg>
+                    <span>Assessments</span>
+                </a>
                 <a href="#" class="nav-item" data-view="targets" id="nav-targets">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10"></circle>
@@ -190,6 +197,18 @@
                             </ul>
                         </div>
                     </div>
+
+                    <div class="card widget-active-scans">
+                        <div class="card-header">
+                            <h3>Active Scans</h3>
+                            <span class="badge badge-neutral" id="dashActiveScansBadge">0 running</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="dashActiveScansList" class="active-scans-list">
+                                <div class="empty-state">No scans in session.</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -239,12 +258,50 @@
                                         </select>
                                     </div>
                                 </div>
+                                <div class="scan-estimate-hint" id="scanEstimateHint">Estimated runtime: loading...</div>
                                 <button type="submit" class="btn-primary btn-lg" id="scanSubmitBtn">
                                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                                     <span>Initiate Scan</span>
                                 </button>
                             </form>
                             <div id="scanFormStatus" class="scan-status-msg hidden"></div>
+                        </div>
+                    </div>
+
+                    <div class="card scan-progress-card" id="scanProgressCard">
+                        <div class="card-header">
+                            <div>
+                                <h3>Live Scan Progress</h3>
+                                <p class="subtitle" id="scanProgressSubtitle">Start a scan to see real-time tool activity and completion.</p>
+                            </div>
+                            <button class="btn-ghost btn-danger btn-sm" id="scanCancelBtn" style="display:none" onclick="App.cancelScan()">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                Cancel
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="scan-progress-main">
+                                <div class="scan-donut" id="scanDonut" style="--progress: 0;">
+                                    <div class="scan-donut-center">
+                                        <strong id="scanProgressPercent">0%</strong>
+                                        <span>Complete</span>
+                                    </div>
+                                </div>
+                                <div class="scan-progress-meta">
+                                    <div class="scan-progress-row"><span>Status</span><strong id="scanRunState">Idle</strong></div>
+                                    <div class="scan-progress-row"><span>Current Tool</span><strong id="scanCurrentTool">-</strong></div>
+                                    <div class="scan-progress-row" id="scanToolEtaRow" style="display:none"><span>Tool ETA</span><strong id="scanToolEta">-</strong></div>
+                                    <div class="scan-progress-row"><span>Progress</span><strong id="scanToolProgress">0 / 0 tools</strong></div>
+                                    <div class="scan-progress-row"><span>Elapsed</span><strong id="scanElapsed">~0s</strong></div>
+                                    <div class="scan-progress-row"><span>ETA</span><strong id="scanEta">-</strong></div>
+                                </div>
+                            </div>
+                            <div class="scan-progress-bar-wrap">
+                                <div class="scan-progress-bar"><div id="scanProgressBarFill"></div></div>
+                            </div>
+                            <div class="scan-activity-log" id="scanActivityLog">
+                                <div class="empty-state">No scan running.</div>
+                            </div>
                         </div>
                     </div>
 
@@ -278,6 +335,54 @@
                     <div class="empty-state-big">
                         <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         <p>Loading reports...</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="view" id="view-assessments">
+                <header class="view-header">
+                    <div>
+                        <h1>Assessments</h1>
+                        <p class="view-subtitle">Step-by-step manual testing with collapsible guidance</p>
+                    </div>
+                    <button class="btn-ghost" id="refreshAssessments">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        Refresh
+                    </button>
+                </header>
+
+                <div class="assessment-shell">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Target Workbook</h3>
+                            <p class="subtitle">Load or continue a guided manual assessment for a saved or custom target</p>
+                        </div>
+                        <div class="card-body">
+                            <form id="assessmentTargetForm">
+                                <div class="input-row assessment-target-row">
+                                    <input type="text" id="assessmentTargetInput" placeholder="https://example.com" required>
+                                    <select id="assessmentTargetSelect" class="target-dropdown">
+                                        <option value="">Pick saved target</option>
+                                    </select>
+                                    <button type="submit" class="btn-primary">
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                                        Load Workbook
+                                    </button>
+                                    <button type="button" class="btn-ghost" id="saveAssessmentBtn">
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                        Save Workbook
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div id="assessmentWorkspace" class="assessment-workspace">
+                        <div class="empty-state-big">
+                            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path><path d="M9 12l2 2 4-4"></path></svg>
+                            <h3>No Workbook Loaded</h3>
+                            <p>Select a saved target or enter a URL to start guided manual testing.</p>
+                        </div>
                     </div>
                 </div>
             </section>
