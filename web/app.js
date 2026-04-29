@@ -6,7 +6,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     App.init();
+
+    // Close download dropdowns when clicking outside
+    document.addEventListener("click", (e) => {
+        if (!e.target.closest(".dl-dropdown")) {
+            document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
+        }
+    });
 });
+
+// ── Global authenticated fetch (redirect to /login on 401) ───────────────────
+async function _authedFetch(url, options) {
+    const res = await fetch(url, options);
+    if (res.status === 401 && !url.includes("/api/auth/")) {
+        window.location.href = "/login";
+        return res;
+    }
+    return res;
+}
 
 const App = {
     currentView: "dashboard",
@@ -23,8 +40,18 @@ const App = {
         this.setupNav();
         this.setupMobileMenu();
         this.setupTabs();
+        this.setupLogout();
         this.checkServer();
         this.loadDashboard();
+    },
+
+    setupLogout() {
+        const btn = document.getElementById("logoutBtn");
+        if (!btn) return;
+        btn.onclick = async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+            window.location.href = "/login";
+        };
     },
 
     setupNav() {
@@ -258,31 +285,66 @@ const App = {
         };
     },
 
-    renderChart(data) {
-        const canvas = document.getElementById("monthlyChart");
-        if (!canvas) {
-            return;
-        }
+    setChartMode(mode) {
+        this._chartMode = mode;
+        const btnStacked = document.getElementById("chartModeStacked");
+        const btnNorm = document.getElementById("chartModeNorm");
+        if (btnStacked) btnStacked.classList.toggle("active", mode === "stacked");
+        if (btnNorm) btnNorm.classList.toggle("active", mode === "normalized");
+        if (this._chartData) this.renderChart(this._chartData);
+    },
 
-        if (this.chart) {
-            this.chart.destroy();
-        }
+    renderChart(data) {
+        this._chartData = data;
+        const mode = this._chartMode || "stacked";
+        const canvas = document.getElementById("monthlyChart");
+        if (!canvas) return;
+        if (this.chart) this.chart.destroy();
 
         Chart.defaults.color = "#94a3b8";
         Chart.defaults.font.family = "Inter";
 
         const labels = data?.labels?.length ? data.labels : ["No data"];
-        const datasets = data?.datasets;
+        const raw = data?.datasets || {};
+        const rawC = raw.critical || [];
+        const rawH = raw.high || [];
+        const rawM = raw.medium || [];
+        const rawL = raw.low || [];
+
+        let dC, dH, dM, dL, yAxisLabel, tooltipCallbacks;
+        if (mode === "normalized") {
+            const totals = labels.map((_, i) =>
+                (rawC[i] || 0) + (rawH[i] || 0) + (rawM[i] || 0) + (rawL[i] || 0)
+            );
+            const pct = (arr, i) => totals[i] ? +((arr[i] || 0) / totals[i] * 100).toFixed(1) : 0;
+            dC = labels.map((_, i) => pct(rawC, i));
+            dH = labels.map((_, i) => pct(rawH, i));
+            dM = labels.map((_, i) => pct(rawM, i));
+            dL = labels.map((_, i) => pct(rawL, i));
+            yAxisLabel = "%";
+            tooltipCallbacks = {
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}%`,
+                footer: (items) => {
+                    const t = (rawC[items[0].dataIndex] || 0) + (rawH[items[0].dataIndex] || 0) +
+                              (rawM[items[0].dataIndex] || 0) + (rawL[items[0].dataIndex] || 0);
+                    return `Total findings: ${t}`;
+                },
+            };
+        } else {
+            dC = rawC; dH = rawH; dM = rawM; dL = rawL;
+            yAxisLabel = "";
+            tooltipCallbacks = {};
+        }
 
         this.chart = new Chart(canvas.getContext("2d"), {
             type: "bar",
             data: {
                 labels,
                 datasets: [
-                    { label: "Critical", data: datasets ? datasets.critical : [0], backgroundColor: "#ef4444", borderRadius: 4 },
-                    { label: "High", data: datasets ? datasets.high : [0], backgroundColor: "#f97316", borderRadius: 4 },
-                    { label: "Medium", data: datasets ? datasets.medium : [0], backgroundColor: "#eab308", borderRadius: 4 },
-                    { label: "Low", data: datasets ? datasets.low : [0], backgroundColor: "#3b82f6", borderRadius: 4 },
+                    { label: "Critical", data: dC, backgroundColor: "#ef4444", borderRadius: 4 },
+                    { label: "High",     data: dH, backgroundColor: "#f97316", borderRadius: 4 },
+                    { label: "Medium",   data: dM, backgroundColor: "#eab308", borderRadius: 4 },
+                    { label: "Low",      data: dL, backgroundColor: "#3b82f6", borderRadius: 4 },
                 ],
             },
             options: {
@@ -290,10 +352,7 @@ const App = {
                 maintainAspectRatio: false,
                 interaction: { mode: "index", intersect: false },
                 plugins: {
-                    legend: {
-                        position: "bottom",
-                        labels: { usePointStyle: true, padding: 20 },
-                    },
+                    legend: { position: "bottom", labels: { usePointStyle: true, padding: 20 } },
                     tooltip: {
                         backgroundColor: "rgba(15,17,26,0.95)",
                         titleColor: "#fff",
@@ -302,11 +361,21 @@ const App = {
                         borderWidth: 1,
                         padding: 12,
                         cornerRadius: 8,
+                        callbacks: tooltipCallbacks,
                     },
                 },
                 scales: {
                     x: { stacked: true, grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
-                    y: { stacked: true, grid: { color: "rgba(255,255,255,0.04)", drawBorder: false }, beginAtZero: true },
+                    y: {
+                        stacked: true,
+                        grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
+                        beginAtZero: true,
+                        max: mode === "normalized" ? 100 : undefined,
+                        ticks: {
+                            callback: mode === "normalized" ? (v) => v + "%" : undefined,
+                        },
+                        title: yAxisLabel ? { display: true, text: yAxisLabel, color: "#94a3b8" } : undefined,
+                    },
                 },
             },
         });
@@ -570,8 +639,10 @@ const App = {
         document.getElementById("refreshReports").onclick = () => this.loadReports();
         const reports = await this.api("/api/reports");
         const container = document.getElementById("reportsList");
+        const toolbar = document.getElementById("reportsToolbar");
 
         if (!Array.isArray(reports) || reports.length === 0) {
+            if (toolbar) toolbar.style.display = "none";
             container.innerHTML = `
                 <div class="empty-state-big">
                     <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
@@ -581,17 +652,112 @@ const App = {
             return;
         }
 
-        container.innerHTML = reports.map((report) => {
+        this._allReports = reports;
+        if (toolbar) toolbar.style.display = "";
+
+        // Wire up filter tabs
+        const tabContainer = document.getElementById("reportsFilterTabs");
+        if (tabContainer && !tabContainer._wired) {
+            tabContainer._wired = true;
+            tabContainer.addEventListener("click", (e) => {
+                const btn = e.target.closest(".filter-tab");
+                if (!btn) return;
+                tabContainer.querySelectorAll(".filter-tab").forEach((b) => b.classList.remove("active"));
+                btn.classList.add("active");
+                this._reportFilter = btn.dataset.sev || "all";
+                this._renderFilteredReports();
+            });
+        }
+
+        const searchInput = document.getElementById("reportsSearch");
+        if (searchInput && !searchInput._wired) {
+            searchInput._wired = true;
+            searchInput.addEventListener("input", () => {
+                this._reportSearch = searchInput.value.toLowerCase();
+                this._renderFilteredReports();
+            });
+        }
+
+        // Update tab badges
+        const counts = { all: reports.length, critical: 0, high: 0, medium: 0, low: 0, clean: 0 };
+        reports.forEach((r) => {
+            const s = r.severities || {};
+            if ((s.critical || 0) > 0) counts.critical++;
+            if ((s.high || 0) > 0) counts.high++;
+            if ((s.medium || 0) > 0) counts.medium++;
+            if ((s.low || 0) > 0) counts.low++;
+            if ((s.critical || 0) + (s.high || 0) + (s.medium || 0) + (s.low || 0) === 0) counts.clean++;
+        });
+        if (tabContainer) {
+            tabContainer.querySelectorAll(".filter-tab").forEach((btn) => {
+                const sev = btn.dataset.sev;
+                const count = counts[sev] ?? 0;
+                const base = btn.textContent.replace(/ \(\d+\)$/, "");
+                btn.textContent = `${base} (${count})`;
+            });
+        }
+
+        this._reportFilter = this._reportFilter || "all";
+        this._reportSearch = this._reportSearch || "";
+        this._renderFilteredReports();
+    },
+
+    _renderFilteredReports() {
+        const reports = this._allReports || [];
+        const filter = this._reportFilter || "all";
+        const search = this._reportSearch || "";
+        const container = document.getElementById("reportsList");
+        if (!container) return;
+
+        const visible = reports.filter((r) => {
+            const s = r.severities || {};
+            const total = (s.critical || 0) + (s.high || 0) + (s.medium || 0) + (s.low || 0);
+            let pass = true;
+            if (filter === "critical") pass = (s.critical || 0) > 0;
+            else if (filter === "high") pass = (s.high || 0) > 0;
+            else if (filter === "medium") pass = (s.medium || 0) > 0;
+            else if (filter === "low") pass = (s.low || 0) > 0;
+            else if (filter === "clean") pass = total === 0;
+            if (pass && search) {
+                const haystack = ((r.target_url || "") + " " + (r.folder || "") + " " + (r.name || "")).toLowerCase();
+                pass = haystack.includes(search);
+            }
+            return pass;
+        });
+
+        if (visible.length === 0) {
+            container.innerHTML = `<div class="empty-state-big"><p>No reports match the current filter.</p></div>`;
+            return;
+        }
+
+        container.innerHTML = visible.map((report) => {
             const severities = report.severities || {};
             const totalFindings = (severities.critical || 0) + (severities.high || 0) + (severities.medium || 0) + (severities.low || 0);
             const modifiedAt = new Date((report.modified || 0) * 1000).toLocaleString();
             const assessmentMeta = this.renderAssessmentReportMeta(report.assessment_summary || {});
+            const folder = report.folder || "";
+            const displayName = report.target_url || folder || report.name;
+
+            // Build download dropdown entries
+            const dlItems = [
+                { path: report.path, label: "HTML Report", ext: "html" },
+                ...(report.md_path ? [{ path: report.md_path, label: "Markdown", ext: "md" }] : []),
+                ...(report.json_path ? [{ path: report.json_path, label: "JSON Data", ext: "json" }] : []),
+            ];
+            const dlMenu = dlItems.map((d) =>
+                `<a href="/api/reports/${encodeURIComponent(d.path)}?dl=1" class="dl-menu-item" download>${this.esc(d.label)}</a>`
+            ).join("");
 
             return `
-                <div class="report-card">
+                <div class="report-card" data-folder="${this.esc(folder)}">
                     <div class="report-info">
                         <div class="report-headline">
-                            <h4 class="report-name">${this.esc(report.target_url || report.folder || report.name)}</h4>
+                            <span class="report-name-wrap">
+                                <span class="report-name" id="rn-${this.esc(folder)}">${this.esc(displayName)}</span>
+                                <button class="btn-icon-xs rename-btn" title="Rename report" onclick="App.startRenameReport('${this.esc(folder)}', '${this.esc(folder.split('/').pop())}')">
+                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                            </span>
                             <span class="report-date">${modifiedAt}</span>
                         </div>
                         <div class="report-meta">
@@ -607,12 +773,101 @@ const App = {
                         ${severities.low ? `<span class="badge badge-low">${severities.low} Low</span>` : ""}
                         ${totalFindings === 0 ? '<span class="badge badge-clean">Clean</span>' : ""}
                     </div>
-                    <a href="/api/reports/${encodeURIComponent(report.path)}" target="_blank" class="btn-ghost btn-sm">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                        Open
-                    </a>
+                    <div class="report-actions">
+                        <a href="/api/reports/${encodeURIComponent(report.path)}" target="_blank" class="btn-ghost btn-sm">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                            Open
+                        </a>
+                        <div class="dl-dropdown">
+                            <button class="btn-ghost btn-sm dl-toggle" onclick="App.toggleDlMenu(this)">
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Download &#9662;
+                            </button>
+                            <div class="dl-menu">${dlMenu}</div>
+                        </div>
+                    </div>
                 </div>`;
         }).join("");
+    },
+
+    toggleDlMenu(btn) {
+        const menu = btn.closest(".dl-dropdown").querySelector(".dl-menu");
+        const isOpen = menu.classList.contains("open");
+        // Close all open menus first
+        document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
+        if (!isOpen) menu.classList.add("open");
+    },
+
+    async deleteReport(folder, btn) {
+        if (!confirm(`Delete this report?\n\n"${folder}"\n\nThis cannot be undone.`)) return;
+        btn.disabled = true;
+        const res = await this.api("/api/reports/delete", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder }),
+        });
+        if (res?.error) {
+            this.toast(res.error, "error");
+            btn.disabled = false;
+        } else {
+            this.toast("Report deleted.", "success");
+            await this.loadReports();
+        }
+    },
+
+    async startRenameReport(folder, currentName) {
+        const nameEl = document.getElementById(`rn-${folder}`);
+        if (!nameEl || nameEl.querySelector("input")) return;
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = currentName;
+        input.className = "rename-input";
+        input.style.cssText = "font-size:inherit;font-weight:600;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.3);border-radius:4px;padding:2px 6px;color:inherit;min-width:180px;";
+
+        const confirm = document.createElement("button");
+        confirm.className = "btn-icon-xs";
+        confirm.title = "Confirm";
+        confirm.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+        const cancel = document.createElement("button");
+        cancel.className = "btn-icon-xs";
+        cancel.title = "Cancel";
+        cancel.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#ef4444" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+
+        const origContent = nameEl.innerHTML;
+        nameEl.innerHTML = "";
+        nameEl.appendChild(input);
+        nameEl.appendChild(confirm);
+        nameEl.appendChild(cancel);
+        input.focus();
+        input.select();
+
+        const restore = () => { nameEl.innerHTML = origContent; };
+        cancel.onclick = restore;
+
+        const doRename = async () => {
+            const newName = input.value.trim();
+            if (!newName || newName === currentName) { restore(); return; }
+            const res = await this.api("/api/reports/rename", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ folder, name: newName }),
+            });
+            if (res?.error) {
+                this.toast(res.error, "error");
+                restore();
+            } else {
+                this.toast("Report renamed.", "success");
+                await this.loadReports();
+            }
+        };
+
+        confirm.onclick = doRename;
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") doRename();
+            if (e.key === "Escape") restore();
+        });
     },
 
     renderAssessmentReportMeta(summary) {
@@ -1366,6 +1621,63 @@ const App = {
     },
 
     setupPerformanceTab() {
+        const profiles = {
+            best: {
+                label: "Best Performance",
+                icon: "⚡",
+                desc: "Max throughput. For servers with stable, fast connections.",
+                settings: { nuclei_rate_limit: 150, wpscan_max_threads: 5, nikto_pause_seconds: 0, whatweb_max_threads: 25, httpx_rate_limit: 150, parallel_scans: true, max_parallel_tools: 4, max_parallel_heavy_tools: 3 },
+            },
+            stable: {
+                label: "Stable",
+                icon: "⚖️",
+                desc: "Balanced speed and reliability. Safe for consumer routers.",
+                settings: { nuclei_rate_limit: 20, wpscan_max_threads: 1, nikto_pause_seconds: 1, whatweb_max_threads: 5, httpx_rate_limit: 10, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2 },
+            },
+            light: {
+                label: "Lightweight",
+                icon: "🪶",
+                desc: "Very gentle. For slow or unstable internet connections.",
+                settings: { nuclei_rate_limit: 5, wpscan_max_threads: 1, nikto_pause_seconds: 3, whatweb_max_threads: 1, httpx_rate_limit: 2, parallel_scans: false, max_parallel_tools: 1, max_parallel_heavy_tools: 1 },
+            },
+            wordpress: {
+                label: "WordPress Deep",
+                icon: "🔍",
+                desc: "Thorough WPScan enumeration + Nuclei WordPress templates. Best for WP targets.",
+                settings: { nuclei_rate_limit: 25, wpscan_max_threads: 2, nikto_pause_seconds: 1, whatweb_max_threads: 5, httpx_rate_limit: 15, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2, nuclei_severity: "critical,high,medium,low" },
+            },
+            api: {
+                label: "API / Web App",
+                icon: "🌐",
+                desc: "Skip WordPress-specific tools. Focus on HTTPX, Nuclei, and web tech detection.",
+                settings: { nuclei_rate_limit: 30, wpscan_max_threads: 0, nikto_pause_seconds: 2, whatweb_max_threads: 10, httpx_rate_limit: 30, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2 },
+            },
+            quick: {
+                label: "Quick Recon",
+                icon: "🚀",
+                desc: "Passive-only, fast results. Good for an initial overview before a deep scan.",
+                settings: { nuclei_rate_limit: 15, wpscan_max_threads: 1, nikto_pause_seconds: 2, whatweb_max_threads: 5, httpx_rate_limit: 20, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 1 },
+            },
+            aggressive: {
+                label: "Aggressive Full",
+                icon: "⚠️",
+                desc: "Maximum coverage for authorized pentests. Very noisy — do not use on production without permission.",
+                settings: { nuclei_rate_limit: 200, wpscan_max_threads: 5, nikto_pause_seconds: 0, whatweb_max_threads: 30, httpx_rate_limit: 200, parallel_scans: true, max_parallel_tools: 4, max_parallel_heavy_tools: 3 },
+            },
+        };
+
+        // Render profile cards dynamically
+        const container = document.getElementById("profileCards");
+        if (container) {
+            container.innerHTML = Object.entries(profiles).map(([key, p]) => `
+                <button class="profile-card ${key === "stable" ? "selected" : ""}" data-profile="${key}">
+                    <div class="profile-icon">${p.icon}</div>
+                    <h4>${p.label}</h4>
+                    <p>${p.desc}</p>
+                </button>
+            `).join("");
+        }
+
         const cards = document.querySelectorAll(".profile-card");
         cards.forEach((card) => {
             card.addEventListener("click", () => {
@@ -1376,23 +1688,16 @@ const App = {
 
         document.getElementById("applyProfileBtn").onclick = async () => {
             const selected = document.querySelector(".profile-card.selected");
-            if (!selected) {
-                return;
-            }
+            if (!selected) return;
 
             const profile = selected.dataset.profile;
+            const profileDef = profiles[profile];
+            if (!profileDef) return;
+
             const config = await this.api("/api/config");
-            if (!config) {
-                return;
-            }
+            if (!config) return;
 
-            const profiles = {
-                best: { nuclei_rate_limit: 150, wpscan_max_threads: 5, nikto_pause_seconds: 0, whatweb_max_threads: 25, httpx_rate_limit: 150 },
-                stable: { nuclei_rate_limit: 20, wpscan_max_threads: 1, nikto_pause_seconds: 1, whatweb_max_threads: 5, httpx_rate_limit: 10 },
-                light: { nuclei_rate_limit: 5, wpscan_max_threads: 1, nikto_pause_seconds: 3, whatweb_max_threads: 1, httpx_rate_limit: 2 },
-            };
-
-            Object.assign(config, profiles[profile] || profiles.stable);
+            Object.assign(config, profileDef.settings);
 
             try {
                 const response = await fetch("/api/config", {
@@ -1401,7 +1706,7 @@ const App = {
                     body: JSON.stringify(config),
                 });
                 if (response.ok) {
-                    this.toast(`Applied "${selected.querySelector("h4").textContent}" profile.`, "success");
+                    this.toast(`Applied "${profileDef.label}" profile.`, "success");
                     this.loadConfigTab();
                 } else {
                     this.toast("Failed to apply profile", "error");
@@ -1412,9 +1717,9 @@ const App = {
         };
     },
 
-    async api(url) {
+    async api(url, options) {
         try {
-            const response = await fetch(url);
+            const response = await _authedFetch(url, options);
             return await response.json();
         } catch {
             return null;

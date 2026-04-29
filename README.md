@@ -1,36 +1,57 @@
-# OmniScan (Universal Security Pipeline)
+# OmniScan
 
-An automated, cross-platform security testing pipeline and interactive SPA dashboard for web applications, APIs, and CMS platforms (WordPress, Joomla, Drupal).
+Universal Security Pipeline for web applications, CMS platforms, and APIs.
 
-## Why
+OmniScan orchestrates recon and vulnerability tools into one workflow, normalizes findings, maps them to remediation guidance, and serves results in an interactive dashboard and portable report formats.
 
-Security testing a web app or CMS often requires juggling multiple separate, command-line tools—each with its own installation method, output format, and dependency chain. **OmniScan** was originally built for WordPress but has evolved into a centralized command center that orchestrates these tools into one continuous pipeline. It normalizes their raw output, automatically correlates findings with a remediation database, and presents everything in an easy-to-digest web dashboard and standard report formats. You no longer have to manually install dependencies like Ruby or Go; simply run our auto-installer and get right to testing.
+## Table of Contents
 
-## Features
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Quick Start (Docker)](#quick-start-docker)
+- [Quick Start (Native)](#quick-start-native)
+- [Authentication and Security Model](#authentication-and-security-model)
+- [Usage](#usage)
+- [Scan Profiles and Modes](#scan-profiles-and-modes)
+- [Architecture](#architecture)
+- [Reports](#reports)
+- [Project Structure](#project-structure)
+- [Configuration Reference](#configuration-reference)
+- [Operations](#operations)
+- [GitHub Publishing Checklist](#github-publishing-checklist)
+- [Legal Notice](#legal-notice)
 
-- **Profile-Aware Targeting**: Dynamically adjusts testing toolchains based on the selected target profile (`WordPress`, `Joomla`, `Drupal`, `Web App`, `Custom API`).
-- **Centralized Security Pipeline**: Orchestrates 18 powerful open-source tools including Nuclei, WPScan, ffuf, Dalfox, SQLMap, Wapiti, JoomScan, Droopescan, Commix, Corsy, Subfinder, and more.
-- **Environment Context Switching**: Automatically identifies local targets (`localhost`) and adjusts testing configurations (e.g., bypassing TLS checks, omitting external DNS enumerations).
-- **Interactive Web Dashboard**: A responsive Single-Page Application (SPA) dashboard to manage scan targets with profile selection, configure API tokens, and view interactive reports.
-- **Cross-Platform Auto-Installer**: An advanced, OS-aware installer that automatically provisions required system dependencies (Git, Ruby, Go, Java, Python) and orchestrates binary installations via `go install`, `pip`, or source repository cloning.
-- **3 Scan Modes**: Passive (safe recon), Active (deep testing), or Full (both phases).
-- **Rich Reporting**: Automatically generates filterable HTML reports, Markdown summaries, and raw JSON data.
-- **Remediation Guidance**: A built-in database that maps detected vulnerabilities directly to step-by-step fix instructions.
-- **CI/CD & Automation**: Headless CLI scanning with email notifications for automated cron jobs and pipeline integration.
+## Overview
 
-## Installation
+Security assessments usually require many disconnected tools with different install methods and output formats. OmniScan provides a single control plane that:
+
+- Selects a profile-aware toolchain.
+- Runs passive and active phases.
+- Correlates output from multiple tools.
+- Produces consistent reports for engineering and security teams.
+
+## Key Features
+
+- Profile-aware targeting for WordPress, Joomla, Drupal, Web App, and Custom API.
+- Unified pipeline across 18+ open-source tools.
+- Environment-aware logic for localhost/internal targets.
+- SPA dashboard for targets, scan launch, status tracking, and report browsing.
+- Report management in UI: open, download artifacts, rename, and delete.
+- Built-in remediation database mapping findings to fix guidance.
+- Native and Docker workflows.
+- First-run setup auth flow with no hardcoded default credentials.
+
+## Quick Start (Docker)
+
+Recommended for Linux VPS/NUC deployments.
 
 ### Prerequisites
-- **Python 3.10+**
 
-### Docker Deployment (Recommended for Linux VPS / NUC)
-If host-level tool installation keeps failing, use the Docker deployment instead. This bakes the Python app and the scanner toolchain into one container and serves the dashboard on port `5000`.
-
-Prerequisites:
 - Docker Engine
 - Docker Compose plugin (`docker compose`)
 
-Build and start:
+### Run
+
 ```bash
 git clone <repository_url> omniscan
 cd omniscan
@@ -38,130 +59,217 @@ docker compose build
 docker compose up -d
 ```
 
-Then open:
+Open:
+
 ```text
 http://<your-server-ip>:5000
 ```
 
-Useful Docker commands:
-```bash
-# View logs
-docker compose logs -f
+On first launch, OmniScan redirects to `/setup` for one-time admin creation.
 
-# Stop the stack
-docker compose down
+### Persistent Data
 
-# Rebuild after code changes
-docker compose up -d --build
+- `./config` for runtime config, tokens, auth, and targets.
+- `./reports` for generated reports.
+- `./logs` for runtime/container logs.
 
-# Run a one-off CLI scan inside the container
-docker compose run --rm omniscan scanner --target https://example.com --mode full --profile auto --ci
-```
+## Quick Start (Native)
 
-Persistent data:
-- `./config` stores targets, tokens, and scan settings
-- `./reports` stores generated reports
-- `./logs` stores container-side logs
+### Prerequisites
 
-Optional:
-```bash
-# Update nuclei templates on container startup
-UPDATE_NUCLEI_TEMPLATES=1 docker compose up -d
-```
+- Python 3.10+
 
-### 1. Setup Environment
-Clone the repository and make the auto-launcher script executable:
+### Linux/macOS
+
 ```bash
 git clone <repository_url> omniscan
 cd omniscan
 chmod +x omniscan.sh
-```
-
-### 2. Auto-Install Dependencies & Tools
-You can install the required system dependencies and security tools using the built-in installer. We provide a smart launcher script (`omniscan.sh`) that automatically creates a secure Python virtual environment (preventing `externally-managed-environment` errors on Linux) and installs its own requirements:
-
-```bash
 ./omniscan.sh --install
+./omniscan.sh app
 ```
-*Note: On Windows, use standard Python commands instead: `python -m venv venv`, `venv\Scripts\activate`, `pip install -r requirements.txt`, `python scanner.py --install`.*
 
-## How to Use
+### Windows (PowerShell)
 
-### Using the Web Dashboard (Recommended)
-You can start the Flask web application to access the interactive dashboard interface natively through the launcher:
+```powershell
+git clone <repository_url> omniscan
+cd omniscan
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python scanner.py --install
+python app.py
+```
+
+Open:
+
+```text
+http://localhost:5000
+```
+
+## Authentication and Security Model
+
+OmniScan is GitHub-safe by default and avoids shipping static credentials.
+
+- No fixed default email/password in source.
+- First run requires one-time setup at `/setup`.
+- Passwords are stored hashed in `config/auth.json`.
+- After setup, `/setup` is locked and login is served at `/login`.
+- Protected API routes require authenticated session.
+
+Sensitive runtime files that should never be committed:
+
+- `config/auth.json`
+- `config/tokens.json`
+- `config/email-config.json`
+
+## Usage
+
+### Web Dashboard
+
+Start app:
+
 ```bash
 ./omniscan.sh app
 ```
-By default, the server binds to `0.0.0.0:5000`. Navigate to `http://localhost:5000` to manage targets, set target profiles (e.g., Joomla or Generic Web App), configure API keys, and launch scans graphically.
 
-On Linux servers, prefer the Docker deployment above if you want a single-step runtime with the toolchain bundled.
+Use dashboard to:
 
-### Using the Command Line Interface (CLI)
-You can also run scans headless or via the interactive terminal menu using the launcher:
+- Manage targets and profiles.
+- Configure token-backed tools.
+- Launch/cancel scans.
+- Monitor scan progress and ETA.
+- Open/download/rename/delete reports.
+
+### CLI
 
 ```bash
-# Start the interactive CLI menu
+# Interactive menu
 ./omniscan.sh
 
-# Run a headless passive scan on a specific URL with a specific profile
-./omniscan.sh --target https://example.com --profile webapp --ci
+# Passive scan
+./omniscan.sh --target https://example.com --mode passive --profile webapp --ci
 
-# Run an active (deep) scan on a WordPress site
+# Active WordPress scan
 ./omniscan.sh --target https://example.com --mode active --profile wordpress --ci
 
-# Run a headless scan with email notifications
+# Full API scan + email notification
 ./omniscan.sh --target https://example.com --mode full --profile api --ci --email
 
-# Generate a demo report (no scanning needed)
+# Demo report generation
 ./omniscan.sh --demo
 ```
 
-## Architecture & Process Flow
+## Scan Profiles and Modes
 
-OmniScan orchestrates vulnerabilities scans by intelligently deploying a mix of Reconnaissance and Exploitation tools depending on the configuration provided.
+### Profiles
 
-### 1. Passive Reconnaissance (All Profiles)
-Before launching aggressive payloads, the system maps the attack surface silently:
-- **httpx & WhatWeb**: Identifies the live target, underlying technologies (PHP, Express, Nginx), and basic server headers.
-- **Subfinder**: Scrapes public sources to discover adjacent subdomains (skipped on local `localhost` IPs).
-- **SSLyze**: Audits the TLS/SSL configuration for weak ciphers or expired certificates.
-- **Corsy**: Analyzes CORS (Cross-Origin Resource Sharing) headers for potential bypass vulnerabilities.
+| Profile | Typical Tools | Purpose |
+| --- | --- | --- |
+| `wordpress` | WPScan, Nuclei WP tags | WordPress core/plugin/theme assessment |
+| `joomla` | JoomScan, CMSMap | Joomla-specific checks and exposures |
+| `drupal` | Droopescan, CMSMap | Drupal version/module exposure checks |
+| `webapp` | ffuf, Nuclei CVE tags | Generic web app recon and vuln testing |
+| `api` | Nuclei API tags | API-focused checks and misconfigurations |
+| `auto` | Adaptive | Chooses flow based on detected stack |
 
-### 2. Profile-Based Targeting (Active & Passive)
-The vulnerability scanner executes curated phases tailored natively to the target's platform. Depending on the target `profile` selected, specific CMS-auditing tools are unleashed:
+### Modes
 
-| Profile | CMS-Specific Toolchain | Why It's Used |
-|---------|------------------------|---------------|
-| **WordPress**| `WPScan`, `Nuclei (WP Tags)` | Specializes in enumerating vulnerable WP plugins, outdated themes, and brute-forcing `/wp-login.php`. |
-| **Joomla** | `JoomScan`, `CMSMap` | Focuses on known Joomla CVEs, exposed administrator panels, and directory listings. |
-| **Drupal** | `Droopescan`, `CMSMap` | Rapidly maps installed Drupal nodes, themes, and version exposures. |
-| **Web App**| `ffuf`, `Nuclei (CVE Tags)` | Operates entirely CMS-agnostic. Fuzzes for hidden directories and checks for generic server CVEs. |
-| **Custom API**| `Nuclei (API Tags)` | Foregoes web-crawler logic and strictly analyzes JSON/XML endpoint vulnerabilities and misconfigurations. |
+- `passive`: low-noise recon and baseline checks.
+- `active`: deeper, higher-noise vulnerability testing.
+- `full`: passive + active.
 
-### 3. Active Exploitation & Deep Scanning
-If `mode=active` or `full` is chosen, the scanner deploys aggressive, noisy penetration tools:
-- **SQLMap**: Automatically injects SQL syntax into detected URL parameters and forms. On WP profiles, it strictly targets the login page. On generic Web Apps, it aggressively actively crawls inputs.
-- **Dalfox**: An ultra-fast XSS (Cross-Site Scripting) scanner that analyzes DOM reflections and injects polyglot payloads.
-- **Commix**: Specifically targets OS Command Injection vectors on input fields, looking for underlying shell access.
-- **Wapiti**: A fully-featured web application vulnerability scanner acting as a black-box fuzzer.
-- **OWASP ZAP / Nikto**: Traditional heavy-weight web scanners serving as a comprehensive fallback.
+## Architecture
 
-### Report Output Generation
-When a scan completes, the framework compiles all identified vulnerabilities into a dedicated folder (`reports/<target>_<timestamp>/`). The following artifacts are generated:
-- `report.html`: A highly interactive HTML file with severity charts, detailed evidence, and dynamic filtering. Excessively long URLs dynamically wrap boundaries natively to maintain UI format.
-- `report.md`: A Markdown version ideal for copying into ticketing systems.
-- `findings.json`: The raw, normalized JSON output.
+High-level phases:
 
-## Configuration
+1. Target validation and profile selection.
+2. Passive reconnaissance (tech stack, headers, TLS, CORS, discovery).
+3. Profile-driven active tooling.
+4. Normalization and severity mapping.
+5. Remediation enrichment.
+6. Report generation and dashboard indexing.
 
-Configuration files are located in the `config/` directory.
+Representative passive tooling:
+
+- httpx, WhatWeb, SSLyze, Corsy, Subfinder (when applicable).
+
+Representative active tooling:
+
+- Nuclei, SQLMap, Dalfox, Wapiti, Commix, Nikto/ZAP fallback, and CMS-specific scanners.
+
+## Reports
+
+Each scan creates a dedicated report folder:
+
+```text
+reports/<target>_<timestamp>/
+```
+
+Main artifacts:
+
+- `report.html`: interactive view with severity filters and discovery cards.
+- `report.md`: markdown summary for tickets/docs.
+- `findings.json`: normalized machine-readable findings.
+
+## Project Structure
+
+```text
+app.py                 # Flask app + API routes + auth/session
+scanner.py             # CLI entry and orchestration
+lib/                   # Pipeline, parsing, enrichment, reporting
+config/                # Runtime JSON config (targets/tokens/auth/settings)
+fixes/                 # Remediation mapping database
+web/                   # Dashboard frontend (SPA)
+docker-compose.yml     # Container orchestration
+Dockerfile             # Container image definition
+```
+
+## Configuration Reference
 
 | File | Purpose |
-|------|---------|
-| `config/targets.json` | Saved URLs with their associated `profile` |
-| `config/tokens.json` | API tokens (e.g., WPScan APIs) |
-| `config/scan-config.json` | Default tool timeouts, rate limits, and thread bounds |
-| `fixes/remediation-db.json` | Vulnerability to remediation mapping dictionary |
+| --- | --- |
+| `config/targets.json` | Saved targets and selected profile |
+| `config/scan-config.json` | Timeouts, rate limits, threads, run parameters |
+| `config/tokens.json` | API tokens for integrated tooling |
+| `config/auth.json` | Generated admin auth record (hashed password) |
+| `fixes/remediation-db.json` | Finding-to-remediation mapping |
 
----
-⚠️ **Legal Notice**: Only scan websites that you own or have explicit written authorization to test. Unauthorized scanning is illegal.
+## Operations
+
+Common Docker commands:
+
+```bash
+# Logs
+docker compose logs -f
+
+# Stop stack
+docker compose down
+
+# Rebuild and restart
+docker compose up -d --build
+
+# Run one-off CLI scan in container
+docker compose run --rm omniscan scanner --target https://example.com --mode full --profile auto --ci
+```
+
+Optional startup behavior:
+
+```bash
+# Update nuclei templates during startup
+UPDATE_NUCLEI_TEMPLATES=1 docker compose up -d
+```
+
+## GitHub Publishing Checklist
+
+Before making your repository public:
+
+1. Confirm sensitive runtime files are ignored (`config/auth.json`, tokens, email config).
+2. Ensure no hardcoded credentials remain in code, docs, or commit history.
+3. Keep `config/`, `reports/`, and `logs/` persisted outside ephemeral containers.
+4. Run behind HTTPS (reverse proxy recommended) for internet exposure.
+5. Rotate any previously used tokens or credentials before release.
+
+## Legal Notice
+
+Only scan systems that you own or are explicitly authorized to test. Unauthorized security testing may be illegal.

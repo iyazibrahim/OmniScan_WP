@@ -162,8 +162,9 @@ def generate_html_report(payload: dict) -> str:
     ]:
         if not items:
             continue
-        rendered = "".join(f"<li>{html.escape(str(item))}</li>" for item in items[:20])
-        discovery_blocks.append(f"<div class='card'><h3>{html.escape(label)}</h3><ul>{rendered}</ul></div>")
+        rendered = "".join(f"<li>{html.escape(str(item))}</li>" for item in items[:50])
+        count_label = f" <small style='color:var(--muted);font-weight:400'>({len(items)} total)</small>" if len(items) > 50 else f" <small style='color:var(--muted);font-weight:400'>({len(items)})</small>"
+        discovery_blocks.append(f"<div class='card disc-card'><h3 style='margin:0 0 10px;font-size:0.95rem'>{html.escape(label)}{count_label}</h3><ul>{rendered}</ul></div>")
 
     finding_rows = []
     finding_cards = []
@@ -294,8 +295,8 @@ def generate_html_report(payload: dict) -> str:
         .meta-grid {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 20px; }}
         .metrics {{ grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 24px 0; }}
         .two {{ grid-template-columns: 1.15fr 1fr; }}
-        .three {{ grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }}
-        .card, .metric-card {{ background: rgba(16,24,38,0.94); border: 1px solid var(--border); border-radius: 18px; padding: 18px; }}
+        .three {{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }}
+        .card, .metric-card {{ background: rgba(16,24,38,0.94); border: 1px solid var(--border); border-radius: 18px; padding: 18px; overflow: hidden; }}
         .metric-card .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
         .metric-card .value {{ font-size: 34px; font-weight: 800; margin-top: 8px; }}
         .metric-card.critical .value {{ color: var(--critical); }}
@@ -342,6 +343,10 @@ def generate_html_report(payload: dict) -> str:
         td code {{ word-break: break-all; white-space: pre-wrap; }}
         pre {{ white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; overflow-x: auto; max-width: 100%; }}
         .url-cell {{ word-break: break-all; font-size: 0.82em; }}
+        ul {{ padding-left: 18px; margin: 0; }}
+        li {{ word-break: break-all; overflow-wrap: anywhere; font-size: 0.82em; color: var(--muted); margin-bottom: 4px; }}
+        .disc-card {{ overflow: hidden; min-width: 0; }}
+        .disc-card ul {{ max-height: 280px; overflow-y: auto; }}
         /* ── Findings search / filter / pagination ───────────────────────── */
         .findings-toolbar {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }}
         .findings-toolbar input {{ flex: 1; min-width: 200px; padding: 8px 12px; background: #0d1929; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; }}

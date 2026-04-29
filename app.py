@@ -1,11 +1,15 @@
 import os
+import re
 import json
+import shutil
 import threading
 import uuid
 import time
+import functools
 from pathlib import Path
 from collections import defaultdict
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, session, redirect
+from werkzeug.security import generate_password_hash, check_password_hash
 from lib.assessments import get_catalog, get_workbook, save_workbook, summarize_workbook
 
 app = Flask(__name__, static_folder='web')
@@ -16,7 +20,38 @@ CONFIG_DIR = BASE_DIR / "config"
 TARGETS_FILE = CONFIG_DIR / "targets.json"
 SCAN_CONFIG_FILE = CONFIG_DIR / "scan-config.json"
 TOKENS_FILE = CONFIG_DIR / "tokens.json"
+AUTH_FILE = CONFIG_DIR / "auth.json"
 
+# ── Auth bootstrap ───────────────────────────────────────────────────────────────
+
+def _load_auth_data():
+    if not AUTH_FILE.exists():
+        return None
+    try:
+        data = json.loads(AUTH_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not data.get("email") or not data.get("password_hash"):
+        return None
+    return data
+
+
+def _is_auth_initialized() -> bool:
+    return _load_auth_data() is not None
+
+
+_auth_data = _load_auth_data() or {}
+app.secret_key = _auth_data.get("secret_key") or os.environ.get("OMNISCAN_SECRET_KEY") or uuid.uuid4().hex
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("user"):
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
 SCAN_JOBS: dict[str, dict] = {}
 SCAN_JOBS_LOCK = threading.Lock()
 
@@ -28,13 +63,111 @@ DEFAULT_SCAN_ESTIMATES_SECONDS = {
 
 # ── Static / SPA ────────────────────────────────────────────────────────────────
 
+# ── Static / SPA ────────────────────────────────────────────────────────────────
+
+@app.route('/login')
+def login_page():
+    if not _is_auth_initialized():
+        return redirect('/setup')
+    if session.get("user"):
+        return redirect('/')
+    return send_from_directory(app.static_folder, 'login.html')
+
+
+@app.route('/setup')
+def setup_page():
+    if _is_auth_initialized():
+        return redirect('/login')
+    return send_from_directory(app.static_folder, 'setup.html')
+
 @app.route('/')
 def index():
+    if not _is_auth_initialized():
+        return redirect('/setup')
+    if not session.get("user"):
+        return redirect('/login')
     return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/<path:path>')
 def static_files(path):
+    # Always allow static assets; protect the SPA entry point
+    static_exts = {'.js', '.css', '.ico', '.png', '.jpg', '.svg', '.woff', '.woff2', '.ttf'}
+    if any(path.endswith(ext) for ext in static_exts) or path in {'login.html', 'setup.html'}:
+        return send_from_directory(app.static_folder, path)
+    if not _is_auth_initialized():
+        return redirect('/setup')
+    if not session.get("user"):
+        return redirect('/login')
     return send_from_directory(app.static_folder, path)
+
+# ── Auth endpoints ───────────────────────────────────────────────────────────────
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    auth = _load_auth_data()
+    if not auth:
+        return jsonify({"error": "Initial setup is required", "setup_required": True}), 409
+
+    data = request.json or {}
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
+    if email == auth.get('email', '').lower() and check_password_hash(auth['password_hash'], password):
+        session['user'] = email
+        session.permanent = True
+        return jsonify({"message": "Login successful", "email": email})
+    return jsonify({"error": "Invalid email or password"}), 401
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    auth = _load_auth_data()
+    return jsonify({
+        "initialized": bool(auth),
+        "authenticated": bool(session.get("user")),
+    })
+
+
+@app.route('/api/auth/setup', methods=['POST'])
+def auth_setup():
+    if _is_auth_initialized():
+        return jsonify({"error": "Initial setup has already been completed"}), 409
+
+    data = request.json or {}
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
+    confirm_password = str(data.get('confirm_password', ''))
+
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return jsonify({"error": "A valid email is required"}), 400
+    if len(password) < 10:
+        return jsonify({"error": "Password must be at least 10 characters"}), 400
+    if password != confirm_password:
+        return jsonify({"error": "Passwords do not match"}), 400
+
+    auth_payload = {
+        "email": email,
+        "password_hash": generate_password_hash(password),
+        "secret_key": uuid.uuid4().hex + uuid.uuid4().hex,
+    }
+    AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUTH_FILE.write_text(json.dumps(auth_payload, indent=2), encoding="utf-8")
+
+    app.secret_key = auth_payload["secret_key"]
+    session['user'] = email
+    session.permanent = True
+    return jsonify({"message": "Setup completed", "email": email})
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    session.clear()
+    return jsonify({"message": "Logged out"})
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    return jsonify({"email": user})
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -163,6 +296,7 @@ def _append_scan_event(scan_id: str, message: str):
 # ── Targets CRUD ────────────────────────────────────────────────────────────────
 
 @app.route('/api/targets', methods=['GET'])
+@login_required
 def get_targets():
     data = _load_json(TARGETS_FILE)
     if isinstance(data, list):
@@ -173,6 +307,7 @@ def get_targets():
     return jsonify([])
 
 @app.route('/api/targets', methods=['POST'])
+@login_required
 def add_target():
     body = request.json or {}
     url = body.get('url', '').strip().rstrip('/')
@@ -191,6 +326,7 @@ def add_target():
     return jsonify(target), 201
 
 @app.route('/api/targets/<int:index>', methods=['DELETE'])
+@login_required
 def delete_target(index):
     data = _load_json(TARGETS_FILE)
     if not isinstance(data, list):
@@ -205,6 +341,7 @@ def delete_target(index):
 # ── Scan Config ─────────────────────────────────────────────────────────────────
 
 @app.route('/api/config', methods=['GET'])
+@login_required
 def get_config():
     data = _load_json(SCAN_CONFIG_FILE)
     if isinstance(data, dict):
@@ -212,6 +349,7 @@ def get_config():
     return jsonify({})
 
 @app.route('/api/config', methods=['PUT'])
+@login_required
 def update_config():
     body = request.json
     if not isinstance(body, dict):
@@ -222,6 +360,7 @@ def update_config():
 # ── Tokens ──────────────────────────────────────────────────────────────────────
 
 @app.route('/api/tokens', methods=['GET'])
+@login_required
 def get_tokens():
     data = _load_json(TOKENS_FILE)
     if not isinstance(data, dict):
@@ -240,6 +379,7 @@ def get_tokens():
     return jsonify(masked)
 
 @app.route('/api/tokens', methods=['PUT'])
+@login_required
 def update_tokens():
     body = request.json
     if not isinstance(body, dict):
@@ -261,6 +401,7 @@ def update_tokens():
 # ── Tools Status ────────────────────────────────────────────────────────────────
 
 @app.route('/api/tools-status', methods=['GET'])
+@login_required
 def tools_status():
     import shutil
     from lib.tools import TOOLS
@@ -274,11 +415,13 @@ def tools_status():
 # ── Guided Assessments ──────────────────────────────────────────────────────────
 
 @app.route('/api/assessments/catalog', methods=['GET'])
+@login_required
 def assessments_catalog():
     return jsonify(get_catalog())
 
 
 @app.route('/api/assessments', methods=['GET'])
+@login_required
 def get_assessment():
     target = _require_target_arg()
     if not target:
@@ -289,6 +432,7 @@ def get_assessment():
 
 
 @app.route('/api/assessments', methods=['PUT'])
+@login_required
 def update_assessment():
     target = _require_target_arg()
     if not target:
@@ -303,6 +447,7 @@ def update_assessment():
 # ── Reports ─────────────────────────────────────────────────────────────────────
 
 @app.route('/api/reports', methods=['GET'])
+@login_required
 def list_reports():
     reports = []
     if REPORTS_DIR.exists():
@@ -342,6 +487,15 @@ def list_reports():
                 except Exception:
                     pass
 
+            md_file = html_file.with_suffix('.md')
+            md_rel = md_file.relative_to(REPORTS_DIR) if md_file.exists() else None
+            json_dl_rel = None
+            if json_companion and json_companion.exists():
+                try:
+                    json_dl_rel = json_companion.relative_to(REPORTS_DIR)
+                except ValueError:
+                    pass
+
             reports.append({
                 "path": str(rel).replace('\\', '/'),
                 "name": html_file.stem,
@@ -352,17 +506,65 @@ def list_reports():
                 "size_kb": round(size_kb, 1),
                 "modified": mtime,
                 "severities": severity_counts,
+                "md_path": str(md_rel).replace('\\', '/') if md_rel else None,
+                "json_path": str(json_dl_rel).replace('\\', '/') if json_dl_rel else None,
             })
 
     return jsonify(reports[:50])  # Limit to 50 most recent
 
 @app.route('/api/reports/<path:filepath>')
+@login_required
 def serve_report(filepath):
-    return send_from_directory(str(REPORTS_DIR), filepath)
+    as_attach = request.args.get('dl', '0') == '1'
+    return send_from_directory(str(REPORTS_DIR), filepath, as_attachment=as_attach)
+
+
+@app.route('/api/reports/rename', methods=['PATCH'])
+@login_required
+def rename_report():
+    data = request.json or {}
+    folder = data.get('folder', '').strip()
+    new_name = data.get('name', '').strip()
+    if not folder or not new_name:
+        return jsonify({"error": "folder and name required"}), 400
+    if not re.match(r'^[\w\-. ]+$', new_name) or '..' in new_name:
+        return jsonify({"error": "Invalid name: only letters, numbers, hyphens, underscores and spaces allowed"}), 400
+    folder_path = REPORTS_DIR / folder
+    if not folder_path.exists() or not folder_path.is_dir():
+        return jsonify({"error": "Report folder not found"}), 404
+    new_path = folder_path.parent / new_name
+    if new_path.exists():
+        return jsonify({"error": "A report with that name already exists"}), 409
+    folder_path.rename(new_path)
+    new_rel = str(new_path.relative_to(REPORTS_DIR)).replace('\\', '/')
+    return jsonify({"message": "Renamed successfully", "new_folder": new_rel})
+
+# ── Monthly Stats (for chart) ──────────────────────────────────────────────────
+@app.route('/api/reports/delete', methods=['DELETE'])
+@login_required
+def delete_report():
+    data = request.json or {}
+    folder = data.get('folder', '').strip()
+    if not folder or '..' in folder:
+        return jsonify({"error": "folder required"}), 400
+    folder_path = REPORTS_DIR / folder
+    # Resolve to ensure it stays inside REPORTS_DIR
+    try:
+        folder_path.resolve().relative_to(REPORTS_DIR.resolve())
+    except ValueError:
+        return jsonify({"error": "Invalid path"}), 400
+    if not folder_path.exists():
+        return jsonify({"error": "Report not found"}), 404
+    if folder_path.is_dir():
+        shutil.rmtree(folder_path)
+    else:
+        folder_path.unlink()
+    return jsonify({"message": "Report deleted"})
 
 # ── Monthly Stats (for chart) ──────────────────────────────────────────────────
 
 @app.route('/api/monthly-stats', methods=['GET'])
+@login_required
 def get_monthly_stats():
     stats = defaultdict(lambda: {"critical": 0, "high": 0, "medium": 0, "low": 0})
 
@@ -402,6 +604,7 @@ def get_monthly_stats():
 # ── Scan ────────────────────────────────────────────────────────────────────────
 
 @app.route('/api/scan', methods=['POST'])
+@login_required
 def start_scan():
     data = request.json or {}
     target = str(data.get('target', '')).strip().rstrip('/')
@@ -580,6 +783,7 @@ def start_scan():
 
 
 @app.route('/api/scan-status/<scan_id>', methods=['GET'])
+@login_required
 def get_scan_status(scan_id):
     with SCAN_JOBS_LOCK:
         job = SCAN_JOBS.get(scan_id)
@@ -599,11 +803,13 @@ def get_scan_status(scan_id):
 
 
 @app.route('/api/scan-estimates', methods=['GET'])
+@login_required
 def get_scan_estimates():
     return jsonify(_compute_scan_estimates())
 
 
 @app.route('/api/scan/<scan_id>/cancel', methods=['POST'])
+@login_required
 def cancel_scan(scan_id):
     with SCAN_JOBS_LOCK:
         job = SCAN_JOBS.get(scan_id)
@@ -618,6 +824,7 @@ def cancel_scan(scan_id):
 
 
 @app.route('/api/scan-jobs', methods=['GET'])
+@login_required
 def list_scan_jobs():
     with SCAN_JOBS_LOCK:
         jobs = list(SCAN_JOBS.values())

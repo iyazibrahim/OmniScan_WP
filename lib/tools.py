@@ -131,6 +131,7 @@ def _run_tool(
     stdout_file: Path | None = None,
     timeout: int = 600,
     extra_env: dict | None = None,
+    acceptable_returncodes: set | None = None,
 ) -> dict:
     """Run a tool command and capture telemetry and logs."""
     result = _result_template(tool_name, tool_label, phase, cmd, "failed")
@@ -151,7 +152,10 @@ def _run_tool(
         if stdout_file is not None and stdout_file.exists():
             outputs.append(str(stdout_file))
 
-        status = "completed" if proc.returncode == 0 else "failed"
+        ok_codes = acceptable_returncodes if acceptable_returncodes is not None else {0}
+        # If output file was produced, treat as completed even on non-zero exit
+        has_output = bool(outputs)
+        status = "completed" if (proc.returncode in ok_codes or has_output) else "failed"
         if proc.returncode == 0 and not outputs and not (proc.stdout or "").strip():
             status = "completed_no_output"
 
@@ -289,7 +293,7 @@ def run_httpx(url: str, config: dict, scan_dir: Path) -> dict:
         "-ws",
         "-fr",
     ]
-    result = _run_tool(cmd, "httpx", "httpx", "passive", scan_dir, output_files=[output_file])
+    result = _run_tool(cmd, "httpx", "httpx", "passive", scan_dir, output_files=[output_file], acceptable_returncodes={0, 1})
     if result["status"].startswith("completed"):
         ui.ok("httpx complete.")
     return result
@@ -363,11 +367,12 @@ def run_sslyze(hostname: str, scan_dir: Path) -> dict:
     ui.status("Running SSLyze TLS audit...")
     output_file = scan_dir / "sslyze.json"
     import os as _os
-    # Suppress Python 3.13 cryptography deprecation warnings that abort trust-store loading
+    # Suppress ALL Python warnings (including CryptographyDeprecationWarning)
     _env = _os.environ.copy()
-    _env["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
-    cmd = ["sslyze", hostname, f"--json_out={output_file}"]
-    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=180, extra_env=_env)
+    _env["PYTHONWARNINGS"] = "ignore"
+    # Also run sslyze via python -W ignore to guarantee warning suppression
+    cmd = ["python", "-W", "ignore", "-m", "sslyze", hostname, f"--json_out={output_file}"]
+    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=180, extra_env=_env, acceptable_returncodes={0, 1})
     if result["status"].startswith("completed"):
         ui.ok("SSLyze complete.")
     return result

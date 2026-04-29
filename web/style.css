@@ -173,6 +173,29 @@ a:hover { text-decoration: underline; }
     gap: 12px;
 }
 
+.btn-logout {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(239,68,68,0.25);
+    background: rgba(239,68,68,0.06);
+    color: #f87171;
+    font-size: 0.8rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+    width: 100%;
+}
+
+.btn-logout:hover {
+    background: rgba(239,68,68,0.15);
+    border-color: rgba(239,68,68,0.5);
+    color: #fca5a5;
+}
+
 .server-status {
     display: flex;
     align-items: center;
@@ -878,6 +901,141 @@ input::placeholder { color: var(--text-muted); }
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
 }
+
+.badge-verified { background: rgba(34,197,94,0.14); color: var(--accent-green); }
+.badge-analyst  { background: rgba(6,182,212,0.14); color: var(--accent-cyan); }
+.badge-neutral  { background: var(--bg-surface-2); color: var(--text-primary); }
+.badge-priority { background: rgba(249,115,22,0.15); color: var(--accent-orange); }
+.badge-category { background: rgba(79,143,247,0.15); color: var(--brand); }
+.badge-running  { background: rgba(34,197,94,0.15); color: var(--accent-green); animation: pulse-badge 2s ease-in-out infinite; }
+
+@keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* ── Reports Toolbar (filter + search) ──────────────────────────────────────── */
+
+.reports-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.reports-filter-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.filter-tab {
+    padding: 5px 14px;
+    border-radius: 100px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.filter-tab:hover { border-color: rgba(255,255,255,0.18); color: var(--text-primary); }
+.filter-tab.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+
+.reports-search {
+    flex: 1;
+    min-width: 180px;
+    max-width: 320px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.reports-search::placeholder { color: var(--text-muted); }
+.reports-search:focus { outline: none; border-color: var(--brand); }
+
+/* ── Report card actions row ────────────────────────────────────────────────── */
+
+.report-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.report-name-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-icon-xs {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    border-radius: 4px;
+    transition: color var(--transition), background var(--transition);
+}
+
+.btn-icon-xs:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+
+/* ── Download dropdown ──────────────────────────────────────────────────────── */
+
+.dl-dropdown { position: relative; }
+
+.dl-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    background: var(--bg-surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    min-width: 160px;
+    z-index: 200;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    overflow: hidden;
+}
+
+.dl-menu.open { display: block; }
+
+.dl-menu-item {
+    display: block;
+    padding: 9px 16px;
+    font-size: 0.83rem;
+    color: var(--text-primary);
+    text-decoration: none;
+    transition: background var(--transition);
+}
+
+.dl-menu-item:hover { background: var(--glass-bg); }
+
+/* ── Chart mode toggle ──────────────────────────────────────────────────────── */
+
+.chart-mode-toggle {
+    display: flex;
+    gap: 4px;
+}
+
+.btn-xs {
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    border-radius: 100px;
+}
+
+.btn-ghost.btn-xs { border: 1px solid var(--glass-border); }
+.btn-ghost.btn-xs.active { background: var(--brand); border-color: var(--brand); color: #fff; }
 
 /* ── Active Scans Widget ─────────────────────────────────────────────────────── */
 

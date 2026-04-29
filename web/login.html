@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniScan — Sign In</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        :root {
+            --brand: #4f8ff7;
+            --bg: #07101d;
+            --bg-card: rgba(16,24,38,0.94);
+            --border: rgba(255,255,255,0.08);
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --red: #ef4444;
+            --green: #22c55e;
+        }
+        body {
+            margin: 0;
+            font-family: Inter, sans-serif;
+            background: radial-gradient(circle at top left, rgba(70,183,255,0.12), transparent 35%),
+                        linear-gradient(180deg, #07101d, #101826 28%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+        }
+        .login-wrap {
+            width: 100%;
+            max-width: 420px;
+            padding: 24px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 36px;
+        }
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #1d4ed8, #4f8ff7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 36px 32px;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+        }
+        .card h2 {
+            margin: 0 0 6px;
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+        .card p {
+            margin: 0 0 28px;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #94a3b8;
+            margin-bottom: 7px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        input {
+            width: 100%;
+            padding: 11px 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.95rem;
+            font-family: inherit;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+        input:focus { border-color: var(--brand); background: rgba(79,143,247,0.06); }
+        input::placeholder { color: var(--muted); }
+        .btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #1d4ed8, #4f8ff7);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 0.95rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            margin-top: 8px;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .error-msg {
+            display: none;
+            background: rgba(239,68,68,0.12);
+            border: 1px solid rgba(239,68,68,0.3);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.85rem;
+            color: var(--red);
+            margin-bottom: 18px;
+        }
+        .error-msg.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="login-wrap">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                </svg>
+            </div>
+            <h1>OmniScan</h1>
+        </div>
+
+        <div class="card">
+            <h2>Sign in</h2>
+            <p>Enter your credentials to access the security dashboard.</p>
+
+            <div class="error-msg" id="errorMsg"></div>
+
+            <form id="loginForm" autocomplete="on">
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" placeholder="your@email.com" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="••••••••••" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn" id="loginBtn">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        async function ensureInitialized() {
+            try {
+                const res = await fetch("/api/auth/status");
+                const data = await res.json();
+                if (!data.initialized) {
+                    window.location.href = "/setup";
+                } else if (data.authenticated) {
+                    window.location.href = "/";
+                }
+            } catch {
+                // Keep login form visible when server status can't be fetched.
+            }
+        }
+
+        ensureInitialized();
+
+        document.getElementById("loginForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById("loginBtn");
+            const err = document.getElementById("errorMsg");
+            const email = document.getElementById("email").value.trim();
+            const password = document.getElementById("password").value;
+
+            btn.disabled = true;
+            btn.textContent = "Signing in…";
+            err.classList.remove("show");
+
+            try {
+                const res = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email, password }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    window.location.href = "/";
+                } else if (res.status === 409 && data.setup_required) {
+                    window.location.href = "/setup";
+                } else {
+                    err.textContent = data.error || "Login failed.";
+                    err.classList.add("show");
+                    btn.disabled = false;
+                    btn.textContent = "Sign In";
+                }
+            } catch {
+                err.textContent = "Connection error. Is the server running?";
+                err.classList.add("show");
+                btn.disabled = false;
+                btn.textContent = "Sign In";
+            }
+        });
+    </script>
+</body>
+</html>
