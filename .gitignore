@@ -21,3 +21,6 @@ __pycache__/
 # OS files
 Thumbs.db
 desktop.ini
+
+# Local secret-bearing wrappers
+omniscan-cron.local.sh

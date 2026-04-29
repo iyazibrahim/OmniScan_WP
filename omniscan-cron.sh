@@ -16,19 +16,20 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Configuration (edit these) ──────────────────────────────────────────────
-TARGET_URL="https://digitalpenang.my"
-SCAN_MODE="full"   # passive | active | full
+# Tip: keep real secrets in environment variables or a local untracked wrapper.
+TARGET_URL="${TARGET_URL:-https://example.com}"
+SCAN_MODE="${SCAN_MODE:-full}"   # passive | active | full
 
 # Email settings (optional — or set in config/email-config.json)
-export SMTP_SERVER="smtp.gmail.com"
-export SMTP_PORT="587"
-export SMTP_SENDER="iyazbrhm@gmail.com"          # your-email@gmail.com
-export SMTP_PASSWORD="kdac lgno rjkk ywqb"        # Gmail App Password
-export SMTP_RECIPIENTS="iyaz@digitalpenang.my"      # recipient1@email.com,recipient2@email.com
+export SMTP_SERVER="${SMTP_SERVER:-smtp.gmail.com}"
+export SMTP_PORT="${SMTP_PORT:-587}"
+export SMTP_SENDER="${SMTP_SENDER:-}"              # your-email@example.com
+export SMTP_PASSWORD="${SMTP_PASSWORD:-}"          # app password / SMTP password
+export SMTP_RECIPIENTS="${SMTP_RECIPIENTS:-}"      # recipient1@example.com,recipient2@example.com
 
 # API tokens (optional — or set in config/tokens.json)
-export WPSCAN_API_TOKEN=""
-export ZAP_API_KEY=""
+export WPSCAN_API_TOKEN="${WPSCAN_API_TOKEN:-}"
+export ZAP_API_KEY="${ZAP_API_KEY:-}"
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
