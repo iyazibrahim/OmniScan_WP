@@ -1,5 +1,6 @@
 """Tool execution wrappers and orchestration for OmniScan."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ipaddress
 import json
 import re
@@ -129,6 +130,7 @@ def _run_tool(
     output_files: list[Path] | None = None,
     stdout_file: Path | None = None,
     timeout: int = 600,
+    extra_env: dict | None = None,
 ) -> dict:
     """Run a tool command and capture telemetry and logs."""
     result = _result_template(tool_name, tool_label, phase, cmd, "failed")
@@ -138,7 +140,7 @@ def _run_tool(
     stderr_log = scan_dir / f"{tool_name}.stderr.log"
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=extra_env)
         duration = time.perf_counter() - start
         _write_text(stdout_log, proc.stdout or "")
         _write_text(stderr_log, proc.stderr or "")
@@ -281,11 +283,11 @@ def run_httpx(url: str, config: dict, scan_dir: Path) -> dict:
         "-rate-limit",
         rate,
         "-silent",
-        "-status-code",
+        "-sc",
         "-title",
-        "-tech-detect",
-        "-web-server",
-        "-follow-host-redirects",
+        "-td",
+        "-ws",
+        "-fr",
     ]
     result = _run_tool(cmd, "httpx", "httpx", "passive", scan_dir, output_files=[output_file])
     if result["status"].startswith("completed"):
@@ -347,9 +349,11 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str) -> dict:
 def run_nikto(url: str, config: dict, scan_dir: Path) -> dict:
     ui.status("Running Nikto scan...")
     output_file = scan_dir / "nikto.json"
-    pause = str(config.get("nikto_pause_seconds", 1))
-    cmd = ["nikto", "-h", url, "-Format", "json", "-output", str(output_file), "-Pause", pause, "-nointeractive"]
-    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=900)
+    pause = str(config.get("nikto_pause_seconds", 0))
+    # -maxtime limits nikto's own internal runtime so it exits gracefully before the hard timeout
+    cmd = ["nikto", "-h", url, "-Format", "json", "-output", str(output_file),
+        "-Pause", pause, "-nointeractive", "-maxtime", "240s", "-Tuning", "123456789"]
+    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=300)
     if result["status"].startswith("completed"):
         ui.ok("Nikto complete.")
     return result
@@ -358,8 +362,12 @@ def run_nikto(url: str, config: dict, scan_dir: Path) -> dict:
 def run_sslyze(hostname: str, scan_dir: Path) -> dict:
     ui.status("Running SSLyze TLS audit...")
     output_file = scan_dir / "sslyze.json"
+    import os as _os
+    # Suppress Python 3.13 cryptography deprecation warnings that abort trust-store loading
+    _env = _os.environ.copy()
+    _env["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     cmd = ["sslyze", hostname, f"--json_out={output_file}"]
-    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=900)
+    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=180, extra_env=_env)
     if result["status"].startswith("completed"):
         ui.ok("SSLyze complete.")
     return result
@@ -388,8 +396,9 @@ def run_corsy(url: str, scan_dir: Path) -> dict:
 def run_gau(hostname: str, scan_dir: Path) -> dict:
     ui.status("Running gau...")
     output_file = scan_dir / "gau.txt"
-    cmd = ["gau", "--threads", "5", hostname]
-    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file)
+    # gau does not support --threads; use --retries and limit providers to keep it fast
+    cmd = ["gau", hostname, "--retries", "2", "--providers", "wayback,otx"]
+    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=180)
     if result["status"].startswith("completed"):
         ui.ok("gau complete.")
     return result
@@ -456,14 +465,17 @@ def run_sqlmap(url: str, scan_dir: Path, profile: str) -> dict:
     ui.status("Running SQLMap...")
     output_dir = scan_dir / "sqlmap-out"
     output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = ["sqlmap", "--batch", "--output-dir", str(output_dir), "--level=2", "--risk=2"]
+    # level=1 risk=1 is sufficient for automated pipeline; time-sec limits blind-injection waits
+    cmd = ["sqlmap", "--batch", "--output-dir", str(output_dir),
+        "--level=1", "--risk=1", "--time-sec=8", "--timeout=20", "--retries=1", "--no-cast"]
     if profile == "wordpress":
         cmd.extend(["-u", f"{url.rstrip('/')}/wp-login.php", "--forms"])
     elif profile == "joomla":
         cmd.extend(["-u", f"{url.rstrip('/')}/administrator/index.php", "--forms"])
     else:
-        cmd.extend(["-u", url, "--crawl=2", "--forms"])
-    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=1200)
+        # crawl=1 instead of 2 to halve crawler depth for generic targets
+        cmd.extend(["-u", url, "--crawl=1", "--forms"])
+    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=500)
     if result["status"].startswith("completed"):
         ui.ok("SQLMap complete.")
     return result
@@ -566,6 +578,9 @@ def run_all_tools(
 
     tool_runs: list[dict] = []
     completed_count = 0
+    parallel_enabled = bool(config.get("parallel_scans", False))
+    max_parallel_tools = max(1, int(config.get("max_parallel_tools", 3)))
+    max_parallel_heavy_tools = max(1, int(config.get("max_parallel_heavy_tools", 2)))
 
     def _emit(event: dict):
         if progress_callback:
@@ -607,6 +622,59 @@ def run_all_tools(
         )
         return result
 
+    def _execute_plan(plan: list[tuple[str, str, callable]], total_tools: int, max_workers: int) -> list[dict]:
+        nonlocal completed_count
+
+        if not plan:
+            return []
+
+        if not parallel_enabled or max_workers <= 1 or len(plan) == 1:
+            return [_with_progress(total_tools, tool_name, phase, runner) for tool_name, phase, runner in plan]
+
+        results: list[dict | None] = [None] * len(plan)
+        future_map = {}
+        worker_count = min(len(plan), max_workers)
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            for index, (tool_name, phase, runner) in enumerate(plan):
+                tool_meta = next((t for t in TOOLS if t["name"] == tool_name), {"label": tool_name})
+                _emit(
+                    {
+                        "event": "tool_started",
+                        "tool": tool_name,
+                        "tool_label": tool_meta.get("label", tool_name),
+                        "phase": phase,
+                        "completed_tools": completed_count,
+                        "total_tools": total_tools,
+                        "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
+                        "message": f"Running {tool_meta.get('label', tool_name)}.",
+                    }
+                )
+                future = executor.submit(_run_registered_tool, tool_name, phase, installed, runner)
+                future_map[future] = (index, tool_name, phase, tool_meta)
+
+            for future in as_completed(future_map):
+                index, tool_name, phase, tool_meta = future_map[future]
+                result = future.result()
+                results[index] = result
+                completed_count += 1
+                _emit(
+                    {
+                        "event": "tool_finished",
+                        "tool": tool_name,
+                        "tool_label": tool_meta.get("label", tool_name),
+                        "phase": phase,
+                        "status": result.get("status", "unknown"),
+                        "duration_seconds": result.get("duration_seconds", 0),
+                        "completed_tools": completed_count,
+                        "total_tools": total_tools,
+                        "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
+                        "message": f"{tool_meta.get('label', tool_name)} completed with status {result.get('status', 'unknown')}",
+                    }
+                )
+
+        return [result for result in results if result is not None]
+
     static_plan: list[tuple[str, str, callable]] = []
     if mode in ("passive", "full"):
         static_plan.extend(
@@ -630,8 +698,7 @@ def run_all_tools(
 
     _emit({"event": "plan_updated", "phase": "tool_execution", "total_tools": len(static_plan), "message": "Initial scan plan prepared."})
 
-    for tool_name, phase, runner in static_plan:
-        tool_runs.append(_with_progress(len(static_plan), tool_name, phase, runner))
+    tool_runs.extend(_execute_plan(static_plan, len(static_plan), max_parallel_tools))
 
     profile_info = detect_profile_from_artifacts(scan_dir, url, profile)
     effective_profile = profile_info["effective_profile"]
@@ -673,8 +740,11 @@ def run_all_tools(
         }
     )
 
-    for tool_name, phase, runner in dynamic_plan:
-        tool_runs.append(_with_progress(total_tools, tool_name, phase, runner))
+    passive_dynamic = [item for item in dynamic_plan if item[1] == "passive"]
+    active_dynamic = [item for item in dynamic_plan if item[1] == "active"]
+
+    tool_runs.extend(_execute_plan(passive_dynamic, total_tools, max_parallel_tools))
+    tool_runs.extend(_execute_plan(active_dynamic, total_tools, max_parallel_heavy_tools))
 
     completed = [item["name"] for item in tool_runs if item["status"] in ("completed", "completed_no_output")]
     profile_info["tools_completed"] = completed

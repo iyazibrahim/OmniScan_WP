@@ -23,6 +23,8 @@
   "httpx_rate_limit": 25,
   "content_wordlist": "",
   "output_formats": ["html", "markdown", "json"],
-  "parallel_scans": false,
+  "parallel_scans": true,
+  "max_parallel_tools": 3,
+  "max_parallel_heavy_tools": 2,
   "timeout_per_tool_seconds": 600
 }

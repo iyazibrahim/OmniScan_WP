@@ -192,20 +192,24 @@ def generate_html_report(payload: dict) -> str:
         )
         finding_cards.append(
             f"""
-            <div class="finding {severity}">
-                <div class="finding-head">
-                    <h3>{html.escape(finding.get('id', ''))} {title}</h3>
+            <details class="finding {severity}">
+                <summary>
                     <span class="sev {severity}">{severity}</span>
+                    <span class="sum-title">{html.escape(finding.get('id', ''))} {title}</span>
+                    <span class="url-cell" style="color:var(--muted);font-size:0.8em">{html.escape(finding.get('source_tool', ''))}{' &nbsp;&middot;&nbsp; ' + cve if cve else ''}</span>
+                    <svg class="sum-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </summary>
+                <div class="finding-body">
+                    <p class="meta">Source: {html.escape(finding.get('source_tool', ''))}{' | CVE: ' + cve if cve else ''}</p>
+                    <p>{description}</p>
+                    {'<pre>' + evidence + '</pre>' if evidence else ''}
+                    <div class="fix-block">
+                        <h4>Recommended Fix</h4>
+                        {fix_html}
+                    </div>
+                    {'<div class="refs"><h4>References</h4><ul>' + ref_html + '</ul></div>' if ref_html else ''}
                 </div>
-                <p class="meta">Source: {html.escape(finding.get('source_tool', ''))}{' | CVE: ' + cve if cve else ''}</p>
-                <p>{description}</p>
-                {'<pre>' + evidence + '</pre>' if evidence else ''}
-                <div class="fix-block">
-                    <h4>Recommended Fix</h4>
-                    {fix_html}
-                </div>
-                {'<div class="refs"><h4>References</h4><ul>' + ref_html + '</ul></div>' if ref_html else ''}
-            </div>
+            </details>
             """
         )
 
@@ -333,6 +337,35 @@ def generate_html_report(payload: dict) -> str:
         .narrative {{ white-space: pre-wrap; line-height: 1.6; }}
         .note-card {{ background: rgba(22,33,51,0.75); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }}
         @media (max-width: 980px) {{ .two {{ grid-template-columns: 1fr; }} }}
+        /* ── Text overflow fixes ─────────────────────────────────────────── */
+        td, th {{ word-break: break-word; overflow-wrap: anywhere; max-width: 480px; }}
+        td code {{ word-break: break-all; white-space: pre-wrap; }}
+        pre {{ white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; overflow-x: auto; max-width: 100%; }}
+        .url-cell {{ word-break: break-all; font-size: 0.82em; }}
+        /* ── Findings search / filter / pagination ───────────────────────── */
+        .findings-toolbar {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }}
+        .findings-toolbar input {{ flex: 1; min-width: 200px; padding: 8px 12px; background: #0d1929; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; }}
+        .findings-toolbar select {{ padding: 8px 10px; background: #0d1929; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; }}
+        .findings-toolbar .findings-count {{ color: var(--muted); font-size: 13px; white-space: nowrap; }}
+        .findings-pages {{ display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }}
+        .findings-pages button {{ padding: 5px 11px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 13px; }}
+        .findings-pages button.active {{ background: var(--accent); color: #000; border-color: var(--accent); }}
+        .findings-pages button:hover:not(.active) {{ background: rgba(255,255,255,0.1); }}
+        /* ── Collapsible finding cards ───────────────────────────────────── */
+        details.finding {{ padding: 0; }}
+        details.finding > summary {{ list-style: none; cursor: pointer; padding: 14px 18px; border-radius: 12px; background: rgba(16,24,38,0.94); border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }}
+        details.finding > summary::-webkit-details-marker {{ display: none; }}
+        details.finding[open] > summary {{ border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }}
+        details.finding > summary .sum-chevron {{ margin-left: auto; transition: transform 0.2s; flex-shrink: 0; }}
+        details.finding[open] > summary .sum-chevron {{ transform: rotate(180deg); }}
+        .finding-body {{ padding: 14px 18px; background: rgba(14,22,36,0.96); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }}
+        details.finding.critical > summary {{ border-left: 4px solid var(--critical); }}
+        details.finding.high    > summary {{ border-left: 4px solid var(--high); }}
+        details.finding.medium  > summary {{ border-left: 4px solid var(--medium); }}
+        details.finding.low     > summary {{ border-left: 4px solid var(--low); }}
+        details.finding.info    > summary {{ border-left: 4px solid var(--info); }}
+        .sum-title {{ font-weight: 600; font-size: 0.93rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        #findingsDetailPages {{ display:none; }}
     </style>
 </head>
 <body>
@@ -489,6 +522,18 @@ def generate_html_report(payload: dict) -> str:
 
         <h2>Findings Index</h2>
         <div class="card">
+            <div class="findings-toolbar">
+                <input id="findingsSearch" type="search" placeholder="Search findings by title, tool, CVE&hellip;">
+                <select id="findingsSevFilter">
+                    <option value="">All severities</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                    <option value="info">Info</option>
+                </select>
+                <span class="findings-count" id="findingsCount"></span>
+            </div>
             <table>
                 <thead>
                     <tr>
@@ -499,18 +544,120 @@ def generate_html_report(payload: dict) -> str:
                         <th>CVE</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="findingsTableBody">
                     {''.join(finding_rows) or "<tr><td colspan='5'>No findings were parsed from the available outputs.</td></tr>"}
                 </tbody>
             </table>
+            <div class="findings-pages" id="findingsIndexPages"></div>
         </div>
 
         <h2>Detailed Findings</h2>
-        <div>
+        <div id="findingsDetailContainer">
             {''.join(finding_cards) or "<div class='card'>No findings available.</div>"}
         </div>
+        <div class="findings-pages" id="findingsDetailPages"></div>
     </div>
+    <!-- anchor for scroll-back -->
+    <span id="findingsDetailSection"></span>
 </body>
+<script>
+(function(){{
+    // ── Findings Index: search + severity filter + pagination ──
+    var PAGE_SIZE = 100;
+    var allRows = Array.from(document.querySelectorAll('#findingsTableBody tr'));
+    var currentPage = 0;
+    var filteredRows = allRows;
+
+    function buildPages(){{
+        var pagesDiv = document.getElementById('findingsIndexPages');
+        if (!pagesDiv) return;
+        pagesDiv.innerHTML = '';
+        var pages = Math.ceil(filteredRows.length / PAGE_SIZE);
+        if (pages <= 1) {{ pagesDiv.style.display = 'none'; return; }}
+        pagesDiv.style.display = 'flex';
+        for (var i = 0; i < pages; i++) {{
+            var btn = document.createElement('button');
+            btn.textContent = i + 1;
+            if (i === currentPage) btn.classList.add('active');
+            btn.dataset.page = i;
+            btn.addEventListener('click', function(e){{
+                currentPage = parseInt(e.target.dataset.page);
+                renderPage();
+            }});
+            pagesDiv.appendChild(btn);
+        }}
+    }}
+
+    function renderPage(){{
+        allRows.forEach(function(r){{ r.style.display='none'; }});
+        var start = currentPage * PAGE_SIZE;
+        filteredRows.slice(start, start + PAGE_SIZE).forEach(function(r){{ r.style.display=''; }});
+        var countEl = document.getElementById('findingsCount');
+        if (countEl) countEl.textContent = 'Showing ' + filteredRows.length + ' of ' + allRows.length + ' findings';
+        var btns = document.querySelectorAll('#findingsIndexPages button');
+        btns.forEach(function(b){{ b.classList.toggle('active', parseInt(b.dataset.page)===currentPage); }});
+    }}
+
+    function applyFilter(){{
+        var query = (document.getElementById('findingsSearch') || {{}}).value || '';
+        var sevFilter = (document.getElementById('findingsSevFilter') || {{}}).value || '';
+        query = query.toLowerCase();
+        filteredRows = allRows.filter(function(r){{
+            var text = r.textContent.toLowerCase();
+            var sev = (r.querySelector('.sev') || {{}}).textContent || '';
+            var sevOk = !sevFilter || sev.toLowerCase() === sevFilter.toLowerCase();
+            return sevOk && (!query || text.includes(query));
+        }});
+        currentPage = 0;
+        buildPages();
+        renderPage();
+    }}
+
+    var searchEl = document.getElementById('findingsSearch');
+    var sevEl = document.getElementById('findingsSevFilter');
+    if (searchEl) searchEl.addEventListener('input', applyFilter);
+    if (sevEl) sevEl.addEventListener('change', applyFilter);
+    buildPages();
+    renderPage();
+
+    // ── Detailed Findings: pagination (PAGE_DETAIL cards at a time) ──
+    var PAGE_DETAIL = 50;
+    var allCards = Array.from(document.querySelectorAll('#findingsDetailContainer details.finding'));
+    var detailPage = 0;
+
+    function renderDetailPage(){{
+        allCards.forEach(function(c){{ c.style.display='none'; }});
+        var start = detailPage * PAGE_DETAIL;
+        allCards.slice(start, start + PAGE_DETAIL).forEach(function(c){{ c.style.display=''; }});
+        var btns = document.querySelectorAll('#findingsDetailPages button');
+        btns.forEach(function(b){{ b.classList.toggle('active', parseInt(b.dataset.page)===detailPage); }});
+    }}
+
+    function buildDetailPages(){{
+        var pagesDiv = document.getElementById('findingsDetailPages');
+        if (!pagesDiv) return;
+        var pages = Math.ceil(allCards.length / PAGE_DETAIL);
+        if (pages <= 1) {{ pagesDiv.style.display='none'; return; }}
+        pagesDiv.style.display = 'flex';
+        pagesDiv.innerHTML = '<span style="color:var(--muted);font-size:13px;margin-right:4px">Page:</span>';
+        for (var i = 0; i < pages; i++) {{
+            var btn = document.createElement('button');
+            btn.textContent = i + 1;
+            btn.dataset.page = i;
+            if (i === detailPage) btn.classList.add('active');
+            btn.addEventListener('click', function(e){{
+                detailPage = parseInt(e.target.dataset.page);
+                renderDetailPage();
+                document.getElementById('findingsDetailSection').scrollIntoView({{behavior:'smooth',block:'start'}});
+            }});
+            pagesDiv.appendChild(btn);
+        }}
+    }}
+
+    buildDetailPages();
+    renderDetailPage();
+}})();
+</script>
 </html>"""
 
 
