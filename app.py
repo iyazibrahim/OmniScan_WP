@@ -246,6 +246,28 @@ def _scan_stall_patch(job: dict) -> dict | None:
         patch["scan_dir"] = str(scan_dir)
     return patch
 
+
+def _scan_cancel_recovery_patch(job: dict) -> dict | None:
+    status = str(job.get("status", "unknown"))
+    if status != "cancelling" or not job.get("cancel_requested"):
+        return None
+
+    updated_at = float(job.get("updated_at") or job.get("started_at") or 0)
+    if (time.time() - updated_at) < 45:
+        return None
+
+    patch = {
+        "status": "cancelled",
+        "phase": "cancelled",
+        "current_tool": "Cancelled",
+        "finished_at": time.time(),
+        "message": "Scan cancelled by user.",
+    }
+    scan_dir = _scan_dir_for_job(job)
+    if scan_dir is not None:
+        patch["scan_dir"] = str(scan_dir)
+    return patch
+
 # ── Static / SPA ────────────────────────────────────────────────────────────────
 
 # ── Static / SPA ────────────────────────────────────────────────────────────────
@@ -1073,7 +1095,16 @@ def start_scan():
             )
             with SCAN_JOBS_LOCK:
                 job = SCAN_JOBS.get(scan_id)
-            if job and job.get("status") == "running":
+            if job and (job.get("cancel_requested") or job.get("status") == "cancelling"):
+                _update_scan_job(scan_id, {
+                    "status": "cancelled",
+                    "phase": "cancelled",
+                    "current_tool": "Cancelled",
+                    "finished_at": time.time(),
+                    "message": "Scan cancelled by user.",
+                })
+                _append_scan_event(scan_id, "Scan cancelled by user.")
+            elif job and job.get("status") == "running":
                 _progress_callback({"event": "complete", "message": "Scan completed."})
         except InterruptedError:
             _update_scan_job(scan_id, {
@@ -1112,7 +1143,7 @@ def get_scan_status(scan_id):
             return jsonify({"error": "Scan not found"}), 404
         payload = dict(job)
 
-    recovery_patch = _scan_completion_patch(payload) or _scan_stall_patch(payload)
+    recovery_patch = _scan_completion_patch(payload) or _scan_cancel_recovery_patch(payload) or _scan_stall_patch(payload)
     if recovery_patch and payload.get("status") not in ("completed", "failed", "cancelled"):
         _update_scan_job(scan_id, recovery_patch)
         payload.update(recovery_patch)
@@ -1164,7 +1195,7 @@ def list_scan_jobs():
     now = time.time()
     result = []
     for job in sorted(jobs, key=lambda x: x.get("started_at", 0), reverse=True)[:10]:
-        recovery_patch = _scan_completion_patch(job) or _scan_stall_patch(job)
+        recovery_patch = _scan_completion_patch(job) or _scan_cancel_recovery_patch(job) or _scan_stall_patch(job)
         if recovery_patch and job.get("status") not in ("completed", "failed", "cancelled"):
             _update_scan_job(job.get("scan_id"), recovery_patch)
             job = {**job, **recovery_patch}
