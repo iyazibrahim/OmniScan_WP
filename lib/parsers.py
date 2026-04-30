@@ -36,6 +36,40 @@ def _safe_read_text(path: Path) -> str:
         return ""
 
 
+def _iter_jsonl(path: Path):
+    """Yield JSON objects from a JSONL file without loading the whole file."""
+    if not path.exists():
+        return
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    yield item
+    except OSError:
+        return
+
+
+def _katana_discovered_url(item: dict) -> str:
+    request = item.get("request", {}) if isinstance(item, dict) else {}
+    if isinstance(request, dict):
+        for key in ("endpoint", "url", "path"):
+            value = request.get(key)
+            if value:
+                return str(value)
+    for key in ("url", "endpoint", "path"):
+        value = item.get(key) if isinstance(item, dict) else None
+        if value:
+            return str(value)
+    return ""
+
+
 def _normalize_severity(severity: str | None, default: str = "info") -> str:
     sev = (severity or default).strip().lower()
     if sev in {"critical", "high", "medium", "low", "info"}:
@@ -689,14 +723,13 @@ def _collect_sample_urls(scan_dir: Path) -> dict:
     if gau_file.exists():
         urls["gau"] = [line.strip() for line in _safe_read_text(gau_file).splitlines() if line.strip()][:20]
 
-    katana_data = _safe_load_json(scan_dir / "katana.jsonl")
-    katana_items = katana_data if isinstance(katana_data, list) else [katana_data] if isinstance(katana_data, dict) else []
-    for item in katana_items:
-        if isinstance(item, dict):
-            discovered = item.get("request", {}).get("endpoint") or item.get("url")
-            if discovered:
-                urls["katana"].append(str(discovered))
-    urls["katana"] = urls["katana"][:20]
+    for item in _iter_jsonl(scan_dir / "katana.jsonl"):
+        discovered = _katana_discovered_url(item)
+        if not discovered or discovered in urls["katana"]:
+            continue
+        urls["katana"].append(discovered)
+        if len(urls["katana"]) >= 20:
+            break
 
     for key, file_name in [("ffuf", "ffuf.json"), ("feroxbuster", "feroxbuster.json")]:
         data = _safe_load_json(scan_dir / file_name)

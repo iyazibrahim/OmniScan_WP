@@ -8,7 +8,7 @@ import threading
 import uuid
 import time
 import functools
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlparse
@@ -145,6 +145,106 @@ DEFAULT_SCAN_ESTIMATES_SECONDS = {
     "active": 15 * 60,
     "full": 23 * 60,
 }
+
+
+def _safe_scan_host_label(target: str) -> str:
+    return str(target or "").replace("https://", "").replace("http://", "").replace("/", "_")
+
+
+def _scan_dir_for_job(job: dict) -> Path | None:
+    raw = job.get("scan_dir")
+    if raw:
+        return Path(raw)
+
+    target = str(job.get("target", "")).strip()
+    started_at = job.get("started_at")
+    if not target or not started_at:
+        return None
+
+    try:
+        ts = datetime.fromtimestamp(float(started_at)).strftime("%Y%m%d_%H%M%S")
+    except (TypeError, ValueError, OSError):
+        return None
+
+    return REPORTS_DIR / f"{_safe_scan_host_label(target)}_{ts}"
+
+
+def _scan_completion_patch(job: dict) -> dict | None:
+    scan_dir = _scan_dir_for_job(job)
+    if scan_dir is None or not scan_dir.exists():
+        return None
+
+    marker_path = scan_dir / "scan-complete.json"
+    if marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            marker = None
+        if isinstance(marker, dict):
+            patch = {
+                "status": "completed",
+                "phase": "completed",
+                "progress": 100,
+                "current_tool": "Completed",
+                "scan_dir": str(scan_dir),
+            }
+            finished_at = marker.get("finished_at")
+            if finished_at:
+                patch["finished_at"] = finished_at
+            report_paths = marker.get("report_paths")
+            if isinstance(report_paths, dict) and report_paths:
+                patch["report_paths"] = report_paths
+            return patch
+
+    report_json = sorted(scan_dir.rglob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not report_json:
+        return None
+
+    latest_json = report_json[0]
+    stem = latest_json.stem
+    report_dir = latest_json.parent
+    report_paths = {}
+    for key, suffix in {"json": ".json", "html": ".html", "md": ".md", "sarif": ".sarif", "csv": ".csv"}.items():
+        candidate = report_dir / f"{stem}{suffix}"
+        if candidate.exists():
+            report_paths[key] = str(candidate)
+
+    return {
+        "status": "completed",
+        "phase": "completed",
+        "progress": 100,
+        "current_tool": "Completed",
+        "finished_at": latest_json.stat().st_mtime,
+        "report_paths": report_paths,
+        "scan_dir": str(scan_dir),
+    }
+
+
+def _scan_stall_patch(job: dict) -> dict | None:
+    status = str(job.get("status", "unknown"))
+    if status in ("completed", "failed", "cancelled"):
+        return None
+
+    total_tools = _safe_int(job.get("total_tools"), 0)
+    completed_tools = _safe_int(job.get("completed_tools"), 0)
+    if total_tools <= 0 or completed_tools < total_tools:
+        return None
+
+    updated_at = float(job.get("updated_at") or job.get("started_at") or 0)
+    if (time.time() - updated_at) < 300:
+        return None
+
+    patch = {
+        "status": "failed",
+        "phase": "failed",
+        "current_tool": "Failed",
+        "finished_at": time.time(),
+        "message": "Scan stalled after tool execution. Check server logs for parser or report-generation failures.",
+    }
+    scan_dir = _scan_dir_for_job(job)
+    if scan_dir is not None:
+        patch["scan_dir"] = str(scan_dir)
+    return patch
 
 # ── Static / SPA ────────────────────────────────────────────────────────────────
 
@@ -410,6 +510,9 @@ def _normalized_job_status(job: dict) -> str:
     status = str(job.get("status", "unknown"))
     if status in ("completed", "failed", "cancelled"):
         return status
+
+    if _scan_completion_patch(job):
+        return "completed"
 
     progress = _safe_int(job.get("progress"), 0)
     has_finished_marker = bool(job.get("finished_at") or job.get("report_paths"))
@@ -807,6 +910,7 @@ def get_monthly_stats():
 @app.route('/api/scan', methods=['POST'])
 @login_required
 def start_scan():
+    global _scan_jobs_dirty
     data = request.json or {}
     target = str(data.get('target', '')).strip().rstrip('/')
     mode = str(data.get('mode', 'passive')).strip().lower()
@@ -820,6 +924,9 @@ def start_scan():
     estimates = _compute_scan_estimates()
     estimated_seconds = estimates.get(mode, {}).get("seconds", DEFAULT_SCAN_ESTIMATES_SECONDS["full"])
     scan_id = uuid.uuid4().hex
+    started_at = time.time()
+    run_label = datetime.fromtimestamp(started_at).strftime("%Y%m%d_%H%M%S")
+    scan_dir = REPORTS_DIR / f"{_safe_scan_host_label(target)}_{run_label}"
 
     with SCAN_JOBS_LOCK:
         SCAN_JOBS[scan_id] = {
@@ -828,18 +935,21 @@ def start_scan():
             "mode": mode,
             "profile": profile,
             "status": "running",
-            "started_at": time.time(),
-            "updated_at": time.time(),
+            "started_at": started_at,
+            "updated_at": started_at,
             "progress": 1,
             "phase": "initializing",
             "current_tool": "Preparing scan",
             "completed_tools": 0,
             "total_tools": 0,
             "tool_status": [],
+            "scan_dir": str(scan_dir),
             "estimated_seconds": estimated_seconds,
-            "events": [{"at": time.time(), "message": "Scan queued and initializing."}],
+            "events": [{"at": started_at, "message": "Scan queued and initializing."}],
             "message": f"Scan started on {target} in {mode} mode.",
         }
+        _scan_jobs_dirty = True
+    _flush_scan_jobs_to_disk()
 
     def _progress_callback(event: dict):
         if not isinstance(event, dict):
@@ -950,6 +1060,7 @@ def start_scan():
                 profile,
                 progress_callback=_progress_callback,
                 ci_fail_on_findings=False,
+                run_label=run_label,
             )
             with SCAN_JOBS_LOCK:
                 job = SCAN_JOBS.get(scan_id)
@@ -991,6 +1102,11 @@ def get_scan_status(scan_id):
         if not job:
             return jsonify({"error": "Scan not found"}), 404
         payload = dict(job)
+
+    recovery_patch = _scan_completion_patch(payload) or _scan_stall_patch(payload)
+    if recovery_patch and payload.get("status") not in ("completed", "failed", "cancelled"):
+        _update_scan_job(scan_id, recovery_patch)
+        payload.update(recovery_patch)
 
     elapsed = max(0, int(time.time() - payload.get("started_at", time.time())))
     payload["status"] = _normalized_job_status(payload)
@@ -1035,6 +1151,10 @@ def list_scan_jobs():
     now = time.time()
     result = []
     for job in sorted(jobs, key=lambda x: x.get("started_at", 0), reverse=True)[:10]:
+        recovery_patch = _scan_completion_patch(job) or _scan_stall_patch(job)
+        if recovery_patch and job.get("status") not in ("completed", "failed", "cancelled"):
+            _update_scan_job(job.get("scan_id"), recovery_patch)
+            job = {**job, **recovery_patch}
         elapsed = max(0, int(now - job.get("started_at", now)))
         estimate = max(1, _safe_int(job.get("estimated_seconds"), DEFAULT_SCAN_ESTIMATES_SECONDS["full"]))
         status = _normalized_job_status(job)

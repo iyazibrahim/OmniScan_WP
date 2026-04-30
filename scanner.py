@@ -241,7 +241,8 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
 def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
              send_email: bool = False, output_dir: Path | None = None, profile: str = "auto",
              progress_callback: Callable[[dict], None] | None = None,
-             ci_fail_on_findings: bool = True):
+             ci_fail_on_findings: bool = True,
+             run_label: str | None = None):
     """Run a full scan on the given URL."""
 
     def _emit(event: dict):
@@ -257,7 +258,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "current_tool": "Initializing",
         "message": f"Starting {mode} scan for {url}.",
     })
-    ts = start_time.strftime("%Y%m%d_%H%M%S")
+    ts = run_label or start_time.strftime("%Y%m%d_%H%M%S")
     scan_config = config.get_scan_config()
     tokens = config.get_tokens()
 
@@ -341,6 +342,20 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         scan_overview=overview,
         assessment=assessment,
         output_dir=scan_dir,
+    )
+    completion_path = scan_dir / "scan-complete.json"
+    completion_path.write_text(
+        json.dumps(
+            {
+                "target_url": url,
+                "scan_mode": mode_label.get(mode, mode),
+                "finished_at": datetime.now().isoformat(),
+                "report_paths": {key: str(val) for key, val in paths.items()},
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
     )
 
     # Update target's last_scanned
