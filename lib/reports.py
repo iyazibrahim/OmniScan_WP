@@ -132,25 +132,25 @@ def _render_standards_tags(finding: dict) -> str:
     for item in finding.get("owasp", []):
         parts.append(
             f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag owasp-tag' "
-            f"title='OWASP {html.escape(item[\"id\"])}: {html.escape(item[\"title\"])}'>"
+            f"title='OWASP {html.escape(item['id'])}: {html.escape(item['title'])}'>"
             f"OWASP {html.escape(item['id'])}</a>"
         )
     for item in finding.get("mitre_attack", []):
         parts.append(
             f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag mitre-tag' "
-            f"title='MITRE ATT&amp;CK {html.escape(item[\"id\"])}: {html.escape(item[\"name\"])} ({html.escape(item[\"tactic\"])})'>"
+            f"title='MITRE ATT&amp;CK {html.escape(item['id'])}: {html.escape(item['name'])} ({html.escape(item['tactic'])})'>"
             f"ATT&amp;CK {html.escape(item['id'])}</a>"
         )
     for item in finding.get("cis_controls", []):
         parts.append(
             f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag cis-tag' "
-            f"title='CIS {html.escape(item[\"id\"])}: {html.escape(item[\"title\"])}'>"
+            f"title='CIS {html.escape(item['id'])}: {html.escape(item['title'])}'>"
             f"{html.escape(item['id'])}</a>"
         )
     for item in finding.get("nist_csf", []):
         parts.append(
             f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag nist-tag' "
-            f"title='NIST CSF {html.escape(item[\"id\"])}: {html.escape(item[\"category\"])} ({html.escape(item[\"function\"])})'>"
+            f"title='NIST CSF {html.escape(item['id'])}: {html.escape(item['category'])} ({html.escape(item['function'])})'>"
             f"NIST {html.escape(item['id'])}</a>"
         )
 
