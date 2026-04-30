@@ -242,7 +242,8 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
              send_email: bool = False, output_dir: Path | None = None, profile: str = "auto",
              progress_callback: Callable[[dict], None] | None = None,
              ci_fail_on_findings: bool = True,
-             run_label: str | None = None):
+             run_label: str | None = None,
+             should_cancel: Callable[[], bool] | None = None):
     """Run a full scan on the given URL."""
 
     def _emit(event: dict):
@@ -276,7 +277,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "current_tool": "Tool orchestration",
         "message": "Launching scan tools.",
     })
-    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile, progress_callback=_emit)
+    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile, progress_callback=_emit, should_cancel=should_cancel)
     tools_used = execution.get("tools_used", [])
     tool_runs = execution.get("tools", [])
 

@@ -272,6 +272,18 @@ const App = {
         }
     },
 
+    syncActiveScanFromJobs(jobs) {
+        const activeJobs = Array.isArray(jobs)
+            ? jobs.filter((job) => job.status === "running" || job.status === "cancelling")
+            : [];
+        if (!activeJobs.length || !activeJobs[0]?.scan_id) {
+            return;
+        }
+        if (this.activeScanId !== activeJobs[0].scan_id || !this.scanPollingTimer) {
+            this.beginScanPolling(activeJobs[0].scan_id);
+        }
+    },
+
     setupQuickScan() {
         const form = document.getElementById("quickScanForm");
         form.onsubmit = async (event) => {
@@ -383,10 +395,11 @@ const App = {
     },
 
     async loadScanView() {
-        const [targets, tools, estimates] = await Promise.all([
+        const [targets, tools, estimates, jobs] = await Promise.all([
             this.api("/api/targets"),
             this.api("/api/tools-status"),
             this.api("/api/scan-estimates"),
+            this.api("/api/scan-jobs"),
         ]);
 
         this.scanEstimates = estimates || null;
@@ -426,6 +439,16 @@ const App = {
             `).join("");
         }
 
+        const toolsPanelBtn = document.getElementById("toggleToolsPanelBtn");
+        const toolsPanelBody = document.getElementById("toolsPanelBody");
+        if (toolsPanelBtn && toolsPanelBody) {
+            toolsPanelBtn.onclick = () => {
+                const collapsed = toolsPanelBody.classList.toggle("collapsed");
+                toolsPanelBtn.textContent = collapsed ? "Show Tools" : "Hide Tools";
+                toolsPanelBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+            };
+        }
+
         const modeSelect = document.getElementById("scanMode");
         modeSelect.onchange = () => this.renderScanEstimateHint(modeSelect.value);
         this.renderScanEstimateHint(modeSelect.value);
@@ -441,6 +464,8 @@ const App = {
             }
             await this.startScan(target, mode, profile, "scanFormStatus", "scanSubmitBtn");
         };
+
+        this.syncActiveScanFromJobs(jobs);
     },
 
     renderScanEstimateHint(mode) {
@@ -589,7 +614,7 @@ const App = {
         if (btn) { btn.disabled = true; btn.textContent = "Cancelling…"; }
         try {
             await fetch(`/api/scan/${encodeURIComponent(this.activeScanId)}/cancel`, { method: "POST" });
-            this.toast("Cancel requested. Scan will stop before the next tool.", "success");
+            this.toast("Cancel requested. Stopping the active tool now.", "success");
         } catch {
             this.toast("Failed to send cancel request.", "error");
             if (btn) { btn.disabled = false; }

@@ -986,6 +986,7 @@ def start_scan():
         elif event_type == "tool_finished":
             tool_name = event.get("tool_label") or event.get("tool") or "Tool"
             status = event.get("status", "completed")
+            note = str(event.get("note", "") or "").strip()
             patch.update(
                 {
                     "completed_tools": _safe_int(event.get("completed_tools"), 0),
@@ -994,6 +995,8 @@ def start_scan():
                 }
             )
             _append_scan_event(scan_id, f"{tool_name} finished with status: {status}.")
+            if note and status in {"timeout", "skipped", "cancelled", "failed"}:
+                _append_scan_event(scan_id, note)
 
             with SCAN_JOBS_LOCK:
                 job = SCAN_JOBS.get(scan_id)
@@ -1006,6 +1009,7 @@ def start_scan():
                             "phase": event.get("phase", ""),
                             "status": status,
                             "duration_seconds": event.get("duration_seconds", 0),
+                            "note": note,
                         }
                     )
                     if len(tool_status) > 40:
@@ -1050,6 +1054,10 @@ def start_scan():
     def _run_scan_job():
         from scanner import run_scan
 
+        def _is_cancel_requested() -> bool:
+            with SCAN_JOBS_LOCK:
+                return bool(SCAN_JOBS.get(scan_id, {}).get("cancel_requested"))
+
         try:
             run_scan(
                 target,
@@ -1061,6 +1069,7 @@ def start_scan():
                 progress_callback=_progress_callback,
                 ci_fail_on_findings=False,
                 run_label=run_label,
+                should_cancel=_is_cancel_requested,
             )
             with SCAN_JOBS_LOCK:
                 job = SCAN_JOBS.get(scan_id)
@@ -1131,6 +1140,7 @@ def get_scan_estimates():
 @app.route('/api/scan/<scan_id>/cancel', methods=['POST'])
 @login_required
 def cancel_scan(scan_id):
+    global _scan_jobs_dirty
     with SCAN_JOBS_LOCK:
         job = SCAN_JOBS.get(scan_id)
         if not job:
@@ -1140,6 +1150,9 @@ def cancel_scan(scan_id):
         job["cancel_requested"] = True
         job["status"] = "cancelling"
         job["updated_at"] = time.time()
+        job["message"] = "Cancellation requested. Stopping current tool..."
+        _scan_jobs_dirty = True
+    _flush_scan_jobs_to_disk()
     return jsonify({"message": "Cancel requested."})
 
 

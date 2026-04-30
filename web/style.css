@@ -818,6 +818,10 @@ input::placeholder { color: var(--text-muted); }
 .tool-item.installed .tool-status { color: var(--accent-green); }
 .tool-item.missing .tool-status { color: var(--accent-red); }
 
+.tools-panel.collapsed {
+    display: none;
+}
+
 /* ── Reports ────────────────────────────────────────────────────────────────── */
 
 .reports-container {

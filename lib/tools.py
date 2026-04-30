@@ -1,6 +1,6 @@
 """Tool execution wrappers and orchestration for OmniScan."""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ipaddress
 import json
 import re
@@ -142,6 +142,7 @@ def _run_tool(
     timeout: int = 600,
     extra_env: dict | None = None,
     acceptable_returncodes: set | None = None,
+    cancel_check=None,
 ) -> dict:
     """Run a tool command and capture telemetry and logs."""
     result = _result_template(tool_name, tool_label, phase, cmd, "failed")
@@ -151,12 +152,60 @@ def _run_tool(
     stderr_log = scan_dir / f"{tool_name}.stderr.log"
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=extra_env)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=extra_env)
+        deadline = start + timeout
+        stdout = ""
+        stderr = ""
+        returncode = None
+
+        while True:
+            if cancel_check and cancel_check():
+                proc.terminate()
+                try:
+                    stdout, stderr = proc.communicate(timeout=8)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                duration = time.perf_counter() - start
+                _write_text(stdout_log, stdout or "")
+                _write_text(stderr_log, (stderr or "").strip() or f"{tool_label} cancelled by operator.")
+                if stdout_file is not None and stdout:
+                    _write_text(stdout_file, stdout)
+                outputs = [str(p) for p in (output_files or []) if p.exists()]
+                if stdout_file is not None and stdout_file.exists():
+                    outputs.append(str(stdout_file))
+                result.update(
+                    {
+                        "status": "cancelled",
+                        "returncode": proc.returncode,
+                        "duration_seconds": round(duration, 2),
+                        "stdout_log": str(stdout_log),
+                        "stderr_log": str(stderr_log),
+                        "output_files": outputs,
+                        "primary_output": outputs[0] if outputs else "",
+                        "note": "Cancelled by operator.",
+                    }
+                )
+                return result
+
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout, output=stdout, stderr=stderr)
+
+            try:
+                stdout, stderr = proc.communicate(timeout=min(1.0, max(0.1, remaining)))
+                returncode = proc.returncode
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
         duration = time.perf_counter() - start
-        _write_text(stdout_log, proc.stdout or "")
-        _write_text(stderr_log, proc.stderr or "")
-        if stdout_file is not None and proc.stdout:
-            _write_text(stdout_file, proc.stdout)
+        _write_text(stdout_log, stdout or "")
+        _write_text(stderr_log, stderr or "")
+        if stdout_file is not None and stdout:
+            _write_text(stdout_file, stdout)
 
         outputs = [str(p) for p in (output_files or []) if p.exists()]
         if stdout_file is not None and stdout_file.exists():
@@ -165,14 +214,14 @@ def _run_tool(
         ok_codes = acceptable_returncodes if acceptable_returncodes is not None else {0}
         # If output file was produced, treat as completed even on non-zero exit
         has_output = bool(outputs)
-        status = "completed" if (proc.returncode in ok_codes or has_output) else "failed"
-        if proc.returncode == 0 and not outputs and not (proc.stdout or "").strip():
+        status = "completed" if (returncode in ok_codes or has_output) else "failed"
+        if returncode == 0 and not outputs and not (stdout or "").strip():
             status = "completed_no_output"
 
         result.update(
             {
                 "status": status,
-                "returncode": proc.returncode,
+                "returncode": returncode,
                 "duration_seconds": round(duration, 2),
                 "stdout_log": str(stdout_log),
                 "stderr_log": str(stderr_log),
@@ -181,20 +230,25 @@ def _run_tool(
                 "note": "",
             }
         )
-        if proc.returncode != 0 and proc.stderr:
-            result["note"] = proc.stderr.strip()[:400]
+        if returncode not in ok_codes and stderr:
+            result["note"] = stderr.strip()[:400]
         return result
     except FileNotFoundError:
         return _missing_tool_result(tool_name, tool_label, phase)
     except subprocess.TimeoutExpired:
         duration = time.perf_counter() - start
         _write_text(stderr_log, f"{tool_label} timed out after {timeout} seconds.")
+        outputs = [str(p) for p in (output_files or []) if p.exists()]
+        if stdout_file is not None and stdout_file.exists():
+            outputs.append(str(stdout_file))
         result.update(
             {
                 "status": "timeout",
                 "duration_seconds": round(duration, 2),
                 "stdout_log": str(stdout_log),
                 "stderr_log": str(stderr_log),
+                "output_files": outputs,
+                "primary_output": outputs[0] if outputs else "",
                 "note": f"Timed out after {timeout} seconds.",
             }
         )
@@ -408,7 +462,7 @@ def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: s
     }
 
 
-def run_httpx(url: str, config: dict, scan_dir: Path) -> dict:
+def run_httpx(url: str, config: dict, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running httpx probe...")
     output_file = scan_dir / "httpx.json"
     rate = str(config.get("httpx_rate_limit", 25))
@@ -428,24 +482,24 @@ def run_httpx(url: str, config: dict, scan_dir: Path) -> dict:
         "-ws",
         "-fr",
     ]
-    result = _run_tool(cmd, "httpx", "httpx", "passive", scan_dir, output_files=[output_file], acceptable_returncodes={0, 1})
+    result = _run_tool(cmd, "httpx", "httpx", "passive", scan_dir, output_files=[output_file], acceptable_returncodes={0, 1}, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("httpx complete.")
     return result
 
 
-def run_whatweb(url: str, config: dict, scan_dir: Path) -> dict:
+def run_whatweb(url: str, config: dict, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running WhatWeb fingerprinting...")
     output_file = scan_dir / "whatweb.json"
     threads = str(config.get("whatweb_max_threads", 10))
     cmd = ["whatweb", url, f"--log-json={output_file}", "--max-threads", threads, "-q"]
-    result = _run_tool(cmd, "whatweb", "WhatWeb", "passive", scan_dir, output_files=[output_file])
+    result = _run_tool(cmd, "whatweb", "WhatWeb", "passive", scan_dir, output_files=[output_file], cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("WhatWeb complete.")
     return result
 
 
-def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str) -> dict:
+def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, cancel_check=None) -> dict:
     ui.status("Running Nuclei...")
     output_file = scan_dir / "nuclei.jsonl"
     if profile == "wordpress":
@@ -479,13 +533,13 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str) -> dict:
         str(output_file),
         "-silent",
     ]
-    result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=900)
+    result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=900, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Nuclei complete.")
     return result
 
 
-def run_nikto(url: str, config: dict, scan_dir: Path, profile: str = "webapp") -> dict:
+def run_nikto(url: str, config: dict, scan_dir: Path, profile: str = "webapp", cancel_check=None) -> dict:
     ui.status("Running Nikto scan...")
     output_file = scan_dir / "nikto.json"
     pause = str(config.get("nikto_pause_seconds", 0))
@@ -500,13 +554,13 @@ def run_nikto(url: str, config: dict, scan_dir: Path, profile: str = "webapp") -
     # -maxtime limits nikto's own internal runtime so it exits gracefully before the hard timeout
     cmd = ["nikto", "-h", url, "-Format", "json", "-output", str(output_file),
         "-Pause", pause, "-nointeractive", "-maxtime", f"{max_time}s", "-Tuning", tuning]
-    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=hard_timeout)
+    result = _run_tool(cmd, "nikto", "Nikto", "passive", scan_dir, output_files=[output_file], timeout=hard_timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Nikto complete.")
     return result
 
 
-def run_sslyze(hostname: str, scan_dir: Path) -> dict:
+def run_sslyze(hostname: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running SSLyze TLS audit...")
     output_file = scan_dir / "sslyze.json"
     import os as _os
@@ -515,58 +569,60 @@ def run_sslyze(hostname: str, scan_dir: Path) -> dict:
     _env["PYTHONWARNINGS"] = "ignore"
     # Also run sslyze via python -W ignore to guarantee warning suppression
     cmd = ["python", "-W", "ignore", "-m", "sslyze", hostname, f"--json_out={output_file}"]
-    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=180, extra_env=_env, acceptable_returncodes={0, 1})
+    result = _run_tool(cmd, "sslyze", "SSLyze", "passive", scan_dir, output_files=[output_file], timeout=180, extra_env=_env, acceptable_returncodes={0, 1}, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("SSLyze complete.")
     return result
 
 
-def run_subfinder(hostname: str, scan_dir: Path, config: dict) -> dict:
+def run_subfinder(hostname: str, scan_dir: Path, config: dict, cancel_check=None) -> dict:
     ui.status("Running Subfinder...")
     output_file = scan_dir / "subfinder.json"
     cmd = ["subfinder", "-d", hostname, "-oJ", "-o", str(output_file), "-silent"]
     timeout = int(config.get("subfinder_timeout_seconds", 300))
-    result = _run_tool(cmd, "subfinder", "Subfinder", "passive", scan_dir, output_files=[output_file], timeout=timeout)
+    result = _run_tool(cmd, "subfinder", "Subfinder", "passive", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Subfinder complete.")
     return result
 
 
-def run_corsy(url: str, scan_dir: Path) -> dict:
+def run_corsy(url: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running Corsy...")
     output_file = scan_dir / "corsy.txt"
     cmd = ["corsy", "-u", url]
-    result = _run_tool(cmd, "corsy", "Corsy", "passive", scan_dir, output_files=[output_file], stdout_file=output_file)
+    result = _run_tool(cmd, "corsy", "Corsy", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Corsy complete.")
     return result
 
 
-def run_gau(hostname: str, scan_dir: Path, config: dict) -> dict:
+def run_gau(hostname: str, scan_dir: Path, config: dict, cancel_check=None) -> dict:
     ui.status("Running gau...")
     output_file = scan_dir / "gau.txt"
     # gau does not support --threads; use --retries and limit providers to keep it fast
     cmd = ["gau", hostname, "--retries", "2", "--providers", "wayback,otx"]
     timeout = int(config.get("gau_timeout_seconds", 180))
-    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout)
+    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("gau complete.")
     return result
 
 
-def run_katana(url: str, scan_dir: Path, config: dict) -> dict:
+def run_katana(url: str, scan_dir: Path, config: dict, cancel_check=None) -> dict:
     ui.status("Running Katana crawler...")
     output_file = scan_dir / "katana.jsonl"
     cmd = ["katana", "-u", url, "-jsonl", "-o", str(output_file), "-silent"]
     timeout = int(config.get("katana_timeout_seconds", 480))
-    result = _run_tool(cmd, "katana", "Katana", "passive", scan_dir, output_files=[output_file], timeout=timeout)
+    result = _run_tool(cmd, "katana", "Katana", "passive", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Katana complete.")
     return result
 
 
-def run_wpscan(url: str, config: dict, tokens: dict, scan_dir: Path, is_local_target: bool) -> dict:
+def run_wpscan(url: str, config: dict, tokens: dict, scan_dir: Path, is_local_target: bool, cancel_check=None) -> dict:
     ui.status("Running WPScan...")
+    if int(config.get("wpscan_max_threads", 1) or 0) <= 0:
+        return _result_template("wpscan", "WPScan", "passive", [], "skipped", "Skipped by automation rule: WPScan disabled in current profile preset.")
     output_file = scan_dir / "wpscan.json"
     enum = config.get("wpscan_enumerate", "vp,vt,u")
     threads = str(config.get("wpscan_max_threads", 1))
@@ -576,33 +632,33 @@ def run_wpscan(url: str, config: dict, tokens: dict, scan_dir: Path, is_local_ta
     token = tokens.get("wpscan_api_token", "")
     if token:
         cmd.extend(["--api-token", token])
-    result = _run_tool(cmd, "wpscan", "WPScan", "passive", scan_dir, output_files=[output_file], timeout=900)
+    result = _run_tool(cmd, "wpscan", "WPScan", "passive", scan_dir, output_files=[output_file], timeout=900, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("WPScan complete.")
     return result
 
 
-def run_joomscan(url: str, scan_dir: Path) -> dict:
+def run_joomscan(url: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running JoomScan...")
     output_file = scan_dir / "joomscan.txt"
     cmd = ["joomscan", "--url", url]
-    result = _run_tool(cmd, "joomscan", "JoomScan", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=900)
+    result = _run_tool(cmd, "joomscan", "JoomScan", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=900, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("JoomScan complete.")
     return result
 
 
-def run_droopescan(url: str, scan_dir: Path) -> dict:
+def run_droopescan(url: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running Droopescan...")
     output_file = scan_dir / "droopescan.json"
     cmd = ["droopescan", "scan", "drupal", "-u", url, "-o", "json"]
-    result = _run_tool(cmd, "droopescan", "Droopescan", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=900)
+    result = _run_tool(cmd, "droopescan", "Droopescan", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=900, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Droopescan complete.")
     return result
 
 
-def run_cmsmap(url: str, scan_dir: Path, profile: str = "webapp") -> dict:
+def run_cmsmap(url: str, scan_dir: Path, profile: str = "webapp", cancel_check=None) -> dict:
     ui.status("Running CMSMap...")
     output_file = scan_dir / "cmsmap.json"
     cmd = ["cmsmap", "-t", url, "-o", str(output_file), "-f", "J"]
@@ -620,13 +676,14 @@ def run_cmsmap(url: str, scan_dir: Path, profile: str = "webapp") -> dict:
         timeout=cmsmap_timeout,
         extra_env=_env,
         acceptable_returncodes={0, 1},
+        cancel_check=cancel_check,
     )
     if result["status"].startswith("completed"):
         ui.ok("CMSMap complete.")
     return result
 
 
-def run_sqlmap(url: str, scan_dir: Path, profile: str, config: dict) -> dict:
+def run_sqlmap(url: str, scan_dir: Path, profile: str, config: dict, cancel_check=None) -> dict:
     ui.status("Running SQLMap...")
     output_dir = scan_dir / "sqlmap-out"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -641,13 +698,13 @@ def run_sqlmap(url: str, scan_dir: Path, profile: str, config: dict) -> dict:
         # crawl=1 instead of 2 to halve crawler depth for generic targets
         cmd.extend(["-u", url, "--crawl=1", "--forms"])
     timeout = int(config.get("sqlmap_timeout_api_seconds", 240)) if profile == "api" else int(config.get("sqlmap_timeout_seconds", 420))
-    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=timeout)
+    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("SQLMap complete.")
     return result
 
 
-def run_ffuf(url: str, config: dict, scan_dir: Path, profile: str = "webapp") -> dict:
+def run_ffuf(url: str, config: dict, scan_dir: Path, profile: str = "webapp", cancel_check=None) -> dict:
     ui.status("Running ffuf...")
     output_file = scan_dir / "ffuf.json"
     ffuf_threads = str(config.get("ffuf_threads", 35))
@@ -723,62 +780,62 @@ def run_ffuf(url: str, config: dict, scan_dir: Path, profile: str = "webapp") ->
             ffuf_maxtime,
         ]
 
-    result = _run_tool(cmd, "ffuf", "ffuf", "active", scan_dir, output_files=[output_file], timeout=ffuf_timeout)
+    result = _run_tool(cmd, "ffuf", "ffuf", "active", scan_dir, output_files=[output_file], timeout=ffuf_timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("ffuf complete.")
     return result
 
 
-def run_feroxbuster(url: str, config: dict, scan_dir: Path) -> dict:
+def run_feroxbuster(url: str, config: dict, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running Feroxbuster...")
     wordlist = _resolve_wordlist(config)
     if not wordlist:
         return _result_template("feroxbuster", "Feroxbuster", "active", [], "skipped", "No compatible content-discovery wordlist found.")
     output_file = scan_dir / "feroxbuster.json"
     cmd = ["feroxbuster", "-u", url, "-w", wordlist, "--json", "-o", str(output_file), "-q"]
-    result = _run_tool(cmd, "feroxbuster", "Feroxbuster", "active", scan_dir, output_files=[output_file], timeout=1200)
+    result = _run_tool(cmd, "feroxbuster", "Feroxbuster", "active", scan_dir, output_files=[output_file], timeout=1200, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Feroxbuster complete.")
     return result
 
 
-def run_arjun(url: str, scan_dir: Path) -> dict:
+def run_arjun(url: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running Arjun parameter discovery...")
     output_file = scan_dir / "arjun.txt"
     cmd = ["arjun", "-u", url, "-oT", str(output_file)]
-    result = _run_tool(cmd, "arjun", "Arjun", "active", scan_dir, output_files=[output_file], timeout=900)
+    result = _run_tool(cmd, "arjun", "Arjun", "active", scan_dir, output_files=[output_file], timeout=900, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Arjun complete.")
     return result
 
 
-def run_dalfox(url: str, scan_dir: Path) -> dict:
+def run_dalfox(url: str, scan_dir: Path, cancel_check=None) -> dict:
     ui.status("Running Dalfox...")
     output_file = scan_dir / "dalfox.json"
     cmd = ["dalfox", "url", url, "--format", "json", "-o", str(output_file), "--no-color"]
-    result = _run_tool(cmd, "dalfox", "Dalfox", "active", scan_dir, output_files=[output_file], timeout=1200)
+    result = _run_tool(cmd, "dalfox", "Dalfox", "active", scan_dir, output_files=[output_file], timeout=1200, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Dalfox complete.")
     return result
 
 
-def run_commix(url: str, scan_dir: Path, config: dict, profile: str) -> dict:
+def run_commix(url: str, scan_dir: Path, config: dict, profile: str, cancel_check=None) -> dict:
     ui.status("Running Commix...")
     output_file = scan_dir / "commix.txt"
     cmd = ["commix", "--url", url, "--batch", "--crawl=2"]
     timeout = int(config.get("commix_timeout_api_seconds", 420)) if profile == "api" else int(config.get("commix_timeout_seconds", 900))
-    result = _run_tool(cmd, "commix", "Commix", "active", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout)
+    result = _run_tool(cmd, "commix", "Commix", "active", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Commix complete.")
     return result
 
 
-def run_wapiti(url: str, scan_dir: Path, config: dict, profile: str) -> dict:
+def run_wapiti(url: str, scan_dir: Path, config: dict, profile: str, cancel_check=None) -> dict:
     ui.status("Running Wapiti...")
     output_file = scan_dir / "wapiti.json"
     cmd = ["wapiti", "-u", url, "-f", "json", "-o", str(output_file)]
     timeout = int(config.get("wapiti_timeout_api_seconds", 360)) if profile == "api" else int(config.get("wapiti_timeout_seconds", 600))
-    result = _run_tool(cmd, "wapiti", "Wapiti", "active", scan_dir, output_files=[output_file], timeout=timeout)
+    result = _run_tool(cmd, "wapiti", "Wapiti", "active", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Wapiti complete.")
     return result
@@ -805,6 +862,7 @@ def run_all_tools(
     mode: str,
     profile: str = "auto",
     progress_callback=None,
+    should_cancel=None,
 ) -> dict:
     """Run the scan plan and return rich execution metadata."""
     installed = get_installed_tools()
@@ -818,15 +876,28 @@ def run_all_tools(
     parallel_enabled = bool(config.get("parallel_scans", False))
     max_parallel_tools = max(1, int(config.get("max_parallel_tools", 3)))
     max_parallel_heavy_tools = max(1, int(config.get("max_parallel_heavy_tools", 2)))
+    automation_scheduler = bool(config.get("automation_scheduler", True))
+    fast_profile_tools = set(config.get("fast_profile_tools", ["httpx", "whatweb", "corsy", "gau", "sslyze", "subfinder"]))
+    deferred_passive_tools = set(config.get("deferred_passive_tools", ["katana"]))
+    deferred_profile_tools = set(config.get("deferred_profile_tools", ["wpscan"]))
+    low_priority_tools = set(config.get("low_priority_tools", ["katana", "wpscan", "cmsmap", "commix"]))
+    budget_key = f"scan_time_budget_{mode}_seconds"
+    scan_time_budget_seconds = max(0, int(config.get(budget_key, 0) or 0))
+    deadline_skip_grace_seconds = max(0, int(config.get("deadline_skip_grace_seconds", 180)))
+    run_started = time.monotonic()
 
     def _emit(event: dict):
         if progress_callback:
             progress_callback(event)
 
-    def _with_progress(total_tools: int, tool_name: str, phase: str, runner):
-        nonlocal completed_count
+    def _tool_meta(tool_name: str) -> dict:
+        return next((t for t in TOOLS if t["name"] == tool_name), {"name": tool_name, "label": tool_name, "phase": "active"})
 
-        tool_meta = next((t for t in TOOLS if t["name"] == tool_name), {"label": tool_name})
+    def _tool_progress(total_tools: int) -> int:
+        return round((completed_count / max(1, total_tools)) * 80) + 4
+
+    def _emit_tool_started(total_tools: int, tool_name: str, phase: str):
+        tool_meta = _tool_meta(tool_name)
         _emit(
             {
                 "event": "tool_started",
@@ -835,28 +906,70 @@ def run_all_tools(
                 "phase": phase,
                 "completed_tools": completed_count,
                 "total_tools": total_tools,
-                "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
+                "progress": _tool_progress(total_tools),
                 "message": f"Running {tool_meta.get('label', tool_name)}.",
             }
         )
 
-        result = _run_registered_tool(tool_name, phase, installed, runner)
-        completed_count += 1
-
+    def _emit_tool_finished(total_tools: int, tool_name: str, phase: str, result: dict):
+        tool_meta = _tool_meta(tool_name)
+        status = result.get("status", "unknown")
+        note = str(result.get("note", "") or "").strip()
+        if status == "timeout":
+            message = f"{tool_meta.get('label', tool_name)} timed out."
+        elif status == "skipped" and note:
+            message = note
+        elif status == "cancelled":
+            message = f"{tool_meta.get('label', tool_name)} cancelled."
+        else:
+            message = f"{tool_meta.get('label', tool_name)} completed with status {status}."
         _emit(
             {
                 "event": "tool_finished",
                 "tool": tool_name,
                 "tool_label": tool_meta.get("label", tool_name),
                 "phase": phase,
-                "status": result.get("status", "unknown"),
+                "status": status,
                 "duration_seconds": result.get("duration_seconds", 0),
                 "completed_tools": completed_count,
                 "total_tools": total_tools,
-                "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
-                "message": f"{tool_meta.get('label', tool_name)} completed with status {result.get('status', 'unknown')}.",
+                "progress": _tool_progress(total_tools),
+                "message": message,
+                "note": note,
             }
         )
+
+    def _skip_tool_result(tool_name: str, phase: str, reason: str) -> dict:
+        tool_meta = _tool_meta(tool_name)
+        return _result_template(tool_name, tool_meta.get("label", tool_name), phase, [], "skipped", reason)
+
+    def _budget_skip(tool_name: str, phase: str) -> dict | None:
+        if scan_time_budget_seconds <= 0 or tool_name not in low_priority_tools:
+            return None
+        if (time.monotonic() - run_started) < max(0, scan_time_budget_seconds - deadline_skip_grace_seconds):
+            return None
+        minutes = max(1, scan_time_budget_seconds // 60)
+        return _skip_tool_result(
+            tool_name,
+            phase,
+            f"Skipped by automation rule: preserving report completion budget near the {minutes} minute target.",
+        )
+
+    def _with_progress(total_tools: int, tool_name: str, phase: str, runner):
+        nonlocal completed_count
+
+        if should_cancel and should_cancel():
+            raise InterruptedError("Scan cancelled by user.")
+        skip_result = _budget_skip(tool_name, phase)
+        if skip_result is not None:
+            completed_count += 1
+            _emit_tool_finished(total_tools, tool_name, phase, skip_result)
+            return skip_result
+
+        _emit_tool_started(total_tools, tool_name, phase)
+        result = _run_registered_tool(tool_name, phase, installed, runner)
+        completed_count += 1
+        _emit_tool_finished(total_tools, tool_name, phase, result)
         return result
 
     def _execute_plan(plan: list[tuple[str, str, callable]], total_tools: int, max_workers: int) -> list[dict]:
@@ -865,50 +978,42 @@ def run_all_tools(
         if not plan:
             return []
 
-        if not parallel_enabled or max_workers <= 1 or len(plan) == 1:
+        worker_count = 1 if (not parallel_enabled or max_workers <= 1 or len(plan) == 1) else min(len(plan), max_workers)
+        if worker_count == 1:
             return [_with_progress(total_tools, tool_name, phase, runner) for tool_name, phase, runner in plan]
 
         results: list[dict | None] = [None] * len(plan)
-        future_map = {}
-        worker_count = min(len(plan), max_workers)
+        pending = list(enumerate(plan))
+        running: dict = {}
 
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            for index, (tool_name, phase, runner) in enumerate(plan):
-                tool_meta = next((t for t in TOOLS if t["name"] == tool_name), {"label": tool_name})
-                _emit(
-                    {
-                        "event": "tool_started",
-                        "tool": tool_name,
-                        "tool_label": tool_meta.get("label", tool_name),
-                        "phase": phase,
-                        "completed_tools": completed_count,
-                        "total_tools": total_tools,
-                        "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
-                        "message": f"Running {tool_meta.get('label', tool_name)}.",
-                    }
-                )
-                future = executor.submit(_run_registered_tool, tool_name, phase, installed, runner)
-                future_map[future] = (index, tool_name, phase, tool_meta)
+            def _submit_ready():
+                nonlocal completed_count
+                while pending and len(running) < worker_count:
+                    index, (tool_name, phase, runner) = pending.pop(0)
+                    if should_cancel and should_cancel():
+                        break
+                    skip_result = _budget_skip(tool_name, phase)
+                    if skip_result is not None:
+                        results[index] = skip_result
+                        completed_count += 1
+                        _emit_tool_finished(total_tools, tool_name, phase, skip_result)
+                        continue
+                    _emit_tool_started(total_tools, tool_name, phase)
+                    future = executor.submit(_run_registered_tool, tool_name, phase, installed, runner)
+                    running[future] = (index, tool_name, phase)
 
-            for future in as_completed(future_map):
-                index, tool_name, phase, tool_meta = future_map[future]
-                result = future.result()
-                results[index] = result
-                completed_count += 1
-                _emit(
-                    {
-                        "event": "tool_finished",
-                        "tool": tool_name,
-                        "tool_label": tool_meta.get("label", tool_name),
-                        "phase": phase,
-                        "status": result.get("status", "unknown"),
-                        "duration_seconds": result.get("duration_seconds", 0),
-                        "completed_tools": completed_count,
-                        "total_tools": total_tools,
-                        "progress": round((completed_count / max(1, total_tools)) * 80) + 4,
-                        "message": f"{tool_meta.get('label', tool_name)} completed with status {result.get('status', 'unknown')}",
-                    }
-                )
+            _submit_ready()
+
+            while running:
+                done, _ = wait(list(running.keys()), return_when=FIRST_COMPLETED)
+                for future in done:
+                    index, tool_name, phase = running.pop(future)
+                    result = future.result()
+                    results[index] = result
+                    completed_count += 1
+                    _emit_tool_finished(total_tools, tool_name, phase, result)
+                _submit_ready()
 
         return [result for result in results if result is not None]
 
@@ -916,26 +1021,33 @@ def run_all_tools(
     if mode in ("passive", "full"):
         static_plan.extend(
             [
-                ("httpx", "passive", lambda: run_httpx(url, config, scan_dir)),
-                ("whatweb", "passive", lambda: run_whatweb(url, config, scan_dir)),
-                ("corsy", "passive", lambda: run_corsy(url, scan_dir)),
-                ("gau", "passive", lambda: run_gau(hostname, scan_dir, config)),
-                ("katana", "passive", lambda: run_katana(url, scan_dir, config)),
+                ("httpx", "passive", lambda: run_httpx(url, config, scan_dir, cancel_check=should_cancel)),
+                ("whatweb", "passive", lambda: run_whatweb(url, config, scan_dir, cancel_check=should_cancel)),
+                ("corsy", "passive", lambda: run_corsy(url, scan_dir, cancel_check=should_cancel)),
+                ("gau", "passive", lambda: run_gau(hostname, scan_dir, config, cancel_check=should_cancel)),
+                ("katana", "passive", lambda: run_katana(url, scan_dir, config, cancel_check=should_cancel)),
             ]
         )
         if not local_target and parsed_url.scheme == "https":
-            static_plan.append(("sslyze", "passive", lambda: run_sslyze(hostname, scan_dir)))
+            static_plan.append(("sslyze", "passive", lambda: run_sslyze(hostname, scan_dir, cancel_check=should_cancel)))
 
         try:
             is_private_ip = ipaddress.ip_address(hostname).is_private
         except ValueError:
             is_private_ip = False
         if not local_target and not is_private_ip:
-            static_plan.append(("subfinder", "passive", lambda: run_subfinder(hostname, scan_dir, config)))
+            static_plan.append(("subfinder", "passive", lambda: run_subfinder(hostname, scan_dir, config, cancel_check=should_cancel)))
 
     _emit({"event": "plan_updated", "phase": "tool_execution", "total_tools": len(static_plan), "message": "Initial scan plan prepared."})
+    static_fast_plan = static_plan
+    static_deferred_plan: list[tuple[str, str, callable]] = []
+    if automation_scheduler:
+        static_fast_plan = [item for item in static_plan if item[0] in fast_profile_tools or item[0] not in deferred_passive_tools]
+        static_deferred_plan = [item for item in static_plan if item[0] in deferred_passive_tools and item not in static_fast_plan]
 
-    tool_runs.extend(_execute_plan(static_plan, len(static_plan), max_parallel_tools))
+    tool_runs.extend(_execute_plan(static_fast_plan, len(static_plan), max_parallel_tools))
+    if should_cancel and should_cancel():
+        raise InterruptedError("Scan cancelled by user.")
 
     _emit(
         {
@@ -983,15 +1095,18 @@ def run_all_tools(
     if mode in ("passive", "full"):
         nikto_enabled = bool(config.get("run_nikto", True))
         nikto_wordpress_enabled = bool(config.get("run_nikto_wordpress", False))
-        dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile)))
+        dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile, cancel_check=should_cancel)))
         if nikto_enabled and (effective_profile != "wordpress" or nikto_wordpress_enabled):
-            dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir, effective_profile)))
+            dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir, effective_profile, cancel_check=should_cancel)))
         if effective_profile == "wordpress":
-            dynamic_plan.append(("wpscan", "passive", lambda: run_wpscan(url, config, tokens, scan_dir, local_target)))
+            if profile == "auto" and bool(config.get("adaptive_skip_wpscan_low_confidence", True)) and profile_info.get("confidence") == "low":
+                dynamic_plan.append(("wpscan", "passive", lambda: _skip_tool_result("wpscan", "passive", "Skipped by automation rule: WordPress confidence is too low for a full WPScan pass.")))
+            else:
+                dynamic_plan.append(("wpscan", "passive", lambda: run_wpscan(url, config, tokens, scan_dir, local_target, cancel_check=should_cancel)))
         elif effective_profile == "joomla":
-            dynamic_plan.append(("joomscan", "passive", lambda: run_joomscan(url, scan_dir)))
+            dynamic_plan.append(("joomscan", "passive", lambda: run_joomscan(url, scan_dir, cancel_check=should_cancel)))
         elif effective_profile == "drupal":
-            dynamic_plan.append(("droopescan", "passive", lambda: run_droopescan(url, scan_dir)))
+            dynamic_plan.append(("droopescan", "passive", lambda: run_droopescan(url, scan_dir, cancel_check=should_cancel)))
 
     if mode in ("active", "full"):
         run_content_wordpress = bool(config.get("run_content_discovery_wordpress", False))
@@ -1006,9 +1121,6 @@ def run_all_tools(
 
         detect_text = _extract_detect_text(scan_dir / "nuclei.jsonl", scan_dir / "whatweb.stdout.log", scan_dir / "httpx.json")
         sql_error_hints = any(hint in detect_text for hint in ("sql syntax", "mysql", "postgres", "odbc", "sqlite", "sqlstate"))
-
-        def _skip_result(tool_name: str, label: str, reason: str):
-            return _result_template(tool_name, label, "active", [], "skipped", reason)
 
         def _should_run_sqlmap() -> tuple[bool, str]:
             if run_sqlmap_api and effective_profile == "api":
@@ -1038,40 +1150,54 @@ def run_all_tools(
             return False, "Skipped by adaptive planner: too few parameter signals for Commix."
 
         if effective_profile in ("joomla", "drupal"):
-            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir)))
+            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir, cancel_check=should_cancel)))
         elif effective_profile == "wordpress" and bool(config.get("run_cmsmap_wordpress", False)):
-            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir, effective_profile)))
+            dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir, effective_profile, cancel_check=should_cancel)))
 
         include_content_tools = effective_profile != "wordpress" or run_content_wordpress
         sqlmap_enabled, reason_sqlmap = _should_run_sqlmap()
         if sqlmap_enabled:
-            dynamic_plan.append(("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile, config)))
+            dynamic_plan.append(("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile, config, cancel_check=should_cancel)))
         else:
-            dynamic_plan.append(("sqlmap", "active", lambda: _skip_result("sqlmap", "SQLMap", reason_sqlmap)))
+            dynamic_plan.append(("sqlmap", "active", lambda: _skip_tool_result("sqlmap", "active", reason_sqlmap)))
         dynamic_plan.extend(
             [
-                ("arjun", "active", lambda: run_arjun(url, scan_dir)),
-                ("dalfox", "active", lambda: run_dalfox(url, scan_dir)),
+                ("arjun", "active", lambda: run_arjun(url, scan_dir, cancel_check=should_cancel)),
+                ("dalfox", "active", lambda: run_dalfox(url, scan_dir, cancel_check=should_cancel)),
             ]
         )
         wapiti_enabled, reason_wapiti = _should_run_wapiti()
         if wapiti_enabled:
-            dynamic_plan.append(("wapiti", "active", lambda: run_wapiti(url, scan_dir, config, effective_profile)))
+            dynamic_plan.append(("wapiti", "active", lambda: run_wapiti(url, scan_dir, config, effective_profile, cancel_check=should_cancel)))
         else:
-            dynamic_plan.append(("wapiti", "active", lambda: _skip_result("wapiti", "Wapiti", reason_wapiti)))
+            dynamic_plan.append(("wapiti", "active", lambda: _skip_tool_result("wapiti", "active", reason_wapiti)))
         if include_content_tools:
             dynamic_plan.extend(
                 [
-                    ("ffuf", "active", lambda: run_ffuf(url, config, scan_dir, effective_profile)),
-                    ("feroxbuster", "active", lambda: run_feroxbuster(url, config, scan_dir)),
+                    ("ffuf", "active", lambda: run_ffuf(url, config, scan_dir, effective_profile, cancel_check=should_cancel)),
+                    ("feroxbuster", "active", lambda: run_feroxbuster(url, config, scan_dir, cancel_check=should_cancel)),
                 ]
             )
         if effective_profile in ("webapp", "api"):
             run_commix_ok, reason_commix = _should_run_commix()
             if run_commix_ok:
-                dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir, config, effective_profile)))
+                dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir, config, effective_profile, cancel_check=should_cancel)))
             else:
-                dynamic_plan.append(("commix", "active", lambda: _skip_result("commix", "Commix", reason_commix)))
+                dynamic_plan.append(("commix", "active", lambda: _skip_tool_result("commix", "active", reason_commix)))
+
+    prepared_static_deferred: list[tuple[str, str, callable]] = []
+    for tool_name, phase, runner in static_deferred_plan:
+        if tool_name == "katana":
+            skip_api = bool(config.get("skip_katana_for_api", True)) and effective_profile == "api"
+            skip_threshold = int(config.get("skip_katana_when_gau_count_gte", 600) or 0)
+            skip_large = skip_threshold > 0 and surface.get("url_count", 0) >= skip_threshold
+            if skip_api:
+                prepared_static_deferred.append((tool_name, phase, lambda: _skip_tool_result("katana", "passive", "Skipped by automation rule: Katana is deferred for API-first targets.")))
+                continue
+            if skip_large:
+                prepared_static_deferred.append((tool_name, phase, lambda threshold=skip_threshold: _skip_tool_result("katana", "passive", f"Skipped by automation rule: gau already exposed a large surface ({surface.get('url_count', 0)} URLs >= {threshold}).")))
+                continue
+        prepared_static_deferred.append((tool_name, phase, runner))
 
     total_tools = len(static_plan) + len(dynamic_plan)
     _emit(
@@ -1085,9 +1211,21 @@ def run_all_tools(
 
     passive_dynamic = [item for item in dynamic_plan if item[1] == "passive"]
     active_dynamic = [item for item in dynamic_plan if item[1] == "active"]
+    deferred_profile_plan = [item for item in passive_dynamic if item[0] in deferred_profile_tools]
+    priority_passive_plan = [item for item in passive_dynamic if item[0] not in deferred_profile_tools]
 
-    tool_runs.extend(_execute_plan(passive_dynamic, total_tools, max_parallel_tools))
-    tool_runs.extend(_execute_plan(active_dynamic, total_tools, max_parallel_heavy_tools))
+    if automation_scheduler:
+        remaining_plan = priority_passive_plan + active_dynamic + prepared_static_deferred + deferred_profile_plan
+        remaining_workers = max(max_parallel_tools, max_parallel_heavy_tools)
+        tool_runs.extend(_execute_plan(remaining_plan, total_tools, remaining_workers))
+    else:
+        tool_runs.extend(_execute_plan(priority_passive_plan + deferred_profile_plan + prepared_static_deferred, total_tools, max_parallel_tools))
+        if should_cancel and should_cancel():
+            raise InterruptedError("Scan cancelled by user.")
+        tool_runs.extend(_execute_plan(active_dynamic, total_tools, max_parallel_heavy_tools))
+
+    if should_cancel and should_cancel():
+        raise InterruptedError("Scan cancelled by user.")
 
     completed = [item["name"] for item in tool_runs if item["status"] in ("completed", "completed_no_output")]
     profile_info["tools_completed"] = completed

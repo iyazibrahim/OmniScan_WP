@@ -317,10 +317,15 @@
 
                     <div class="card">
                         <div class="card-header">
-                            <h3>Tools Available</h3>
-                            <p class="subtitle">Security tools detected on this system</p>
+                            <div>
+                                <h3>Tools Available</h3>
+                                <p class="subtitle">Security tools detected on this system</p>
+                            </div>
+                            <button type="button" class="btn-ghost btn-sm" id="toggleToolsPanelBtn" aria-expanded="false">
+                                Show Tools
+                            </button>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body tools-panel collapsed" id="toolsPanelBody">
                             <ul class="tools-list" id="toolsList">
                                 <li class="empty-state">Loading tools status...</li>
                             </ul>
