@@ -1242,7 +1242,7 @@ def generate_html_report(payload: dict) -> str:
             Array.from(sevSelect.options).forEach(function(opt){{
                 var key = opt.value;
                 if (!key || !Object.prototype.hasOwnProperty.call(sevCounts, key)) return;
-                opt.textContent = opt.textContent.replace(/ \(\d+\)$/, '') + ' (' + sevCounts[key] + ')';
+                opt.textContent = opt.textContent.replace(/ \\(\\d+\\)$/, '') + ' (' + sevCounts[key] + ')';
             }});
             sevSelect.dataset.countsApplied = '1';
         }}

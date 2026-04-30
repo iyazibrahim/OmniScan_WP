@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from lib import ui
 
@@ -218,6 +218,88 @@ def _extract_detect_text(*paths: Path) -> str:
     return "\n".join(_safe_read_text(path).lower() for path in paths if path.exists())
 
 
+def _extract_urls_from_file(path: Path) -> set[str]:
+    urls: set[str] = set()
+    if not path.exists():
+        return urls
+
+    text = _safe_read_text(path)
+    if not text:
+        return urls
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("http://") or line.startswith("https://"):
+            urls.add(line)
+            continue
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            candidates = [
+                obj.get("url"),
+                obj.get("endpoint"),
+                obj.get("matched"),
+                (obj.get("request") or {}).get("url") if isinstance(obj.get("request"), dict) else None,
+            ]
+            for candidate in candidates:
+                if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                    urls.add(candidate)
+    return urls
+
+
+def _collect_surface_signals(scan_dir: Path, target_url: str) -> dict:
+    """Collect lightweight per-target signals used for adaptive tool planning."""
+    urls = set([target_url])
+    urls.update(_extract_urls_from_file(scan_dir / "gau.txt"))
+    urls.update(_extract_urls_from_file(scan_dir / "katana.jsonl"))
+
+    params: set[str] = set()
+    api_like = 0
+    html_like = 0
+    auth_like = 0
+    for u in urls:
+        try:
+            parsed = urlparse(u)
+        except Exception:
+            continue
+        path_l = (parsed.path or "").lower()
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        for k, _ in query_pairs:
+            if k:
+                params.add(k.lower())
+
+        if any(marker in path_l for marker in ("/api", "/graphql", "/swagger", "/openapi", ".json")):
+            api_like += 1
+        if any(marker in path_l for marker in (".php", ".aspx", ".jsp", ".html", "/admin", "/login", "/signin", "/register", "/wp-")):
+            html_like += 1
+        if any(marker in path_l for marker in ("/login", "/signin", "/auth", "/token", "/oauth", "/session")):
+            auth_like += 1
+
+    detect_text = _extract_detect_text(
+        scan_dir / "httpx.json",
+        scan_dir / "whatweb.json",
+        scan_dir / "whatweb.stdout.log",
+        scan_dir / "nuclei.jsonl",
+    )
+    if "text/html" in detect_text or "<form" in detect_text:
+        html_like += 2
+    if "application/json" in detect_text or "openapi" in detect_text or "graphql" in detect_text:
+        api_like += 2
+
+    return {
+        "url_count": len(urls),
+        "param_count": len(params),
+        "api_like_count": api_like,
+        "html_like_count": html_like,
+        "auth_like_count": auth_like,
+        "parameters": sorted(params)[:40],
+    }
+
+
 def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: str) -> dict:
     """Infer the target profile when the user selects auto mode."""
     if requested_profile and requested_profile != "auto":
@@ -239,6 +321,7 @@ def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: s
     )
     parsed = urlparse(url)
     path_hint = (parsed.path or "").lower()
+    surface_signals = _collect_surface_signals(scan_dir, url)
 
     patterns = {
         "wordpress": ["wordpress", "wp-content", "wp-json", "wp-includes", "xmlrpc.php"],
@@ -252,6 +335,29 @@ def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: s
             if marker in detect_text or marker in path_hint:
                 scores[profile] += 2
                 reasons.append(f"Matched {profile} indicator: {marker}")
+
+    wp_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/wp-" in u.lower())
+    joomla_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/administrator" in u.lower() or "com_" in u.lower())
+    drupal_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/sites/default" in u.lower() or "/node/" in u.lower())
+    if wp_paths >= 2:
+        scores["wordpress"] += 3
+        reasons.append("Detected multiple WordPress path indicators from crawl output.")
+    if joomla_paths >= 2:
+        scores["joomla"] += 3
+        reasons.append("Detected multiple Joomla path indicators from crawl output.")
+    if drupal_paths >= 2:
+        scores["drupal"] += 3
+        reasons.append("Detected multiple Drupal path indicators from crawl output.")
+
+    if surface_signals["api_like_count"] >= 3:
+        scores["api"] += 3
+        reasons.append("Detected API-like routes and/or response hints.")
+    if surface_signals["param_count"] >= 3 and surface_signals["api_like_count"] >= 2:
+        scores["api"] += 2
+        reasons.append("Detected parameterized API surface.")
+    if surface_signals["html_like_count"] >= 3:
+        scores["webapp"] += 3
+        reasons.append("Detected HTML/web-login/admin-like routes.")
 
     if "x-powered-by" in detect_text or "server" in detect_text:
         scores["webapp"] += 1
@@ -269,6 +375,7 @@ def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: s
         "effective_profile": best_profile,
         "confidence": confidence,
         "scores": scores,
+        "surface_signals": surface_signals,
         "reasons": reasons[:8],
     }
 
@@ -417,11 +524,12 @@ def run_gau(hostname: str, scan_dir: Path) -> dict:
     return result
 
 
-def run_katana(url: str, scan_dir: Path) -> dict:
+def run_katana(url: str, scan_dir: Path, config: dict) -> dict:
     ui.status("Running Katana crawler...")
     output_file = scan_dir / "katana.jsonl"
     cmd = ["katana", "-u", url, "-jsonl", "-o", str(output_file), "-silent"]
-    result = _run_tool(cmd, "katana", "Katana", "passive", scan_dir, output_files=[output_file], timeout=900)
+    timeout = int(config.get("katana_timeout_seconds", 480))
+    result = _run_tool(cmd, "katana", "Katana", "passive", scan_dir, output_files=[output_file], timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("Katana complete.")
     return result
@@ -488,7 +596,7 @@ def run_cmsmap(url: str, scan_dir: Path, profile: str = "webapp") -> dict:
     return result
 
 
-def run_sqlmap(url: str, scan_dir: Path, profile: str) -> dict:
+def run_sqlmap(url: str, scan_dir: Path, profile: str, config: dict) -> dict:
     ui.status("Running SQLMap...")
     output_dir = scan_dir / "sqlmap-out"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -502,7 +610,8 @@ def run_sqlmap(url: str, scan_dir: Path, profile: str) -> dict:
     else:
         # crawl=1 instead of 2 to halve crawler depth for generic targets
         cmd.extend(["-u", url, "--crawl=1", "--forms"])
-    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=500)
+    timeout = int(config.get("sqlmap_timeout_api_seconds", 240)) if profile == "api" else int(config.get("sqlmap_timeout_seconds", 420))
+    result = _run_tool(cmd, "sqlmap", "SQLMap", "active", scan_dir, output_files=[output_dir], timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("SQLMap complete.")
     return result
@@ -623,21 +732,23 @@ def run_dalfox(url: str, scan_dir: Path) -> dict:
     return result
 
 
-def run_commix(url: str, scan_dir: Path) -> dict:
+def run_commix(url: str, scan_dir: Path, config: dict, profile: str) -> dict:
     ui.status("Running Commix...")
     output_file = scan_dir / "commix.txt"
     cmd = ["commix", "--url", url, "--batch", "--crawl=2"]
-    result = _run_tool(cmd, "commix", "Commix", "active", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=1200)
+    timeout = int(config.get("commix_timeout_api_seconds", 420)) if profile == "api" else int(config.get("commix_timeout_seconds", 900))
+    result = _run_tool(cmd, "commix", "Commix", "active", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("Commix complete.")
     return result
 
 
-def run_wapiti(url: str, scan_dir: Path) -> dict:
+def run_wapiti(url: str, scan_dir: Path, config: dict, profile: str) -> dict:
     ui.status("Running Wapiti...")
     output_file = scan_dir / "wapiti.json"
     cmd = ["wapiti", "-u", url, "-f", "json", "-o", str(output_file)]
-    result = _run_tool(cmd, "wapiti", "Wapiti", "active", scan_dir, output_files=[output_file], timeout=1200)
+    timeout = int(config.get("wapiti_timeout_api_seconds", 360)) if profile == "api" else int(config.get("wapiti_timeout_seconds", 600))
+    result = _run_tool(cmd, "wapiti", "Wapiti", "active", scan_dir, output_files=[output_file], timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("Wapiti complete.")
     return result
@@ -779,7 +890,7 @@ def run_all_tools(
                 ("whatweb", "passive", lambda: run_whatweb(url, config, scan_dir)),
                 ("corsy", "passive", lambda: run_corsy(url, scan_dir)),
                 ("gau", "passive", lambda: run_gau(hostname, scan_dir)),
-                ("katana", "passive", lambda: run_katana(url, scan_dir)),
+                ("katana", "passive", lambda: run_katana(url, scan_dir, config)),
             ]
         )
         if not local_target and parsed_url.scheme == "https":
@@ -798,6 +909,15 @@ def run_all_tools(
 
     profile_info = detect_profile_from_artifacts(scan_dir, url, profile)
     effective_profile = profile_info["effective_profile"]
+    surface = profile_info.get("surface_signals", _collect_surface_signals(scan_dir, url))
+
+    if bool(config.get("adaptive_parallelism", True)):
+        if effective_profile == "api":
+            max_parallel_tools = max(max_parallel_tools, int(config.get("max_parallel_tools_api", 4)))
+            max_parallel_heavy_tools = max(max_parallel_heavy_tools, int(config.get("max_parallel_heavy_tools_api", 3)))
+        if surface.get("url_count", 0) >= int(config.get("parallelism_boost_min_urls", 80)):
+            max_parallel_tools = min(max_parallel_tools + 1, int(config.get("max_parallel_tools_cap", 6)))
+            max_parallel_heavy_tools = min(max_parallel_heavy_tools + 1, int(config.get("max_parallel_heavy_tools_cap", 4)))
 
     dynamic_plan: list[tuple[str, str, callable]] = []
     if mode in ("passive", "full"):
@@ -815,20 +935,70 @@ def run_all_tools(
 
     if mode in ("active", "full"):
         run_content_wordpress = bool(config.get("run_content_discovery_wordpress", False))
+        run_sqlmap_api = bool(config.get("run_sqlmap_api", False))
+        run_wapiti_api = bool(config.get("run_wapiti_api", False))
+        adaptive_tools = bool(config.get("adaptive_tool_selection", True))
+
+        min_sqlmap_params = int(config.get("adaptive_sqlmap_min_params", 3))
+        min_sqlmap_urls = int(config.get("adaptive_sqlmap_min_urls", 8))
+        min_wapiti_html = int(config.get("adaptive_wapiti_min_html", 2))
+        min_commix_params = int(config.get("adaptive_commix_min_params", 2))
+
+        detect_text = _extract_detect_text(scan_dir / "nuclei.jsonl", scan_dir / "whatweb.stdout.log", scan_dir / "httpx.json")
+        sql_error_hints = any(hint in detect_text for hint in ("sql syntax", "mysql", "postgres", "odbc", "sqlite", "sqlstate"))
+
+        def _skip_result(tool_name: str, label: str, reason: str):
+            return _result_template(tool_name, label, "active", [], "skipped", reason)
+
+        def _should_run_sqlmap() -> tuple[bool, str]:
+            if run_sqlmap_api and effective_profile == "api":
+                return True, "Forced by run_sqlmap_api override."
+            if not adaptive_tools:
+                return (effective_profile != "api"), "Adaptive tool selection disabled."
+            if sql_error_hints:
+                return True, "Detected SQL error fingerprints from passive telemetry."
+            if surface.get("param_count", 0) >= min_sqlmap_params and surface.get("url_count", 0) >= min_sqlmap_urls:
+                return True, "Sufficient parameterized surface detected for SQLMap."
+            return False, "Skipped by adaptive planner: low SQL-injection signal for this target."
+
+        def _should_run_wapiti() -> tuple[bool, str]:
+            if run_wapiti_api and effective_profile == "api":
+                return True, "Forced by run_wapiti_api override."
+            if not adaptive_tools:
+                return (effective_profile != "api"), "Adaptive tool selection disabled."
+            if surface.get("html_like_count", 0) >= min_wapiti_html:
+                return True, "Detected sufficient crawlable HTML/web surface for Wapiti."
+            return False, "Skipped by adaptive planner: target appears API-first with limited crawlable HTML surface."
+
+        def _should_run_commix() -> tuple[bool, str]:
+            if not adaptive_tools:
+                return True, "Adaptive tool selection disabled."
+            if surface.get("param_count", 0) >= min_commix_params:
+                return True, "Detected parameterized surface for command-injection checks."
+            return False, "Skipped by adaptive planner: too few parameter signals for Commix."
+
         if effective_profile in ("joomla", "drupal"):
             dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir)))
         elif effective_profile == "wordpress" and bool(config.get("run_cmsmap_wordpress", False)):
             dynamic_plan.append(("cmsmap", "active", lambda: run_cmsmap(url, scan_dir, effective_profile)))
 
         include_content_tools = effective_profile != "wordpress" or run_content_wordpress
+        sqlmap_enabled, reason_sqlmap = _should_run_sqlmap()
+        if sqlmap_enabled:
+            dynamic_plan.append(("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile, config)))
+        else:
+            dynamic_plan.append(("sqlmap", "active", lambda: _skip_result("sqlmap", "SQLMap", reason_sqlmap)))
         dynamic_plan.extend(
             [
-                ("sqlmap", "active", lambda: run_sqlmap(url, scan_dir, effective_profile)),
                 ("arjun", "active", lambda: run_arjun(url, scan_dir)),
                 ("dalfox", "active", lambda: run_dalfox(url, scan_dir)),
-                ("wapiti", "active", lambda: run_wapiti(url, scan_dir)),
             ]
         )
+        wapiti_enabled, reason_wapiti = _should_run_wapiti()
+        if wapiti_enabled:
+            dynamic_plan.append(("wapiti", "active", lambda: run_wapiti(url, scan_dir, config, effective_profile)))
+        else:
+            dynamic_plan.append(("wapiti", "active", lambda: _skip_result("wapiti", "Wapiti", reason_wapiti)))
         if include_content_tools:
             dynamic_plan.extend(
                 [
@@ -837,7 +1007,11 @@ def run_all_tools(
                 ]
             )
         if effective_profile in ("webapp", "api"):
-            dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir)))
+            run_commix_ok, reason_commix = _should_run_commix()
+            if run_commix_ok:
+                dynamic_plan.append(("commix", "active", lambda: run_commix(url, scan_dir, config, effective_profile)))
+            else:
+                dynamic_plan.append(("commix", "active", lambda: _skip_result("commix", "Commix", reason_commix)))
 
     total_tools = len(static_plan) + len(dynamic_plan)
     _emit(
