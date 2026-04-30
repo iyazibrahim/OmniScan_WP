@@ -1,16 +1,36 @@
+﻿import logging
 import os
 import re
 import json
 import shutil
+import subprocess
 import threading
 import uuid
 import time
 import functools
+from datetime import timedelta
 from pathlib import Path
 from collections import defaultdict
+from urllib.parse import urlparse
 from flask import Flask, jsonify, request, send_from_directory, session, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from lib.assessments import get_catalog, get_workbook, save_workbook, summarize_workbook
+
+# ── Logging setup ───────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(
+            Path(__file__).resolve().parent / "logs" / "omniscan.log",
+            encoding="utf-8",
+            delay=True,
+        ),
+    ],
+)
+logger = logging.getLogger("omniscan")
 
 app = Flask(__name__, static_folder='web')
 
@@ -43,7 +63,33 @@ def _is_auth_initialized() -> bool:
 
 
 _auth_data = _load_auth_data() or {}
-app.secret_key = _auth_data.get("secret_key") or os.environ.get("OMNISCAN_SECRET_KEY") or uuid.uuid4().hex
+_env_secret = os.environ.get("OMNISCAN_SECRET_KEY")
+app.secret_key = _auth_data.get("secret_key") or _env_secret or uuid.uuid4().hex
+if not _auth_data.get("secret_key") and not _env_secret:
+    logger.warning(
+        "No persistent secret_key found. Sessions will be invalidated on restart. "
+        "Set OMNISCAN_SECRET_KEY environment variable for stable sessions."
+    )
+app.permanent_session_lifetime = timedelta(hours=12)
+
+# ── Rate limiting ────────────────────────────────────────────────────────────────
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=[],
+        storage_uri="memory://",
+    )
+    _RATE_LIMIT_ENABLED = True
+except ImportError:
+    logger.warning("flask-limiter not installed. Rate limiting disabled. Run: pip install Flask-Limiter")
+    _RATE_LIMIT_ENABLED = False
+    class _NoopLimiter:
+        def limit(self, *a, **kw):
+            return lambda f: f
+    limiter = _NoopLimiter()
 
 def login_required(f):
     @functools.wraps(f)
@@ -55,6 +101,43 @@ def login_required(f):
 SCAN_JOBS: dict[str, dict] = {}
 SCAN_JOBS_LOCK = threading.Lock()
 
+# ── Persistent scan job store ────────────────────────────────────────────────────
+SCAN_JOBS_FILE = CONFIG_DIR / "scan-jobs.json"
+_scan_jobs_dirty = False
+_scan_jobs_save_lock = threading.Lock()
+
+def _load_scan_jobs_from_disk():
+    """Restore scan jobs persisted from prior runs (read-only on startup)."""
+    try:
+        if SCAN_JOBS_FILE.exists():
+            data = json.loads(SCAN_JOBS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                with SCAN_JOBS_LOCK:
+                    SCAN_JOBS.update(data)
+                logger.info("Loaded %d scan job(s) from disk.", len(data))
+    except Exception as exc:
+        logger.warning("Could not load scan jobs from disk: %s", exc)
+
+def _flush_scan_jobs_to_disk():
+    """Write current SCAN_JOBS to disk (called after status changes)."""
+    global _scan_jobs_dirty
+    with _scan_jobs_save_lock:
+        if not _scan_jobs_dirty:
+            return
+        try:
+            with SCAN_JOBS_LOCK:
+                snapshot = dict(SCAN_JOBS)
+            SCAN_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SCAN_JOBS_FILE.write_text(
+                json.dumps(snapshot, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            _scan_jobs_dirty = False
+        except Exception as exc:
+            logger.warning("Could not persist scan jobs: %s", exc)
+
+_load_scan_jobs_from_disk()
+
 DEFAULT_SCAN_ESTIMATES_SECONDS = {
     "passive": 8 * 60,
     "active": 15 * 60,
@@ -64,6 +147,14 @@ DEFAULT_SCAN_ESTIMATES_SECONDS = {
 # ── Static / SPA ────────────────────────────────────────────────────────────────
 
 # ── Static / SPA ────────────────────────────────────────────────────────────────
+
+# ── Health check ────────────────────────────────────────────────────────────────
+
+@app.route('/health')
+def health_check():
+    """Docker/load-balancer health probe. Always returns 200 when app is up."""
+    return jsonify({"status": "ok", "service": "omniscan"})
+
 
 @app.route('/login')
 def login_page():
@@ -103,6 +194,7 @@ def static_files(path):
 # ── Auth endpoints ───────────────────────────────────────────────────────────────
 
 @app.route('/api/auth/login', methods=['POST'])
+@limiter.limit("15 per minute; 60 per hour")
 def auth_login():
     auth = _load_auth_data()
     if not auth:
@@ -114,7 +206,11 @@ def auth_login():
     if email == auth.get('email', '').lower() and check_password_hash(auth['password_hash'], password):
         session['user'] = email
         session.permanent = True
-        return jsonify({"message": "Login successful", "email": email})
+        csrf_token = uuid.uuid4().hex
+        session['csrf_token'] = csrf_token
+        logger.info("Successful login for %s from %s", email, request.remote_addr)
+        return jsonify({"message": "Login successful", "email": email, "csrf_token": csrf_token})
+    logger.warning("Failed login attempt for email=%s from %s", email, request.remote_addr)
     return jsonify({"error": "Invalid email or password"}), 401
 
 
@@ -128,6 +224,7 @@ def auth_status():
 
 
 @app.route('/api/auth/setup', methods=['POST'])
+@limiter.limit("5 per hour")
 def auth_setup():
     if _is_auth_initialized():
         return jsonify({"error": "Initial setup has already been completed"}), 409
@@ -273,12 +370,17 @@ def _compute_scan_estimates() -> dict:
 
 
 def _update_scan_job(scan_id: str, patch: dict):
+    global _scan_jobs_dirty
     with SCAN_JOBS_LOCK:
         job = SCAN_JOBS.get(scan_id)
         if not job:
             return
         job.update(patch)
         job["updated_at"] = time.time()
+        # Mark dirty; flush on terminal state changes to avoid excessive I/O
+        _scan_jobs_dirty = True
+    if patch.get("status") in ("completed", "failed", "cancelled"):
+        _flush_scan_jobs_to_disk()
 
 
 def _append_scan_event(scan_id: str, message: str):
@@ -313,28 +415,61 @@ def add_target():
     url = body.get('url', '').strip().rstrip('/')
     label = body.get('label', '').strip()
     profile = body.get('profile', 'auto').strip().lower()
+
     if not url or not label:
         return jsonify({"error": "url and label are required"}), 400
+
+    # Validate URL scheme to prevent SSRF / command injection via malformed targets
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return jsonify({"error": "Only http and https URLs are accepted"}), 400
+    if not parsed.netloc:
+        return jsonify({"error": "Invalid URL: missing host"}), 400
+
+    # Sanitize label — allow only printable text, strip HTML-dangerous chars
+    label = re.sub(r'[<>"\']', '', label)[:128].strip()
+    if not label:
+        return jsonify({"error": "Label is required"}), 400
+
+    valid_profiles = {"auto", "wordpress", "joomla", "drupal", "webapp", "api"}
+    if profile not in valid_profiles:
+        profile = "auto"
 
     data = _load_json(TARGETS_FILE)
     if not isinstance(data, list):
         data = []
 
-    target = {"url": url, "label": label, "profile": profile or "auto", "last_scanned": None}
+    target = {
+        "id": uuid.uuid4().hex,
+        "url": url,
+        "label": label,
+        "profile": profile,
+        "last_scanned": None,
+    }
     data.append(target)
     _save_json(TARGETS_FILE, data)
     return jsonify(target), 201
 
-@app.route('/api/targets/<int:index>', methods=['DELETE'])
+@app.route('/api/targets/<target_id>', methods=['DELETE'])
 @login_required
-def delete_target(index):
+def delete_target(target_id):
     data = _load_json(TARGETS_FILE)
     if not isinstance(data, list):
         return jsonify({"error": "No targets found"}), 404
-    if index < 0 or index >= len(data):
-        return jsonify({"error": "Invalid index"}), 404
 
-    removed = data.pop(index)
+    # Support deletion by UUID id field (new) or fallback to numeric index (legacy)
+    if target_id.isdigit():
+        idx = int(target_id)
+        if idx < 0 or idx >= len(data):
+            return jsonify({"error": "Invalid index"}), 404
+        removed = data.pop(idx)
+    else:
+        original_len = len(data)
+        data = [t for t in data if t.get("id") != target_id]
+        if len(data) == original_len:
+            return jsonify({"error": "Target not found"}), 404
+        removed = {"id": target_id}
+
     _save_json(TARGETS_FILE, data)
     return jsonify({"removed": removed})
 
@@ -398,7 +533,34 @@ def update_tokens():
     _save_json(TOKENS_FILE, existing)
     return jsonify({"message": "Tokens saved"})
 
-# ── Tools Status ────────────────────────────────────────────────────────────────
+# ── Tools Status & Management ───────────────────────────────────────────────────
+
+@app.route('/api/tools/update-templates', methods=['POST'])
+@login_required
+def update_nuclei_templates():
+    """Trigger a nuclei template update. Runs nuclei -ut in a subprocess."""
+    try:
+        result = subprocess.run(
+            ["nuclei", "-ut"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        success = result.returncode == 0
+        if success:
+            logger.info("Nuclei templates updated successfully.")
+        else:
+            logger.warning("Nuclei template update exited with code %d", result.returncode)
+        return jsonify({"success": success, "output": output[-2000:]})
+    except FileNotFoundError:
+        return jsonify({"error": "nuclei is not installed or not on PATH"}), 404
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Template update timed out after 300 seconds"}), 504
+    except Exception as exc:
+        logger.exception("Nuclei template update failed")
+        return jsonify({"error": str(exc)}), 500
+
 
 @app.route('/api/tools-status', methods=['GET'])
 @login_required
@@ -490,6 +652,10 @@ def list_reports():
             md_file = html_file.with_suffix('.md')
             md_rel = md_file.relative_to(REPORTS_DIR) if md_file.exists() else None
             json_dl_rel = None
+            csv_file = html_file.with_suffix('.csv')
+            csv_rel = csv_file.relative_to(REPORTS_DIR) if csv_file.exists() else None
+            sarif_file = html_file.with_suffix('.sarif')
+            sarif_rel = sarif_file.relative_to(REPORTS_DIR) if sarif_file.exists() else None
             if json_companion and json_companion.exists():
                 try:
                     json_dl_rel = json_companion.relative_to(REPORTS_DIR)
@@ -508,9 +674,21 @@ def list_reports():
                 "severities": severity_counts,
                 "md_path": str(md_rel).replace('\\', '/') if md_rel else None,
                 "json_path": str(json_dl_rel).replace('\\', '/') if json_dl_rel else None,
+                "csv_path": str(csv_rel).replace('\\', '/') if csv_rel else None,
+                "sarif_path": str(sarif_rel).replace('\\', '/') if sarif_rel else None,
             })
 
-    return jsonify(reports[:50])  # Limit to 50 most recent
+    # Server-side pagination
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), 200))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        limit, offset = 50, 0
+
+    total = len(reports)
+    page_reports = reports[offset: offset + limit]
+    response = jsonify({"reports": page_reports, "total": total, "limit": limit, "offset": offset})
+    return response
 
 @app.route('/api/reports/<path:filepath>')
 @login_required
@@ -851,4 +1029,6 @@ def list_scan_jobs():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Development only — production deployments use gunicorn via docker/entrypoint.sh
+    logger.info("Starting OmniScan in development mode on http://0.0.0.0:5000")
+    app.run(host='0.0.0.0', port=5000, debug=False)

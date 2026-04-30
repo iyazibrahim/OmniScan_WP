@@ -3,6 +3,9 @@
 import json
 import os
 from pathlib import Path
+import threading
+
+_FILE_WRITE_LOCK = threading.Lock()
 
 # ── Paths ───────────────────────────────────────────────────────────────────────
 
@@ -36,9 +39,20 @@ def load_json(path: Path) -> dict | list | None:
 
 
 def save_json(path: Path, obj):
-    """Save an object as pretty-printed JSON."""
+    """Save an object as pretty-printed JSON with a write lock to prevent
+    concurrent corruption from multiple threads/requests writing the same file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    payload = json.dumps(obj, indent=2, ensure_ascii=False)
+    with _FILE_WRITE_LOCK:
+        # Write to a temp file then rename for atomic replacement
+        tmp = path.with_suffix(".tmp")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(path)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
 
 
 # ── Targets ─────────────────────────────────────────────────────────────────────

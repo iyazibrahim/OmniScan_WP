@@ -10,8 +10,17 @@ services:
     environment:
       UPDATE_NUCLEI_TEMPLATES: "0"
       PYTHONUNBUFFERED: "1"
+      # Set a strong secret key in production — if unset, a random key is
+      # generated per-process which invalidates sessions on restart.
+      OMNISCAN_SECRET_KEY: ""
     volumes:
       - ./config:/app/config
       - ./reports:/app/reports
       - ./logs:/app/logs
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3

@@ -637,7 +637,10 @@ const App = {
 
     async loadReports() {
         document.getElementById("refreshReports").onclick = () => this.loadReports();
-        const reports = await this.api("/api/reports");
+        const reportsResponse = await this.api("/api/reports");
+        const reports = Array.isArray(reportsResponse)
+            ? reportsResponse
+            : (reportsResponse?.reports || []);
         const container = document.getElementById("reportsList");
         const toolbar = document.getElementById("reportsToolbar");
 
@@ -743,6 +746,8 @@ const App = {
                 { path: report.path, label: "HTML Report", ext: "html" },
                 ...(report.md_path ? [{ path: report.md_path, label: "Markdown", ext: "md" }] : []),
                 ...(report.json_path ? [{ path: report.json_path, label: "JSON Data", ext: "json" }] : []),
+                ...(report.csv_path ? [{ path: report.csv_path, label: "CSV Data", ext: "csv" }] : []),
+                ...(report.sarif_path ? [{ path: report.sarif_path, label: "SARIF", ext: "sarif" }] : []),
             ];
             const dlMenu = dlItems.map((d) =>
                 `<a href="/api/reports/${encodeURIComponent(d.path)}?dl=1" class="dl-menu-item" download>${this.esc(d.label)}</a>`

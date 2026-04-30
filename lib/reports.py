@@ -1,13 +1,16 @@
-"""Comprehensive HTML, Markdown, and JSON report generation."""
+"""Comprehensive HTML, Markdown, JSON, CSV, and SARIF report generation."""
 
 from __future__ import annotations
 
+import csv
 import html
+import io
 import json
 from datetime import datetime
 from pathlib import Path
 
-from lib.config import REPORTS_DIR
+from lib.config import HTML_TEMPLATE_FILE, REPORTS_DIR
+from lib.standards import SARIF_LEVEL_MAP
 
 
 def _severity_counts(findings: list[dict]) -> dict[str, int]:
@@ -122,7 +125,385 @@ def _render_metric_cards(summary: dict, assessment_summary: dict, overview: dict
     )
 
 
+def _render_standards_tags(finding: dict) -> str:
+    """Render compact framework badge tags for a finding card."""
+    parts: list[str] = []
+
+    for item in finding.get("owasp", []):
+        parts.append(
+            f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag owasp-tag' "
+            f"title='OWASP {html.escape(item[\"id\"])}: {html.escape(item[\"title\"])}'>"
+            f"OWASP {html.escape(item['id'])}</a>"
+        )
+    for item in finding.get("mitre_attack", []):
+        parts.append(
+            f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag mitre-tag' "
+            f"title='MITRE ATT&amp;CK {html.escape(item[\"id\"])}: {html.escape(item[\"name\"])} ({html.escape(item[\"tactic\"])})'>"
+            f"ATT&amp;CK {html.escape(item['id'])}</a>"
+        )
+    for item in finding.get("cis_controls", []):
+        parts.append(
+            f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag cis-tag' "
+            f"title='CIS {html.escape(item[\"id\"])}: {html.escape(item[\"title\"])}'>"
+            f"{html.escape(item['id'])}</a>"
+        )
+    for item in finding.get("nist_csf", []):
+        parts.append(
+            f"<a href='{html.escape(item['url'])}' target='_blank' class='std-tag nist-tag' "
+            f"title='NIST CSF {html.escape(item[\"id\"])}: {html.escape(item[\"category\"])} ({html.escape(item[\"function\"])})'>"
+            f"NIST {html.escape(item['id'])}</a>"
+        )
+
+    if not parts:
+        return ""
+    return "<div class='standards-row'>" + "".join(parts) + "</div>"
+
+
+def _render_report_template(template_vars: dict[str, str]) -> str | None:
+    """Render the external HTML report template with {{TOKEN}} substitution.
+
+    Returns None if the template file is unavailable, so callers can fall back
+    to an inline renderer.
+    """
+    try:
+        if not HTML_TEMPLATE_FILE.exists():
+            return None
+        template = HTML_TEMPLATE_FILE.read_text(encoding="utf-8")
+        for key, value in template_vars.items():
+            template = template.replace("{{" + key + "}}", value)
+        return template
+    except Exception:
+        return None
+
+
+def generate_sarif_report(payload: dict) -> dict:
+    """Generate a SARIF 2.1.0 report from a scan payload.
+
+    Compatible with GitHub Code Scanning, VS Code SARIF Viewer,
+    and most enterprise security platforms.
+    """
+    findings = payload.get("findings", [])
+    target_url = payload.get("target_url", "unknown")
+    scan_mode = payload.get("scan_mode", "unknown")
+
+    # Build de-duplicated rule set from finding titles
+    rules: list[dict] = []
+    rule_ids_seen: dict[str, str] = {}  # title_key -> ruleId
+    for finding in findings:
+        title_key = finding.get("title", "Unknown").strip().lower()
+        if title_key not in rule_ids_seen:
+            rule_id = finding.get("id") or f"RULE-{len(rules) + 1:03d}"
+            rule_ids_seen[title_key] = rule_id
+            owasp_tags = [f"owasp/{item['id']}" for item in finding.get("owasp", [])]
+            mitre_tags = [item["id"] for item in finding.get("mitre_attack", [])]
+            cis_tags = [item["id"] for item in finding.get("cis_controls", [])]
+            nist_tags = [item["id"] for item in finding.get("nist_csf", [])]
+            rules.append({
+                "id": rule_id,
+                "name": finding.get("title", "Unknown").replace(" ", ""),
+                "shortDescription": {"text": finding.get("title", "Unknown")},
+                "fullDescription": {"text": finding.get("description", "") or finding.get("title", "")},
+                "helpUri": (finding.get("references") or [None])[0],
+                "help": {
+                    "text": finding.get("fix") or "Review and remediate this finding.",
+                    "markdown": (
+                        "**Fix:** " + (finding.get("fix") or "Review and remediate this finding.") + "\n\n"
+                        + "\n".join(f"- {s}" for s in (finding.get("fix_steps") or []))
+                    ),
+                },
+                "properties": {
+                    "tags": ["security"] + owasp_tags + mitre_tags + cis_tags + nist_tags,
+                    "precision": "medium",
+                    "problem.severity": SARIF_LEVEL_MAP.get(finding.get("severity", "info"), "note"),
+                    "security-severity": {
+                        "critical": "9.0",
+                        "high": "7.5",
+                        "medium": "5.0",
+                        "low": "2.5",
+                        "info": "0.5",
+                    }.get(finding.get("severity", "info"), "0.5"),
+                },
+            })
+
+    # Build results
+    results: list[dict] = []
+    for finding in findings:
+        title_key = finding.get("title", "Unknown").strip().lower()
+        rule_id = rule_ids_seen.get(title_key, finding.get("id", "RULE-000"))
+        severity = finding.get("severity", "info")
+        level = SARIF_LEVEL_MAP.get(severity, "note")
+
+        owasp_ids = ", ".join(item["id"] for item in finding.get("owasp", []))
+        mitre_ids = ", ".join(item["id"] for item in finding.get("mitre_attack", []))
+        cis_ids = ", ".join(item["id"] for item in finding.get("cis_controls", []))
+        nist_ids = ", ".join(item["id"] for item in finding.get("nist_csf", []))
+
+        result: dict = {
+            "ruleId": rule_id,
+            "level": level,
+            "message": {
+                "text": (
+                    finding.get("description") or finding.get("title", "Security finding detected.")
+                )
+            },
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": target_url,
+                            "uriBaseId": "%SRCROOT%",
+                        }
+                    },
+                    "logicalLocations": [
+                        {
+                            "name": target_url,
+                            "kind": "url",
+                        }
+                    ],
+                }
+            ],
+            "properties": {
+                "severity": severity,
+                "source_tool": finding.get("source_tool", ""),
+                "cve": finding.get("cve", ""),
+                "evidence": (finding.get("evidence") or "")[:500],
+                "owasp": owasp_ids,
+                "mitre_attack": mitre_ids,
+                "cis_controls": cis_ids,
+                "nist_csf": nist_ids,
+            },
+        }
+        if finding.get("cve"):
+            result["relatedLocations"] = [
+                {
+                    "message": {"text": f"CVE: {finding['cve']}"},
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": f"https://nvd.nist.gov/vuln/detail/{finding['cve']}"
+                        }
+                    },
+                }
+            ]
+        results.append(result)
+
+    return {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "OmniScan",
+                        "version": "3.0.0",
+                        "informationUri": "https://github.com/omniscan",
+                        "rules": rules,
+                        "properties": {
+                            "frameworkReferences": [
+                                "OWASP Top 10 2021",
+                                "MITRE ATT&CK for Enterprise v14",
+                                "CIS Controls v8",
+                                "NIST CSF 2.0",
+                            ]
+                        },
+                    }
+                },
+                "results": results,
+                "properties": {
+                    "target_url": target_url,
+                    "scan_mode": scan_mode,
+                    "scan_started_at": payload.get("scan_started_at", ""),
+                    "scan_duration_seconds": payload.get("scan_duration_seconds", 0),
+                },
+            }
+        ],
+    }
+
+
+def generate_csv_report(payload: dict) -> str:
+    """Generate a flat CSV report from a scan payload.
+
+    Columns include all security framework identifiers for use in
+    ticketing systems, vulnerability management platforms, and SIEM import.
+    """
+    findings = payload.get("findings", [])
+    target_url = payload.get("target_url", "")
+    scan_started_at = payload.get("scan_started_at", "")
+    scan_mode = payload.get("scan_mode", "")
+
+    fieldnames = [
+        "id", "title", "severity", "source_tool", "cve",
+        "owasp_ids", "owasp_titles",
+        "mitre_attack_ids", "mitre_attack_names", "mitre_tactics",
+        "cis_control_ids", "cis_control_titles",
+        "nist_csf_ids", "nist_csf_functions", "nist_csf_categories",
+        "description", "evidence", "fix_summary", "references",
+        "target_url", "scan_mode", "scan_started_at",
+    ]
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+
+    for finding in findings:
+        owasp = finding.get("owasp", [])
+        mitre = finding.get("mitre_attack", [])
+        cis = finding.get("cis_controls", [])
+        nist = finding.get("nist_csf", [])
+
+        row = {
+            "id": finding.get("id", ""),
+            "title": finding.get("title", ""),
+            "severity": finding.get("severity", ""),
+            "source_tool": finding.get("source_tool", ""),
+            "cve": finding.get("cve", ""),
+            "owasp_ids": "; ".join(item["id"] for item in owasp),
+            "owasp_titles": "; ".join(item["title"] for item in owasp),
+            "mitre_attack_ids": "; ".join(item["id"] for item in mitre),
+            "mitre_attack_names": "; ".join(item["name"] for item in mitre),
+            "mitre_tactics": "; ".join(item["tactic"] for item in mitre),
+            "cis_control_ids": "; ".join(item["id"] for item in cis),
+            "cis_control_titles": "; ".join(item["title"] for item in cis),
+            "nist_csf_ids": "; ".join(item["id"] for item in nist),
+            "nist_csf_functions": "; ".join(item["function"] for item in nist),
+            "nist_csf_categories": "; ".join(item["category"] for item in nist),
+            "description": finding.get("description", ""),
+            "evidence": (finding.get("evidence") or "")[:500],
+            "fix_summary": finding.get("fix", ""),
+            "references": "; ".join(finding.get("references", [])),
+            "target_url": target_url,
+            "scan_mode": scan_mode,
+            "scan_started_at": scan_started_at,
+        }
+        writer.writerow(row)
+
+    return output.getvalue()
+
+
 def generate_html_report(payload: dict) -> str:
+    def _severity_rank(sev: str) -> int:
+        return {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}.get((sev or "info").lower(), 0)
+
+    def _derive_exploitability(finding: dict) -> str:
+        val = str(finding.get("exploitability", "")).strip().lower()
+        if val in {"high", "medium", "low"}:
+            return val
+        sev = str(finding.get("severity", "info")).lower()
+        text = " ".join([
+            str(finding.get("title", "")),
+            str(finding.get("description", "")),
+            str(finding.get("evidence", "")),
+        ]).lower()
+        if "rce" in text or "auth bypass" in text or "sql injection" in text:
+            return "high"
+        if sev in {"critical", "high"}:
+            return "high"
+        if sev == "medium":
+            return "medium"
+        return "low"
+
+    def _derive_confidence(finding: dict) -> str:
+        val = str(finding.get("confidence", "")).strip().lower()
+        if val in {"confirmed", "probable", "possible"}:
+            return val
+        verification = str(finding.get("verification_status", "")).lower()
+        if verification in {"confirmed", "reproduced"}:
+            return "confirmed"
+        if finding.get("evidence"):
+            return "probable"
+        return "possible"
+
+    def _derive_status(finding: dict) -> str:
+        val = str(finding.get("status", "")).strip().lower()
+        if val in {"new", "known", "in_progress", "fixed", "verified", "false_positive"}:
+            return val
+        verification = str(finding.get("verification_status", "")).lower()
+        if verification in {"fixed"}:
+            return "fixed"
+        if verification in {"confirmed", "reproduced"}:
+            return "verified"
+        return "new"
+
+    def _derive_owner(finding: dict) -> str:
+        return str(finding.get("owner") or finding.get("assignee") or "-")
+
+    def _derive_asset(finding: dict, target_url: str) -> str:
+        return str(finding.get("asset") or finding.get("url") or finding.get("endpoint") or target_url or "-")
+
+    def _coverage_metrics(tool_runs: list[dict]) -> tuple[int, int, int, int, int]:
+        total = len(tool_runs)
+        completed = 0
+        failed = 0
+        timeout = 0
+        missing = 0
+        for run in tool_runs:
+            status = str(run.get("status", "")).lower()
+            if status in {"completed", "completed_no_output"}:
+                completed += 1
+            elif status == "failed":
+                failed += 1
+            elif status == "timeout":
+                timeout += 1
+            elif status in {"missing", "skipped"}:
+                missing += 1
+        return total, completed, failed, timeout, missing
+
+    def _overall_risk(summary: dict) -> str:
+        sev = summary.get("severity_counts", {})
+        if sev.get("critical", 0) > 0:
+            return "critical"
+        if sev.get("high", 0) > 0:
+            return "high"
+        if sev.get("medium", 0) > 0:
+            return "medium"
+        return "low"
+
+    def _compliance_crosswalk_rows(findings: list[dict]) -> list[str]:
+        mapping: dict[tuple[str, str], set[str]] = {}
+        for f in findings:
+            fid = str(f.get("id", "")).strip() or "-"
+            for item in f.get("owasp", []):
+                key = ("OWASP Top 10", item.get("id", ""))
+                mapping.setdefault(key, set()).add(fid)
+            for item in f.get("mitre_attack", []):
+                key = ("MITRE ATT&CK", item.get("id", ""))
+                mapping.setdefault(key, set()).add(fid)
+            for item in f.get("cis_controls", []):
+                key = ("CIS Controls v8", item.get("id", ""))
+                mapping.setdefault(key, set()).add(fid)
+            for item in f.get("nist_csf", []):
+                key = ("NIST CSF 2.0", item.get("id", ""))
+                mapping.setdefault(key, set()).add(fid)
+        rows: list[str] = []
+        for (framework, control_id), fids in sorted(mapping.items(), key=lambda x: (x[0][0], x[0][1])):
+            status = "Not met"
+            if len(fids) <= 2:
+                status = "Partial"
+            if len(fids) == 1:
+                status = "Partial"
+            rows.append(
+                f"<tr><td>{html.escape(framework)}</td><td>{html.escape(control_id)}</td><td>{html.escape(', '.join(sorted(fids)))}</td><td>{status}</td></tr>"
+            )
+        return rows
+
+    def _build_action_rows(findings: list[dict], bucket: str) -> list[str]:
+        rows: list[str] = []
+        for f in findings:
+            sev = str(f.get("severity", "info")).lower()
+            if bucket == "24h" and sev not in {"critical", "high"}:
+                continue
+            if bucket == "7d" and sev != "medium":
+                continue
+            if bucket == "30d" and sev not in {"low", "info"}:
+                continue
+            owner = _derive_owner(f)
+            action = f.get("fix") or "Review and remediate based on validated evidence"
+            rows.append(
+                f"<tr><td>{html.escape(str(f.get('id', '-')))}</td><td>{html.escape(str(action))}</td><td>{html.escape(owner)}</td></tr>"
+            )
+            if len(rows) >= 10:
+                break
+        return rows
+
     findings = payload.get("findings", [])
     summary = payload.get("summary", {})
     overview = payload.get("overview", {})
@@ -170,6 +551,11 @@ def generate_html_report(payload: dict) -> str:
     finding_cards = []
     for idx, finding in enumerate(findings, 1):
         severity = finding.get("severity", "info")
+        exploitability = _derive_exploitability(finding)
+        confidence = _derive_confidence(finding)
+        status = _derive_status(finding)
+        owner = _derive_owner(finding)
+        asset = _derive_asset(finding, payload.get("target_url", ""))
         title = html.escape(finding.get("title", "Finding"))
         evidence = html.escape(finding.get("evidence", ""))
         description = html.escape(finding.get("description", ""))
@@ -183,12 +569,17 @@ def generate_html_report(payload: dict) -> str:
             fix_html = f"<p>{html.escape(finding.get('fix') or 'Review and remediate based on the evidence above.')}</p>"
 
         finding_rows.append(
-            "<tr>"
+            f"<tr data-severity='{html.escape(str(severity))}' data-exploitability='{html.escape(exploitability)}' data-status='{html.escape(status)}'>"
             f"<td>{idx}</td>"
             f"<td><span class='sev {severity}'>{severity}</span></td>"
+            f"<td>{html.escape(exploitability)}</td>"
+            f"<td>{html.escape(confidence)}</td>"
             f"<td>{title}</td>"
+            f"<td class='url-cell'>{html.escape(asset)}</td>"
             f"<td>{html.escape(finding.get('source_tool', ''))}</td>"
             f"<td>{cve or '-'}</td>"
+            f"<td>{html.escape(owner)}</td>"
+            f"<td>{html.escape(status.replace('_', ' '))}</td>"
             "</tr>"
         )
         finding_cards.append(
@@ -202,6 +593,9 @@ def generate_html_report(payload: dict) -> str:
                 </summary>
                 <div class="finding-body">
                     <p class="meta">Source: {html.escape(finding.get('source_tool', ''))}{' | CVE: ' + cve if cve else ''}</p>
+                    <p class="meta">Exploitability: {html.escape(exploitability)} | Confidence: {html.escape(confidence)} | Status: {html.escape(status.replace('_', ' '))} | Owner: {html.escape(owner)}</p>
+                    <p class="meta">Asset: <span class='url-cell'>{html.escape(asset)}</span></p>
+                    {_render_standards_tags(finding)}
                     <p>{description}</p>
                     {'<pre>' + evidence + '</pre>' if evidence else ''}
                     <div class="fix-block">
@@ -257,10 +651,108 @@ def generate_html_report(payload: dict) -> str:
 
     scan_date = datetime.fromisoformat(payload["scan_started_at"]).strftime("%Y-%m-%d %H:%M:%S")
     duration_seconds = payload.get("scan_duration_seconds", 0)
+    severity_counts = summary.get("severity_counts", {})
+    overall_risk = _overall_risk(summary)
+    total_tools, completed_tools, failed_tools, timeout_tools, missing_tools = _coverage_metrics(tool_runs)
+    coverage_pct = int((completed_tools / total_tools) * 100) if total_tools else 0
+    confidence_level = "high" if coverage_pct >= 85 else ("medium" if coverage_pct >= 60 else "low")
+
+    findings_sorted = sorted(
+        findings,
+        key=lambda f: (
+            _severity_rank(str(f.get("severity", "info"))),
+            {"high": 3, "medium": 2, "low": 1}.get(_derive_exploitability(f), 0),
+            {"confirmed": 3, "probable": 2, "possible": 1}.get(_derive_confidence(f), 0),
+        ),
+        reverse=True,
+    )
+    top_risk_rows: list[str] = []
+    for f in findings_sorted[:5]:
+        top_risk_rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(f.get('id', '-')))}</td>"
+            f"<td>{html.escape(str(f.get('title', 'Finding')))}</td>"
+            f"<td><span class='sev {html.escape(str(f.get('severity', 'info')))}'>{html.escape(str(f.get('severity', 'info')))}</span></td>"
+            f"<td>{html.escape(_derive_exploitability(f))}</td>"
+            f"<td class='url-cell'>{html.escape(_derive_asset(f, payload.get('target_url', '')))}</td>"
+            f"<td>{html.escape(_derive_status(f).replace('_', ' '))}</td>"
+            "</tr>"
+        )
+
+    actions_24h = _build_action_rows(findings_sorted, "24h")
+    actions_7d = _build_action_rows(findings_sorted, "7d")
+    actions_30d = _build_action_rows(findings_sorted, "30d")
+    compliance_rows = _compliance_crosswalk_rows(findings)
+
+    case_status_rows = "".join(
+        f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
+        for k, v in assessment_summary.get("case_status", {}).items()
+    )
+    verification_status_rows = "".join(
+        f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
+        for k, v in assessment_summary.get("verification_status", {}).items()
+    )
+    executive_summary_html = "".join(f"<li>{html.escape(item)}</li>" for item in executive_summary)
+
     auth_context_notes = html.escape(workbook.get("auth_context_notes", "") or "Not documented.")
     attack_hypotheses = html.escape(workbook.get("attack_path_hypotheses", "") or "No attack path hypotheses recorded yet.")
     verification_strategy = html.escape(workbook.get("verification_strategy", "") or "No explicit verification strategy recorded yet.")
     assessment_summary_text = html.escape(assessment_summary.get("summary", "") or "No analyst summary has been recorded for this target.")
+
+    rendered_from_template = _render_report_template(
+        {
+            "TITLE_TARGET": html.escape(payload.get("target_url", "target")),
+            "TARGET_URL": html.escape(payload.get("target_url", "")),
+            "SCAN_DATE": scan_date,
+            "SCAN_MODE": html.escape(payload.get("scan_mode", "")),
+            "REQUESTED_PROFILE": html.escape(overview.get("requested_profile", "")),
+            "EFFECTIVE_PROFILE": html.escape(overview.get("effective_profile", "")),
+            "SCAN_DURATION_SECONDS": str(duration_seconds),
+            "RISK_POSTURE": overall_risk.upper(),
+            "DATA_CONFIDENCE": confidence_level.upper(),
+            "CRITICAL_HIGH_COUNT": str(severity_counts.get("critical", 0) + severity_counts.get("high", 0)),
+            "COVERAGE_COMPLETENESS": str(coverage_pct),
+            "METRIC_CARDS": _render_metric_cards(summary, assessment_summary, overview),
+            "EXEC_SUMMARY_LIST": executive_summary_html,
+            "TOTAL_TOOLS": str(total_tools),
+            "COMPLETED_TOOLS": str(completed_tools),
+            "FAILED_TOOLS": str(failed_tools),
+            "TIMEOUT_TOOLS": str(timeout_tools),
+            "MISSING_TOOLS": str(missing_tools),
+            "ACTIONS_24H_ROWS": "".join(actions_24h) or "<tr><td colspan='3'>No urgent actions identified.</td></tr>",
+            "ACTIONS_7D_ROWS": "".join(actions_7d) or "<tr><td colspan='3'>No medium-priority actions identified.</td></tr>",
+            "ACTIONS_30D_ROWS": "".join(actions_30d) or "<tr><td colspan='3'>No deferred actions identified.</td></tr>",
+            "TOP_RISK_ROWS": "".join(top_risk_rows) or "<tr><td colspan='6'>No findings available.</td></tr>",
+            "FINGERPRINT_TITLE": html.escape(str(fingerprint.get("title", "") or "-")),
+            "FINGERPRINT_STATUS_CODE": html.escape(str(fingerprint.get("status_code", "") or "-")),
+            "FINGERPRINT_WEBSERVER": html.escape(str(fingerprint.get("webserver", "") or "-")),
+            "FINGERPRINT_TECHS": html.escape(", ".join(fingerprint.get("technologies", [])) or "-"),
+            "FINGERPRINT_WHATWEB": html.escape(", ".join(fingerprint.get("whatweb_plugins", [])) or "-"),
+            "DISCOVERY_SUBDOMAINS": str(discovery.get("subdomain_count", 0)),
+            "DISCOVERY_PARAMETERS": str(discovery.get("parameter_count", 0)),
+            "DISCOVERY_GAU": str(discovery.get("gau_count", 0)),
+            "DISCOVERY_KATANA": str(discovery.get("katana_count", 0)),
+            "DISCOVERY_FFUF": str(discovery.get("ffuf_count", 0)),
+            "DISCOVERY_FEROX": str(discovery.get("feroxbuster_count", 0)),
+            "ASSESSMENT_SUMMARY_TEXT": assessment_summary_text,
+            "AUTH_CONTEXT_NOTES": auth_context_notes,
+            "ATTACK_HYPOTHESES": attack_hypotheses,
+            "VERIFICATION_STRATEGY": verification_strategy,
+            "CASE_STATUS_ROWS": case_status_rows or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>",
+            "VERIFICATION_STATUS_ROWS": verification_status_rows or "<tr><td colspan='2'>No verification records yet.</td></tr>",
+            "CATEGORY_COVERAGE_ROWS": "".join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>",
+            "TOOLS_ROWS": "".join(tools_rows) or "<tr><td colspan='7'>No tool telemetry captured.</td></tr>",
+            "DISCOVERY_BLOCKS": "".join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>",
+            "CASE_ROWS": "".join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>",
+            "NOTES_HTML": notes_html or "<p>No operator notes recorded.</p>",
+            "VERIFICATION_HTML": verification_html or "<p>No verification runs recorded.</p>",
+            "FINDING_ROWS": "".join(finding_rows) or "<tr><td colspan='10'>No findings were parsed from the available outputs.</td></tr>",
+            "FINDING_CARDS": "".join(finding_cards) or "<div class='card'>No findings available.</div>",
+            "COMPLIANCE_ROWS": "".join(compliance_rows) or "<tr><td colspan='4'>No standards mapping data available.</td></tr>",
+        }
+    )
+    if rendered_from_template:
+        return rendered_from_template
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -337,7 +829,21 @@ def generate_html_report(payload: dict) -> str:
         a {{ color: #7dd3fc; }}
         .narrative {{ white-space: pre-wrap; line-height: 1.6; }}
         .note-card {{ background: rgba(22,33,51,0.75); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; }}
+        .toc {{ position: sticky; top: 12px; z-index: 10; background: rgba(16,24,38,0.92); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; backdrop-filter: blur(3px); }}
+        .toc a {{ color: var(--muted); text-decoration: none; font-size: 12px; margin-right: 12px; }}
+        .toc a:hover {{ color: var(--text); }}
+        .risk-banner {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }}
+        .risk-chip {{ border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(8,16,29,0.65); }}
+        .risk-chip .k {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
+        .risk-chip .v {{ font-size: 20px; font-weight: 700; margin-top: 4px; }}
+        .actions-grid {{ grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }}
+        .legend {{ color: var(--muted); font-size: 13px; margin-top: 8px; }}
+        .appendix-note {{ color: var(--muted); font-size: 13px; margin-bottom: 10px; }}
         @media (max-width: 980px) {{ .two {{ grid-template-columns: 1fr; }} }}
+        @media print {{
+            .toc, .findings-toolbar, .findings-pages {{ display: none !important; }}
+            details.finding > summary .sum-chevron {{ display: none; }}
+        }}
         /* ── Text overflow fixes ─────────────────────────────────────────── */
         td, th {{ word-break: break-word; overflow-wrap: anywhere; max-width: 480px; }}
         td code {{ word-break: break-all; white-space: pre-wrap; }}
@@ -371,10 +877,27 @@ def generate_html_report(payload: dict) -> str:
         details.finding.info    > summary {{ border-left: 4px solid var(--info); }}
         .sum-title {{ font-weight: 600; font-size: 0.93rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
         #findingsDetailPages {{ display:none; }}
+        /* ── Security framework tags ─────────────────────────────────────── */
+        .standards-row {{ display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 10px; }}
+        .std-tag {{ display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; }}
+        .owasp-tag {{ background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25); }}
+        .mitre-tag {{ background: rgba(245,158,11,0.12); color: #fcd34d; border: 1px solid rgba(245,158,11,0.25); }}
+        .cis-tag {{ background: rgba(70,183,255,0.12); color: #93c5fd; border: 1px solid rgba(70,183,255,0.25); }}
+        .nist-tag {{ background: rgba(34,197,94,0.12); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }}
+        .std-tag:hover {{ opacity: 0.8; }}
     </style>
 </head>
 <body>
     <div class="wrap">
+        <nav class="toc">
+            <a href="#executive-summary">Executive Summary</a>
+            <a href="#coverage-limitations">Coverage</a>
+            <a href="#immediate-actions">Actions</a>
+            <a href="#risk-snapshot">Risk Snapshot</a>
+            <a href="#findings-index">Findings</a>
+            <a href="#compliance-crosswalk">Crosswalk</a>
+            <a href="#appendix">Appendix</a>
+        </nav>
         <section class="hero">
             <h1>OmniScan Comprehensive Assessment Report</h1>
             <p>{html.escape(payload.get('target_url', ''))}</p>
@@ -385,17 +908,80 @@ def generate_html_report(payload: dict) -> str:
                 <div class="card"><div class="meta">Effective Profile</div><div>{html.escape(overview.get('effective_profile', ''))}</div></div>
                 <div class="card"><div class="meta">Duration</div><div>{duration_seconds}s</div></div>
             </div>
+            <div class="risk-banner">
+                <div class="risk-chip"><div class="k">Overall Risk</div><div class="v">{overall_risk.upper()}</div></div>
+                <div class="risk-chip"><div class="k">Data Confidence</div><div class="v">{confidence_level.upper()}</div></div>
+                <div class="risk-chip"><div class="k">Critical + High</div><div class="v">{severity_counts.get('critical', 0) + severity_counts.get('high', 0)}</div></div>
+                <div class="risk-chip"><div class="k">Coverage Completeness</div><div class="v">{coverage_pct}%</div></div>
+            </div>
         </section>
 
         <section class="grid metrics">
             {_render_metric_cards(summary, assessment_summary, overview)}
         </section>
 
-        <h2>Executive Summary</h2>
+        <h2 id="executive-summary">Executive Summary</h2>
         <div class="card">
             <ul class="exec-list">
                 {''.join(f'<li>{html.escape(item)}</li>' for item in executive_summary)}
             </ul>
+        </div>
+
+        <h2 id="coverage-limitations">Coverage and Limitations</h2>
+        <div class="grid two">
+            <div class="card">
+                <h3>Coverage Summary</h3>
+                <table>
+                    <tr><th>Total Tool Runs</th><td>{total_tools}</td></tr>
+                    <tr><th>Completed</th><td>{completed_tools}</td></tr>
+                    <tr><th>Failed</th><td>{failed_tools}</td></tr>
+                    <tr><th>Timed Out</th><td>{timeout_tools}</td></tr>
+                    <tr><th>Missing/Skipped</th><td>{missing_tools}</td></tr>
+                    <tr><th>Coverage Completeness</th><td>{coverage_pct}%</td></tr>
+                </table>
+            </div>
+            <div class="card">
+                <h3>Limitations Statement</h3>
+                <p class="narrative">This report aggregates automated and analyst-driven evidence. Areas with failed, timed-out, or skipped tools may contain unseen risk. Treat low finding counts as tentative when coverage completeness is below 85%.</p>
+            </div>
+        </div>
+
+        <h2 id="immediate-actions">Immediate Actions</h2>
+        <div class="grid actions-grid">
+            <div class="card">
+                <h3>Next 24 Hours</h3>
+                <table>
+                    <thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead>
+                    <tbody>{''.join(actions_24h) or "<tr><td colspan='3'>No urgent actions identified.</td></tr>"}</tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>Next 7 Days</h3>
+                <table>
+                    <thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead>
+                    <tbody>{''.join(actions_7d) or "<tr><td colspan='3'>No medium-priority actions identified.</td></tr>"}</tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>Next 30 Days</h3>
+                <table>
+                    <thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead>
+                    <tbody>{''.join(actions_30d) or "<tr><td colspan='3'>No deferred actions identified.</td></tr>"}</tbody>
+                </table>
+            </div>
+        </div>
+
+        <h2 id="risk-snapshot">Risk Snapshot</h2>
+        <div class="card">
+            <h3>Top 5 Risks</h3>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Title</th><th>Severity</th><th>Exploitability</th><th>Affected Area</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    {''.join(top_risk_rows) or "<tr><td colspan='6'>No findings available.</td></tr>"}
+                </tbody>
+            </table>
         </div>
 
         <h2>Target Overview</h2>
@@ -471,7 +1057,8 @@ def generate_html_report(payload: dict) -> str:
             </table>
         </div>
 
-        <h2>Scan Coverage</h2>
+        <h2 id="appendix">Appendix: Tool Telemetry</h2>
+        <p class="appendix-note">Detailed command telemetry and raw discovery artifacts are provided for analyst traceability.</p>
         <div class="card">
             <table>
                 <thead>
@@ -491,7 +1078,7 @@ def generate_html_report(payload: dict) -> str:
             </table>
         </div>
 
-        <h2>Discovery Artifacts</h2>
+        <h2>Appendix: Discovery Artifacts</h2>
         <div class="grid three">
             {''.join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>"}
         </div>
@@ -525,7 +1112,7 @@ def generate_html_report(payload: dict) -> str:
             {verification_html or "<p>No verification runs recorded.</p>"}
         </div>
 
-        <h2>Findings Index</h2>
+        <h2 id="findings-index">Findings Index</h2>
         <div class="card">
             <div class="findings-toolbar">
                 <input id="findingsSearch" type="search" placeholder="Search findings by title, tool, CVE&hellip;">
@@ -537,6 +1124,21 @@ def generate_html_report(payload: dict) -> str:
                     <option value="low">Low</option>
                     <option value="info">Info</option>
                 </select>
+                <select id="findingsExploitabilityFilter">
+                    <option value="">All exploitability</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+                <select id="findingsStatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="new">New</option>
+                    <option value="known">Known</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="fixed">Fixed</option>
+                    <option value="verified">Verified</option>
+                    <option value="false_positive">False positive</option>
+                </select>
                 <span class="findings-count" id="findingsCount"></span>
             </div>
             <table>
@@ -544,23 +1146,43 @@ def generate_html_report(payload: dict) -> str:
                     <tr>
                         <th>#</th>
                         <th>Severity</th>
+                        <th>Exploitability</th>
+                        <th>Confidence</th>
                         <th>Title</th>
+                        <th>Asset</th>
                         <th>Tool</th>
                         <th>CVE</th>
+                        <th>Owner</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody id="findingsTableBody">
-                    {''.join(finding_rows) or "<tr><td colspan='5'>No findings were parsed from the available outputs.</td></tr>"}
+                    {''.join(finding_rows) or "<tr><td colspan='10'>No findings were parsed from the available outputs.</td></tr>"}
                 </tbody>
             </table>
             <div class="findings-pages" id="findingsIndexPages"></div>
         </div>
 
         <h2>Detailed Findings</h2>
+        <div class="card legend">
+            Standards legend: OWASP = application risk categories, MITRE ATT&amp;CK = adversary behavior, CIS Controls and NIST CSF = control and governance alignment.
+        </div>
         <div id="findingsDetailContainer">
             {''.join(finding_cards) or "<div class='card'>No findings available.</div>"}
         </div>
         <div class="findings-pages" id="findingsDetailPages"></div>
+
+        <h2 id="compliance-crosswalk">Compliance Crosswalk</h2>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr><th>Framework</th><th>Control / Technique ID</th><th>Related Finding IDs</th><th>Control Status</th></tr>
+                </thead>
+                <tbody>
+                    {''.join(compliance_rows) or "<tr><td colspan='4'>No standards mapping data available.</td></tr>"}
+                </tbody>
+            </table>
+        </div>
     </div>
     <!-- anchor for scroll-back -->
     <span id="findingsDetailSection"></span>
@@ -606,12 +1228,34 @@ def generate_html_report(payload: dict) -> str:
     function applyFilter(){{
         var query = (document.getElementById('findingsSearch') || {{}}).value || '';
         var sevFilter = (document.getElementById('findingsSevFilter') || {{}}).value || '';
+        var exploitabilityFilter = (document.getElementById('findingsExploitabilityFilter') || {{}}).value || '';
+        var statusFilter = (document.getElementById('findingsStatusFilter') || {{}}).value || '';
         query = query.toLowerCase();
+
+        var sevCounts = {{critical: 0, high: 0, medium: 0, low: 0, info: 0}};
+        allRows.forEach(function(r){{
+            var sevVal = (r.dataset.severity || '').toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(sevCounts, sevVal)) sevCounts[sevVal] += 1;
+        }});
+        var sevSelect = document.getElementById('findingsSevFilter');
+        if (sevSelect && !sevSelect.dataset.countsApplied) {{
+            Array.from(sevSelect.options).forEach(function(opt){{
+                var key = opt.value;
+                if (!key || !Object.prototype.hasOwnProperty.call(sevCounts, key)) return;
+                opt.textContent = opt.textContent.replace(/ \(\d+\)$/, '') + ' (' + sevCounts[key] + ')';
+            }});
+            sevSelect.dataset.countsApplied = '1';
+        }}
+
         filteredRows = allRows.filter(function(r){{
             var text = r.textContent.toLowerCase();
-            var sev = (r.querySelector('.sev') || {{}}).textContent || '';
-            var sevOk = !sevFilter || sev.toLowerCase() === sevFilter.toLowerCase();
-            return sevOk && (!query || text.includes(query));
+            var sev = (r.dataset.severity || '').toLowerCase();
+            var exp = (r.dataset.exploitability || '').toLowerCase();
+            var stat = (r.dataset.status || '').toLowerCase();
+            var sevOk = !sevFilter || sev === sevFilter.toLowerCase();
+            var expOk = !exploitabilityFilter || exp === exploitabilityFilter.toLowerCase();
+            var statusOk = !statusFilter || stat === statusFilter.toLowerCase();
+            return sevOk && expOk && statusOk && (!query || text.includes(query));
         }});
         currentPage = 0;
         buildPages();
@@ -620,10 +1264,14 @@ def generate_html_report(payload: dict) -> str:
 
     var searchEl = document.getElementById('findingsSearch');
     var sevEl = document.getElementById('findingsSevFilter');
+    var expEl = document.getElementById('findingsExploitabilityFilter');
+    var statusEl = document.getElementById('findingsStatusFilter');
     if (searchEl) searchEl.addEventListener('input', applyFilter);
     if (sevEl) sevEl.addEventListener('change', applyFilter);
+    if (expEl) expEl.addEventListener('change', applyFilter);
+    if (statusEl) statusEl.addEventListener('change', applyFilter);
     buildPages();
-    renderPage();
+    applyFilter();
 
     // ── Detailed Findings: pagination (PAGE_DETAIL cards at a time) ──
     var PAGE_DETAIL = 50;
@@ -807,7 +1455,7 @@ def save_reports(
     assessment: dict | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Generate and save comprehensive HTML, markdown, and JSON reports."""
+    """Generate and save HTML, Markdown, JSON, CSV, and SARIF reports."""
     base_dir = output_dir if output_dir is not None else REPORTS_DIR
     month_folder = start_time.strftime("%Y-%m")
     day_folder = start_time.strftime("%d")
@@ -826,4 +1474,19 @@ def save_reports(
     json_path = report_dir / f"report_{ts}.json"
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    return {"html": html_path, "md": md_path, "json": json_path}
+    sarif_path = report_dir / f"report_{ts}.sarif"
+    sarif_path.write_text(
+        json.dumps(generate_sarif_report(payload), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    csv_path = report_dir / f"report_{ts}.csv"
+    csv_path.write_text(generate_csv_report(payload), encoding="utf-8", newline="")
+
+    return {
+        "html": html_path,
+        "md": md_path,
+        "json": json_path,
+        "sarif": sarif_path,
+        "csv": csv_path,
+    }

@@ -1,8 +1,9 @@
-"""Finding enrichment using the remediation database."""
+"""Finding enrichment using the remediation database and security framework standards."""
 
 from pathlib import Path
 
 from lib.config import load_json, REMEDIATION_DB_FILE
+from lib.standards import tag_findings_with_standards
 
 
 def _load_remediation_db() -> dict:
@@ -66,5 +67,8 @@ def enrich_findings(findings: list[dict]) -> list[dict]:
     # Assign IDs
     for i, f in enumerate(enriched, 1):
         f["id"] = f"VULN-{i:03d}"
+
+    # Tag all findings with security framework standards
+    tag_findings_with_standards(enriched)
 
     return enriched

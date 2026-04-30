@@ -12,8 +12,18 @@ fi
 
 if [[ $# -eq 0 || "$1" == "app" ]]; then
     shift || true
-    echo "[+] Starting OmniScan dashboard on 0.0.0.0:5000"
-    exec python3 app.py "$@"
+        echo "[+] Starting OmniScan dashboard via gunicorn on 0.0.0.0:5000"
+        exec gunicorn \
+            --workers 1 \
+            --threads 4 \
+            --worker-class sync \
+            --bind 0.0.0.0:5000 \
+            --timeout 600 \
+            --keep-alive 5 \
+            --log-level info \
+            --access-logfile logs/access.log \
+            --error-logfile logs/error.log \
+            app:app "$@"
 fi
 
 if [[ "$1" == "scanner" ]]; then
