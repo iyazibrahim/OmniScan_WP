@@ -105,6 +105,7 @@ SCAN_JOBS_LOCK = threading.Lock()
 SCAN_JOBS_FILE = CONFIG_DIR / "scan-jobs.json"
 _scan_jobs_dirty = False
 _scan_jobs_save_lock = threading.Lock()
+_last_scan_jobs_flush_at = 0.0
 
 def _load_scan_jobs_from_disk():
     """Restore scan jobs persisted from prior runs (read-only on startup)."""
@@ -120,7 +121,7 @@ def _load_scan_jobs_from_disk():
 
 def _flush_scan_jobs_to_disk():
     """Write current SCAN_JOBS to disk (called after status changes)."""
-    global _scan_jobs_dirty
+    global _scan_jobs_dirty, _last_scan_jobs_flush_at
     with _scan_jobs_save_lock:
         if not _scan_jobs_dirty:
             return
@@ -133,6 +134,7 @@ def _flush_scan_jobs_to_disk():
                 encoding="utf-8",
             )
             _scan_jobs_dirty = False
+            _last_scan_jobs_flush_at = time.time()
         except Exception as exc:
             logger.warning("Could not persist scan jobs: %s", exc)
 
@@ -379,7 +381,11 @@ def _update_scan_job(scan_id: str, patch: dict):
         job["updated_at"] = time.time()
         # Mark dirty; flush on terminal state changes to avoid excessive I/O
         _scan_jobs_dirty = True
-    if patch.get("status") in ("completed", "failed", "cancelled"):
+
+    should_flush = patch.get("status") in ("completed", "failed", "cancelled")
+    if not should_flush and (time.time() - _last_scan_jobs_flush_at) >= 5:
+        should_flush = True
+    if should_flush:
         _flush_scan_jobs_to_disk()
 
 
@@ -394,6 +400,9 @@ def _append_scan_event(scan_id: str, message: str):
         events.append({"at": time.time(), "message": message})
         if len(events) > 35:
             del events[:-35]
+        # Keep disk snapshot reasonably fresh for live dashboard recovery.
+        global _scan_jobs_dirty
+        _scan_jobs_dirty = True
 
 # ── Targets CRUD ────────────────────────────────────────────────────────────────
 

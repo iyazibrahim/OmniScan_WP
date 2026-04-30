@@ -88,6 +88,16 @@ def _safe_read_text(path: Path) -> str:
         return ""
 
 
+def _safe_read_head(path: Path, max_bytes: int = 200_000) -> str:
+    """Read only the first chunk of a potentially large file for fast heuristics."""
+    try:
+        with path.open("rb") as f:
+            data = f.read(max_bytes)
+        return data.decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
 def _result_template(
     tool_name: str,
     tool_label: str,
@@ -215,52 +225,61 @@ def _resolve_wordlist(config: dict) -> str | None:
 
 
 def _extract_detect_text(*paths: Path) -> str:
-    return "\n".join(_safe_read_text(path).lower() for path in paths if path.exists())
+    # Heuristics do not need full files; cap reads to avoid stalling on large outputs.
+    return "\n".join(_safe_read_head(path).lower() for path in paths if path.exists())
 
 
-def _extract_urls_from_file(path: Path) -> set[str]:
+def _extract_urls_from_file(path: Path, max_lines: int = 25_000, max_urls: int = 5_000) -> set[str]:
     urls: set[str] = set()
     if not path.exists():
         return urls
 
-    text = _safe_read_text(path)
-    if not text:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            for idx, raw_line in enumerate(f):
+                if idx >= max_lines or len(urls) >= max_urls:
+                    break
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith("http://") or line.startswith("https://"):
+                    urls.add(line)
+                    continue
+                if line.startswith("{"):
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    candidates = [
+                        obj.get("url"),
+                        obj.get("endpoint"),
+                        obj.get("matched"),
+                        (obj.get("request") or {}).get("url") if isinstance(obj.get("request"), dict) else None,
+                    ]
+                    for candidate in candidates:
+                        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                            urls.add(candidate)
+                            if len(urls) >= max_urls:
+                                break
+    except OSError:
         return urls
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.startswith("http://") or line.startswith("https://"):
-            urls.add(line)
-            continue
-        if line.startswith("{"):
-            try:
-                obj = json.loads(line)
-            except Exception:
-                continue
-            candidates = [
-                obj.get("url"),
-                obj.get("endpoint"),
-                obj.get("matched"),
-                (obj.get("request") or {}).get("url") if isinstance(obj.get("request"), dict) else None,
-            ]
-            for candidate in candidates:
-                if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
-                    urls.add(candidate)
     return urls
 
 
 def _collect_surface_signals(scan_dir: Path, target_url: str) -> dict:
     """Collect lightweight per-target signals used for adaptive tool planning."""
     urls = set([target_url])
-    urls.update(_extract_urls_from_file(scan_dir / "gau.txt"))
-    urls.update(_extract_urls_from_file(scan_dir / "katana.jsonl"))
+    urls.update(_extract_urls_from_file(scan_dir / "gau.txt", max_lines=8_000, max_urls=1_500))
+    katana_urls = _extract_urls_from_file(scan_dir / "katana.jsonl", max_lines=30_000, max_urls=5_000)
+    urls.update(katana_urls)
 
     params: set[str] = set()
     api_like = 0
     html_like = 0
     auth_like = 0
+    wp_paths = 0
+    joomla_paths = 0
+    drupal_paths = 0
     for u in urls:
         try:
             parsed = urlparse(u)
@@ -278,6 +297,12 @@ def _collect_surface_signals(scan_dir: Path, target_url: str) -> dict:
             html_like += 1
         if any(marker in path_l for marker in ("/login", "/signin", "/auth", "/token", "/oauth", "/session")):
             auth_like += 1
+        if "/wp-" in path_l or "xmlrpc.php" in path_l or "wp-json" in path_l:
+            wp_paths += 1
+        if "/administrator" in path_l or "com_" in path_l:
+            joomla_paths += 1
+        if "/sites/default" in path_l or "/node/" in path_l:
+            drupal_paths += 1
 
     detect_text = _extract_detect_text(
         scan_dir / "httpx.json",
@@ -296,6 +321,9 @@ def _collect_surface_signals(scan_dir: Path, target_url: str) -> dict:
         "api_like_count": api_like,
         "html_like_count": html_like,
         "auth_like_count": auth_like,
+        "wordpress_path_count": wp_paths,
+        "joomla_path_count": joomla_paths,
+        "drupal_path_count": drupal_paths,
         "parameters": sorted(params)[:40],
     }
 
@@ -336,9 +364,9 @@ def detect_profile_from_artifacts(scan_dir: Path, url: str, requested_profile: s
                 scores[profile] += 2
                 reasons.append(f"Matched {profile} indicator: {marker}")
 
-    wp_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/wp-" in u.lower())
-    joomla_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/administrator" in u.lower() or "com_" in u.lower())
-    drupal_paths = sum(1 for u in _extract_urls_from_file(scan_dir / "katana.jsonl") if "/sites/default" in u.lower() or "/node/" in u.lower())
+    wp_paths = surface_signals.get("wordpress_path_count", 0)
+    joomla_paths = surface_signals.get("joomla_path_count", 0)
+    drupal_paths = surface_signals.get("drupal_path_count", 0)
     if wp_paths >= 2:
         scores["wordpress"] += 3
         reasons.append("Detected multiple WordPress path indicators from crawl output.")
@@ -493,11 +521,12 @@ def run_sslyze(hostname: str, scan_dir: Path) -> dict:
     return result
 
 
-def run_subfinder(hostname: str, scan_dir: Path) -> dict:
+def run_subfinder(hostname: str, scan_dir: Path, config: dict) -> dict:
     ui.status("Running Subfinder...")
     output_file = scan_dir / "subfinder.json"
     cmd = ["subfinder", "-d", hostname, "-oJ", "-o", str(output_file), "-silent"]
-    result = _run_tool(cmd, "subfinder", "Subfinder", "passive", scan_dir, output_files=[output_file])
+    timeout = int(config.get("subfinder_timeout_seconds", 300))
+    result = _run_tool(cmd, "subfinder", "Subfinder", "passive", scan_dir, output_files=[output_file], timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("Subfinder complete.")
     return result
@@ -513,12 +542,13 @@ def run_corsy(url: str, scan_dir: Path) -> dict:
     return result
 
 
-def run_gau(hostname: str, scan_dir: Path) -> dict:
+def run_gau(hostname: str, scan_dir: Path, config: dict) -> dict:
     ui.status("Running gau...")
     output_file = scan_dir / "gau.txt"
     # gau does not support --threads; use --retries and limit providers to keep it fast
     cmd = ["gau", hostname, "--retries", "2", "--providers", "wayback,otx"]
-    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=180)
+    timeout = int(config.get("gau_timeout_seconds", 180))
+    result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout)
     if result["status"].startswith("completed"):
         ui.ok("gau complete.")
     return result
@@ -889,7 +919,7 @@ def run_all_tools(
                 ("httpx", "passive", lambda: run_httpx(url, config, scan_dir)),
                 ("whatweb", "passive", lambda: run_whatweb(url, config, scan_dir)),
                 ("corsy", "passive", lambda: run_corsy(url, scan_dir)),
-                ("gau", "passive", lambda: run_gau(hostname, scan_dir)),
+                ("gau", "passive", lambda: run_gau(hostname, scan_dir, config)),
                 ("katana", "passive", lambda: run_katana(url, scan_dir, config)),
             ]
         )
@@ -901,14 +931,44 @@ def run_all_tools(
         except ValueError:
             is_private_ip = False
         if not local_target and not is_private_ip:
-            static_plan.append(("subfinder", "passive", lambda: run_subfinder(hostname, scan_dir)))
+            static_plan.append(("subfinder", "passive", lambda: run_subfinder(hostname, scan_dir, config)))
 
     _emit({"event": "plan_updated", "phase": "tool_execution", "total_tools": len(static_plan), "message": "Initial scan plan prepared."})
 
     tool_runs.extend(_execute_plan(static_plan, len(static_plan), max_parallel_tools))
 
-    profile_info = detect_profile_from_artifacts(scan_dir, url, profile)
-    effective_profile = profile_info["effective_profile"]
+    _emit(
+        {
+            "event": "stage",
+            "stage": "profile_analysis",
+            "progress": 85,
+            "current_tool": "Adaptive profile analysis",
+            "message": "Analyzing discovered surface and selecting optimal profile/tool plan.",
+        }
+    )
+    try:
+        profile_info = detect_profile_from_artifacts(scan_dir, url, profile)
+        effective_profile = profile_info["effective_profile"]
+    except Exception as exc:
+        fallback_profile = profile if profile in {"wordpress", "joomla", "drupal", "api", "webapp"} else "webapp"
+        profile_info = {
+            "requested_profile": profile,
+            "effective_profile": fallback_profile,
+            "confidence": "fallback",
+            "scores": {fallback_profile: 1},
+            "surface_signals": {},
+            "reasons": [f"Adaptive profile detection fallback due to error: {str(exc)[:120]}"],
+        }
+        effective_profile = fallback_profile
+        _emit(
+            {
+                "event": "stage",
+                "stage": "profile_analysis",
+                "progress": 86,
+                "current_tool": "Adaptive profile analysis",
+                "message": f"Adaptive detection fallback to {fallback_profile} profile.",
+            }
+        )
     surface = profile_info.get("surface_signals", _collect_surface_signals(scan_dir, url))
 
     if bool(config.get("adaptive_parallelism", True)):
