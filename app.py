@@ -404,6 +404,20 @@ def _append_scan_event(scan_id: str, message: str):
         global _scan_jobs_dirty
         _scan_jobs_dirty = True
 
+
+def _normalized_job_status(job: dict) -> str:
+    """Reconcile persisted/stale states so completed jobs are not shown as active."""
+    status = str(job.get("status", "unknown"))
+    if status in ("completed", "failed", "cancelled"):
+        return status
+
+    progress = _safe_int(job.get("progress"), 0)
+    has_finished_marker = bool(job.get("finished_at") or job.get("report_paths"))
+    if progress >= 100 or has_finished_marker:
+        return "completed"
+
+    return status
+
 # ── Targets CRUD ────────────────────────────────────────────────────────────────
 
 @app.route('/api/targets', methods=['GET'])
@@ -979,6 +993,9 @@ def get_scan_status(scan_id):
         payload = dict(job)
 
     elapsed = max(0, int(time.time() - payload.get("started_at", time.time())))
+    payload["status"] = _normalized_job_status(payload)
+    if payload["status"] == "completed" and not payload.get("finished_at"):
+        payload["finished_at"] = payload.get("updated_at") or time.time()
     estimate = max(1, _safe_int(payload.get("estimated_seconds"), DEFAULT_SCAN_ESTIMATES_SECONDS["full"]))
     payload["elapsed_seconds"] = elapsed
     payload["elapsed_label"] = _format_eta(elapsed)
@@ -1020,7 +1037,7 @@ def list_scan_jobs():
     for job in sorted(jobs, key=lambda x: x.get("started_at", 0), reverse=True)[:10]:
         elapsed = max(0, int(now - job.get("started_at", now)))
         estimate = max(1, _safe_int(job.get("estimated_seconds"), DEFAULT_SCAN_ESTIMATES_SECONDS["full"]))
-        status = job.get("status", "unknown")
+        status = _normalized_job_status(job)
         result.append({
             "scan_id": job.get("scan_id"),
             "target": job.get("target"),

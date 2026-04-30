@@ -205,19 +205,20 @@ const App = {
         if (!list) return;
 
         const allJobs = Array.isArray(jobs) ? jobs : [];
-        const runningCount = allJobs.filter((j) => j.status === "running" || j.status === "cancelling").length;
+        const activeJobs = allJobs.filter((j) => j.status === "running" || j.status === "cancelling");
+        const runningCount = activeJobs.length;
 
         if (badge) {
             badge.textContent = runningCount > 0 ? `${runningCount} running` : "0 running";
             badge.className = runningCount > 0 ? "badge badge-running" : "badge badge-neutral";
         }
 
-        if (!allJobs.length) {
-            list.innerHTML = '<div class="empty-state">No scans in this session.</div>';
+        if (!activeJobs.length) {
+            list.innerHTML = '<div class="empty-state">No active scans right now.</div>';
             return;
         }
 
-        list.innerHTML = allJobs.map((job) => {
+        list.innerHTML = activeJobs.map((job) => {
             const statusClass = {running: "status-running", cancelling: "status-warn", completed: "status-done", cancelled: "status-warn", failed: "status-fail"}[job.status] || "status-done";
             const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
             const etaHtml = job.status === "running" && job.eta_label
