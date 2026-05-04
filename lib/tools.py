@@ -3,8 +3,10 @@
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ipaddress
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -131,6 +133,49 @@ def _write_text(path: Path, content: str):
     path.write_text(content, encoding="utf-8", errors="ignore")
 
 
+def _spawn_tool_process(cmd: list[str], extra_env: dict | None = None) -> subprocess.Popen:
+    kwargs: dict = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "env": extra_env,
+    }
+    # Isolate each tool in its own process group/session so cancellation and
+    # timeout cleanup can terminate spawned children as well.
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(cmd, **kwargs)
+
+
+def _terminate_process_tree(proc: subprocess.Popen, grace_seconds: float = 8.0):
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return
+
+        os.killpg(proc.pid, signal.SIGTERM)
+        deadline = time.perf_counter() + max(0.1, grace_seconds)
+        while time.perf_counter() < deadline:
+            if proc.poll() is not None:
+                return
+            time.sleep(0.1)
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 def _run_tool(
     cmd: list[str],
     tool_name: str,
@@ -152,7 +197,7 @@ def _run_tool(
     stderr_log = scan_dir / f"{tool_name}.stderr.log"
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=extra_env)
+        proc = _spawn_tool_process(cmd, extra_env=extra_env)
         deadline = start + timeout
         stdout = ""
         stderr = ""
@@ -160,12 +205,12 @@ def _run_tool(
 
         while True:
             if cancel_check and cancel_check():
-                proc.terminate()
+                _terminate_process_tree(proc, grace_seconds=6.0)
                 try:
-                    stdout, stderr = proc.communicate(timeout=8)
+                    stdout, stderr = proc.communicate(timeout=3)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
+                    _terminate_process_tree(proc, grace_seconds=1.0)
+                    stdout, stderr = proc.communicate(timeout=2)
                 duration = time.perf_counter() - start
                 _write_text(stdout_log, stdout or "")
                 _write_text(stderr_log, (stderr or "").strip() or f"{tool_label} cancelled by operator.")
@@ -190,8 +235,11 @@ def _run_tool(
 
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
-                proc.kill()
-                stdout, stderr = proc.communicate()
+                _terminate_process_tree(proc)
+                try:
+                    stdout, stderr = proc.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    stdout, stderr = "", ""
                 raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout, output=stdout, stderr=stderr)
 
             try:

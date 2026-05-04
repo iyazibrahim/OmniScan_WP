@@ -204,6 +204,10 @@ def get_scan_config() -> dict:
         "run_nikto_wordpress": True,
         "run_content_discovery_wordpress": True,
         "run_cmsmap_wordpress": True,
+        "scan_hard_timeout_seconds": 7200,
+        "report_profile": "technical",
+        "include_manual_assessment": False,
+        "output_formats": ["html", "markdown", "json", "sarif", "csv"],
         "content_wordlist": "",
     }
 

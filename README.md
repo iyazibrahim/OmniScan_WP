@@ -37,6 +37,7 @@ Security assessments usually require many disconnected tools with different inst
 - Environment-aware logic for localhost/internal targets.
 - SPA dashboard for targets, scan launch, status tracking, and report browsing.
 - Report management in UI: open, download artifacts, rename, and delete.
+- Configurable report profiles (executive/technical/full) and optional manual-assessment appendix.
 - Built-in remediation database mapping findings to fix guidance.
 - Native and Docker workflows.
 - First-run setup auth flow with no hardcoded default credentials.
@@ -44,6 +45,8 @@ Security assessments usually require many disconnected tools with different inst
 ## Quick Start (Docker)
 
 Recommended for Linux VPS/NUC deployments.
+
+The container image keeps full OmniScan tool coverage while pruning build-only packages during build to reduce runtime image size.
 
 ### Prerequisites
 
@@ -211,6 +214,13 @@ Main artifacts:
 - `report.html`: interactive view with severity filters and discovery cards.
 - `report.md`: markdown summary for tickets/docs.
 - `findings.json`: normalized machine-readable findings.
+- Optional exports: SARIF (`.sarif`) and CSV (`.csv`) for platform and GRC ingestion.
+
+Report behavior can be tuned in `config/scan-config.json`:
+
+- `report_profile`: `executive`, `technical`, or `full`
+- `include_manual_assessment`: include or suppress manual analytics/narrative sections
+- `output_formats`: choose generated outputs (`html`, `markdown`, `json`, `sarif`, `csv`)
 
 ## Project Structure
 
@@ -259,6 +269,11 @@ Optional startup behavior:
 # Update nuclei templates during startup
 UPDATE_NUCLEI_TEMPLATES=1 docker compose up -d
 ```
+
+Operational reliability knobs in `config/scan-config.json`:
+
+- `scan_time_budget_*_seconds`: planner budget for adaptive low-priority tool skipping near deadline
+- `scan_hard_timeout_seconds`: hard upper bound for stale running scans before auto-fail cleanup
 
 ## GitHub Publishing Checklist
 

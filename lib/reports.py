@@ -83,6 +83,8 @@ def build_report_payload(
     start_time: datetime,
     scan_overview: dict | None,
     assessment: dict | None = None,
+    report_profile: str = "technical",
+    include_manual_assessment: bool = True,
 ) -> dict:
     duration = datetime.now() - start_time
     duration_seconds = int(duration.total_seconds())
@@ -98,6 +100,8 @@ def build_report_payload(
         },
         "overview": scan_overview or {},
         "assessment": assessment or {},
+        "report_profile": report_profile,
+        "include_manual_assessment": bool(include_manual_assessment),
         "findings": findings,
     }
     payload["summary"]["executive_summary"] = _build_executive_summary(payload)
@@ -510,7 +514,11 @@ def generate_html_report(payload: dict) -> str:
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
     tool_runs = overview.get("tool_runs", [])
-    assessment = payload.get("assessment", {})
+    include_manual_assessment = bool(payload.get("include_manual_assessment", True))
+    report_profile = str(payload.get("report_profile", "technical")).strip().lower()
+    if report_profile == "executive":
+        include_manual_assessment = False
+    assessment = payload.get("assessment", {}) if include_manual_assessment else {}
     workbook = assessment.get("workbook", {}) if isinstance(assessment, dict) else {}
     assessment_summary = _assessment_summary(assessment)
     executive_summary = summary.get("executive_summary", [])
@@ -609,45 +617,47 @@ def generate_html_report(payload: dict) -> str:
         )
 
     category_rows = []
-    for category, data in assessment_summary.get("category_coverage", {}).items():
-        category_rows.append(
-            f"<tr><td>{html.escape(category)}</td><td>{data.get('total', 0)}</td><td>{data.get('completed', 0)}</td><td>{data.get('confirmed', 0)}</td></tr>"
-        )
-
-    workbook_cases = workbook.get("cases", [])
+    workbook_cases = []
     case_rows = []
-    for case in workbook_cases:
-        case_rows.append(
-            "<tr>"
-            f"<td>{html.escape(case.get('category', ''))}</td>"
-            f"<td>{html.escape(case.get('title', ''))}</td>"
-            f"<td><span class='pill muted'>{html.escape(case.get('status', 'not_started').replace('_', ' '))}</span></td>"
-            f"<td><span class='pill muted'>{html.escape(case.get('verification_status', 'not_verified').replace('_', ' '))}</span></td>"
-            f"<td>{html.escape(case.get('owner', '') or '-')}</td>"
-            f"<td>{html.escape((case.get('notes', '') or '')[:220] or '-')}</td>"
-            "</tr>"
-        )
-
     notes_html = ""
-    for note in workbook.get("operator_notes", []):
-        notes_html += (
-            "<div class='note-card'>"
-            f"<div class='note-head'><strong>{html.escape(note.get('title', 'Untitled note'))}</strong><span>{html.escape(note.get('type', 'analysis'))}</span></div>"
-            f"<div class='note-meta'>{html.escape(note.get('author', '') or 'Unassigned analyst')} | {html.escape(note.get('updated_at', note.get('created_at', '')))}</div>"
-            f"<p>{html.escape(note.get('body', '') or '')}</p>"
-            "</div>"
-        )
-
     verification_html = ""
-    for run in workbook.get("verification_runs", []):
-        verification_html += (
-            "<div class='note-card'>"
-            f"<div class='note-head'><strong>{html.escape(run.get('title', 'Verification run'))}</strong><span>{html.escape(run.get('outcome', 'pending'))}</span></div>"
-            f"<div class='note-meta'>{html.escape(run.get('created_at', ''))}</div>"
-            f"<p><strong>Scope:</strong> {html.escape(run.get('scope', '') or '-')}</p>"
-            f"<p>{html.escape(run.get('notes', '') or '')}</p>"
-            "</div>"
-        )
+    if include_manual_assessment:
+        for category, data in assessment_summary.get("category_coverage", {}).items():
+            category_rows.append(
+                f"<tr><td>{html.escape(category)}</td><td>{data.get('total', 0)}</td><td>{data.get('completed', 0)}</td><td>{data.get('confirmed', 0)}</td></tr>"
+            )
+
+        workbook_cases = workbook.get("cases", [])
+        for case in workbook_cases:
+            case_rows.append(
+                "<tr>"
+                f"<td>{html.escape(case.get('category', ''))}</td>"
+                f"<td>{html.escape(case.get('title', ''))}</td>"
+                f"<td><span class='pill muted'>{html.escape(case.get('status', 'not_started').replace('_', ' '))}</span></td>"
+                f"<td><span class='pill muted'>{html.escape(case.get('verification_status', 'not_verified').replace('_', ' '))}</span></td>"
+                f"<td>{html.escape(case.get('owner', '') or '-')}</td>"
+                f"<td>{html.escape((case.get('notes', '') or '')[:220] or '-')}</td>"
+                "</tr>"
+            )
+
+        for note in workbook.get("operator_notes", []):
+            notes_html += (
+                "<div class='note-card'>"
+                f"<div class='note-head'><strong>{html.escape(note.get('title', 'Untitled note'))}</strong><span>{html.escape(note.get('type', 'analysis'))}</span></div>"
+                f"<div class='note-meta'>{html.escape(note.get('author', '') or 'Unassigned analyst')} | {html.escape(note.get('updated_at', note.get('created_at', '')))}</div>"
+                f"<p>{html.escape(note.get('body', '') or '')}</p>"
+                "</div>"
+            )
+
+        for run in workbook.get("verification_runs", []):
+            verification_html += (
+                "<div class='note-card'>"
+                f"<div class='note-head'><strong>{html.escape(run.get('title', 'Verification run'))}</strong><span>{html.escape(run.get('outcome', 'pending'))}</span></div>"
+                f"<div class='note-meta'>{html.escape(run.get('created_at', ''))}</div>"
+                f"<p><strong>Scope:</strong> {html.escape(run.get('scope', '') or '-')}</p>"
+                f"<p>{html.escape(run.get('notes', '') or '')}</p>"
+                "</div>"
+            )
 
     scan_date = datetime.fromisoformat(payload["scan_started_at"]).strftime("%Y-%m-%d %H:%M:%S")
     duration_seconds = payload.get("scan_duration_seconds", 0)
@@ -684,20 +694,30 @@ def generate_html_report(payload: dict) -> str:
     actions_30d = _build_action_rows(findings_sorted, "30d")
     compliance_rows = _compliance_crosswalk_rows(findings)
 
-    case_status_rows = "".join(
-        f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
-        for k, v in assessment_summary.get("case_status", {}).items()
-    )
-    verification_status_rows = "".join(
-        f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
-        for k, v in assessment_summary.get("verification_status", {}).items()
-    )
+    case_status_rows = ""
+    verification_status_rows = ""
+    if include_manual_assessment:
+        case_status_rows = "".join(
+            f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
+            for k, v in assessment_summary.get("case_status", {}).items()
+        )
+        verification_status_rows = "".join(
+            f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
+            for k, v in assessment_summary.get("verification_status", {}).items()
+        )
     executive_summary_html = "".join(f"<li>{html.escape(item)}</li>" for item in executive_summary)
 
-    auth_context_notes = html.escape(workbook.get("auth_context_notes", "") or "Not documented.")
-    attack_hypotheses = html.escape(workbook.get("attack_path_hypotheses", "") or "No attack path hypotheses recorded yet.")
-    verification_strategy = html.escape(workbook.get("verification_strategy", "") or "No explicit verification strategy recorded yet.")
-    assessment_summary_text = html.escape(assessment_summary.get("summary", "") or "No analyst summary has been recorded for this target.")
+    if include_manual_assessment:
+        auth_context_notes = html.escape(workbook.get("auth_context_notes", "") or "Not documented.")
+        attack_hypotheses = html.escape(workbook.get("attack_path_hypotheses", "") or "No attack path hypotheses recorded yet.")
+        verification_strategy = html.escape(workbook.get("verification_strategy", "") or "No explicit verification strategy recorded yet.")
+        assessment_summary_text = html.escape(assessment_summary.get("summary", "") or "No analyst summary has been recorded for this target.")
+    else:
+        disabled_note = "Manual assessment appendix is disabled for this report profile."
+        auth_context_notes = disabled_note
+        attack_hypotheses = disabled_note
+        verification_strategy = disabled_note
+        assessment_summary_text = disabled_note
 
     rendered_from_template = _render_report_template(
         {
@@ -1322,7 +1342,11 @@ def generate_markdown_report(payload: dict) -> str:
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
     tool_runs = overview.get("tool_runs", [])
-    assessment = payload.get("assessment", {})
+    include_manual_assessment = bool(payload.get("include_manual_assessment", True))
+    report_profile = str(payload.get("report_profile", "technical")).strip().lower()
+    if report_profile == "executive":
+        include_manual_assessment = False
+    assessment = payload.get("assessment", {}) if include_manual_assessment else {}
     workbook = assessment.get("workbook", {}) if isinstance(assessment, dict) else {}
     assessment_summary = _assessment_summary(assessment)
 
@@ -1360,19 +1384,27 @@ def generate_markdown_report(payload: dict) -> str:
             f"- Technologies: {', '.join(fingerprint.get('technologies', [])) or '-'}",
             f"- WhatWeb plugins: {', '.join(fingerprint.get('whatweb_plugins', [])) or '-'}",
             "",
-            "## Manual Assessment Narrative",
-            "",
-            f"- Analyst summary: {assessment_summary.get('summary', '') or 'Not recorded'}",
-            f"- Authentication context: {workbook.get('auth_context_notes', '') or 'Not recorded'}",
-            f"- Attack path hypotheses: {workbook.get('attack_path_hypotheses', '') or 'Not recorded'}",
-            f"- Verification strategy: {workbook.get('verification_strategy', '') or 'Not recorded'}",
-            "",
             "## Scan Coverage",
             "",
             "| Tool | Phase | Status | Seconds | Note |",
             "|------|-------|--------|---------|------|",
         ]
     )
+
+    if include_manual_assessment:
+        lines.extend(
+            [
+                "",
+                "## Manual Assessment Narrative",
+                "",
+                f"- Analyst summary: {assessment_summary.get('summary', '') or 'Not recorded'}",
+                f"- Authentication context: {workbook.get('auth_context_notes', '') or 'Not recorded'}",
+                f"- Attack path hypotheses: {workbook.get('attack_path_hypotheses', '') or 'Not recorded'}",
+                f"- Verification strategy: {workbook.get('verification_strategy', '') or 'Not recorded'}",
+            ]
+        )
+    else:
+        lines.extend(["", "## Manual Assessment Narrative", "", "- Manual assessment appendix is disabled for this report profile."])
 
     for run in tool_runs:
         lines.append(
@@ -1391,35 +1423,41 @@ def generate_markdown_report(payload: dict) -> str:
             f"- Katana URLs: {discovery.get('katana_count', 0)}",
             f"- ffuf hits: {discovery.get('ffuf_count', 0)}",
             f"- Feroxbuster hits: {discovery.get('feroxbuster_count', 0)}",
-            "",
-            "## Guided Manual Cases",
-            "",
-            "| Category | Case | Status | Verification | Owner |",
-            "|----------|------|--------|--------------|-------|",
         ]
     )
 
-    for case in workbook.get("cases", []):
-        lines.append(
-            f"| {case.get('category', '')} | {case.get('title', '')} | {case.get('status', '')} | "
-            f"{case.get('verification_status', '')} | {case.get('owner', '') or '-'} |"
+    if include_manual_assessment:
+        lines.extend(
+            [
+                "",
+                "## Guided Manual Cases",
+                "",
+                "| Category | Case | Status | Verification | Owner |",
+                "|----------|------|--------|--------------|-------|",
+            ]
         )
 
-    lines.extend(["", "## Operator Notes", ""])
-    for note in workbook.get("operator_notes", []):
-        lines.append(f"### {note.get('title', 'Note')} [{note.get('type', 'analysis')}]")
-        lines.append(f"- Author: {note.get('author', '') or 'Unassigned analyst'}")
-        lines.append(f"- Updated: {note.get('updated_at', note.get('created_at', ''))}")
-        lines.append(f"- Body: {note.get('body', '')}")
-        lines.append("")
+        for case in workbook.get("cases", []):
+            lines.append(
+                f"| {case.get('category', '')} | {case.get('title', '')} | {case.get('status', '')} | "
+                f"{case.get('verification_status', '')} | {case.get('owner', '') or '-'} |"
+            )
 
-    lines.extend(["## Verification Runs", ""])
-    for run in workbook.get("verification_runs", []):
-        lines.append(f"### {run.get('title', 'Verification run')} ({run.get('outcome', 'pending')})")
-        lines.append(f"- Created: {run.get('created_at', '')}")
-        lines.append(f"- Scope: {run.get('scope', '') or '-'}")
-        lines.append(f"- Notes: {run.get('notes', '') or '-'}")
-        lines.append("")
+        lines.extend(["", "## Operator Notes", ""])
+        for note in workbook.get("operator_notes", []):
+            lines.append(f"### {note.get('title', 'Note')} [{note.get('type', 'analysis')}]")
+            lines.append(f"- Author: {note.get('author', '') or 'Unassigned analyst'}")
+            lines.append(f"- Updated: {note.get('updated_at', note.get('created_at', ''))}")
+            lines.append(f"- Body: {note.get('body', '')}")
+            lines.append("")
+
+        lines.extend(["## Verification Runs", ""])
+        for run in workbook.get("verification_runs", []):
+            lines.append(f"### {run.get('title', 'Verification run')} ({run.get('outcome', 'pending')})")
+            lines.append(f"- Created: {run.get('created_at', '')}")
+            lines.append(f"- Scope: {run.get('scope', '') or '-'}")
+            lines.append(f"- Notes: {run.get('notes', '') or '-'}")
+            lines.append("")
 
     lines.extend(["## Findings", ""])
     for finding in findings:
@@ -1454,6 +1492,9 @@ def save_reports(
     scan_overview: dict | None = None,
     assessment: dict | None = None,
     output_dir: Path | None = None,
+    output_formats: list[str] | None = None,
+    report_profile: str = "technical",
+    include_manual_assessment: bool = True,
 ) -> dict[str, Path]:
     """Generate and save HTML, Markdown, JSON, CSV, and SARIF reports."""
     base_dir = output_dir if output_dir is not None else REPORTS_DIR
@@ -1463,30 +1504,49 @@ def save_reports(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     ts = start_time.strftime("%Y%m%d_%H%M%S")
-    payload = build_report_payload(findings, target_url, scan_mode, start_time, scan_overview, assessment)
+    selected_formats = {str(item).strip().lower() for item in (output_formats or ["html", "markdown", "json", "sarif", "csv"]) if str(item).strip()}
+    if not selected_formats:
+        selected_formats = {"html", "markdown", "json"}
 
-    html_path = report_dir / f"report_{ts}.html"
-    html_path.write_text(generate_html_report(payload), encoding="utf-8")
-
-    md_path = report_dir / f"report_{ts}.md"
-    md_path.write_text(generate_markdown_report(payload), encoding="utf-8")
-
-    json_path = report_dir / f"report_{ts}.json"
-    json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    sarif_path = report_dir / f"report_{ts}.sarif"
-    sarif_path.write_text(
-        json.dumps(generate_sarif_report(payload), indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    payload = build_report_payload(
+        findings,
+        target_url,
+        scan_mode,
+        start_time,
+        scan_overview,
+        assessment,
+        report_profile=report_profile,
+        include_manual_assessment=include_manual_assessment,
     )
 
-    csv_path = report_dir / f"report_{ts}.csv"
-    csv_path.write_text(generate_csv_report(payload), encoding="utf-8", newline="")
+    paths: dict[str, Path] = {}
 
-    return {
-        "html": html_path,
-        "md": md_path,
-        "json": json_path,
-        "sarif": sarif_path,
-        "csv": csv_path,
-    }
+    if "html" in selected_formats:
+        html_path = report_dir / f"report_{ts}.html"
+        html_path.write_text(generate_html_report(payload), encoding="utf-8")
+        paths["html"] = html_path
+
+    if "markdown" in selected_formats or "md" in selected_formats:
+        md_path = report_dir / f"report_{ts}.md"
+        md_path.write_text(generate_markdown_report(payload), encoding="utf-8")
+        paths["md"] = md_path
+
+    if "json" in selected_formats:
+        json_path = report_dir / f"report_{ts}.json"
+        json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        paths["json"] = json_path
+
+    if "sarif" in selected_formats:
+        sarif_path = report_dir / f"report_{ts}.sarif"
+        sarif_path.write_text(
+            json.dumps(generate_sarif_report(payload), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths["sarif"] = sarif_path
+
+    if "csv" in selected_formats:
+        csv_path = report_dir / f"report_{ts}.csv"
+        csv_path.write_text(generate_csv_report(payload), encoding="utf-8", newline="")
+        paths["csv"] = csv_path
+
+    return paths

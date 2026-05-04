@@ -85,6 +85,15 @@ RUN git clone --depth 1 https://github.com/commixproject/commix.git /opt/tools/c
 RUN if [ -x /usr/bin/getallurls ] && [ ! -e /usr/local/bin/gau ]; then \
         ln -s /usr/bin/getallurls /usr/local/bin/gau; fi
 
+# Remove build-only dependencies and residual caches to shrink final runtime image
+# while preserving all scanner binaries and runtimes required by OmniScan tools.
+RUN apt-get purge -y --auto-remove \
+    python3-dev \
+    build-essential \
+    ruby-dev \
+    git && \
+    rm -rf /var/lib/apt/lists/* /root/.cache/pip /tmp/* /var/tmp/*
+
 COPY . /app
 
 RUN chmod +x /app/docker/entrypoint.sh && \

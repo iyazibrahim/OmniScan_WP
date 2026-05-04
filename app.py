@@ -225,26 +225,61 @@ def _scan_stall_patch(job: dict) -> dict | None:
     if status in ("completed", "failed", "cancelled"):
         return None
 
+    now = time.time()
+    updated_at = float(job.get("updated_at") or job.get("started_at") or 0)
+    stale_for = now - updated_at
+    phase = str(job.get("phase", "")).lower()
+
+    # If post-tool phases go stale, fail fast so jobs do not remain in running.
+    if phase in {"parsing", "enrichment", "reporting"} and stale_for >= 300:
+        patch = {
+            "status": "failed",
+            "phase": "failed",
+            "current_tool": "Failed",
+            "finished_at": now,
+            "message": "Scan stalled during result processing. Check parser/report logs.",
+        }
+        scan_dir = _scan_dir_for_job(job)
+        if scan_dir is not None:
+            patch["scan_dir"] = str(scan_dir)
+        return patch
+
     total_tools = _safe_int(job.get("total_tools"), 0)
     completed_tools = _safe_int(job.get("completed_tools"), 0)
-    if total_tools <= 0 or completed_tools < total_tools:
-        return None
+    # Legacy recovery path for jobs that completed tool execution but never
+    # reached terminal state.
+    if total_tools > 0 and completed_tools >= total_tools and stale_for >= 300:
+        patch = {
+            "status": "failed",
+            "phase": "failed",
+            "current_tool": "Failed",
+            "finished_at": now,
+            "message": "Scan stalled after tool execution. Check server logs for parser or report-generation failures.",
+        }
+        scan_dir = _scan_dir_for_job(job)
+        if scan_dir is not None:
+            patch["scan_dir"] = str(scan_dir)
+        return patch
 
-    updated_at = float(job.get("updated_at") or job.get("started_at") or 0)
-    if (time.time() - updated_at) < 300:
-        return None
+    # Additional stale-running recovery when a scan exceeds a hard timeout.
+    started_at = float(job.get("started_at") or now)
+    elapsed = max(0, now - started_at)
+    estimated = max(1, _safe_int(job.get("estimated_seconds"), DEFAULT_SCAN_ESTIMATES_SECONDS["full"]))
+    hard_timeout = max(1800, _safe_int(job.get("hard_timeout_seconds"), estimated * 4))
+    if status in ("running", "cancelling") and elapsed >= hard_timeout and stale_for >= 180:
+        patch = {
+            "status": "failed",
+            "phase": "failed",
+            "current_tool": "Failed",
+            "finished_at": now,
+            "message": "Scan exceeded hard runtime limit and stopped due to stale progress.",
+        }
+        scan_dir = _scan_dir_for_job(job)
+        if scan_dir is not None:
+            patch["scan_dir"] = str(scan_dir)
+        return patch
 
-    patch = {
-        "status": "failed",
-        "phase": "failed",
-        "current_tool": "Failed",
-        "finished_at": time.time(),
-        "message": "Scan stalled after tool execution. Check server logs for parser or report-generation failures.",
-    }
-    scan_dir = _scan_dir_for_job(job)
-    if scan_dir is not None:
-        patch["scan_dir"] = str(scan_dir)
-    return patch
+    return None
 
 
 def _scan_cancel_recovery_patch(job: dict) -> dict | None:
@@ -945,6 +980,10 @@ def start_scan():
 
     estimates = _compute_scan_estimates()
     estimated_seconds = estimates.get(mode, {}).get("seconds", DEFAULT_SCAN_ESTIMATES_SECONDS["full"])
+    scan_config = _load_json(SCAN_CONFIG_FILE)
+    if not isinstance(scan_config, dict):
+        scan_config = {}
+    hard_timeout_seconds = max(1800, _safe_int(scan_config.get("scan_hard_timeout_seconds"), estimated_seconds * 4))
     scan_id = uuid.uuid4().hex
     started_at = time.time()
     run_label = datetime.fromtimestamp(started_at).strftime("%Y%m%d_%H%M%S")
@@ -967,6 +1006,7 @@ def start_scan():
             "tool_status": [],
             "scan_dir": str(scan_dir),
             "estimated_seconds": estimated_seconds,
+            "hard_timeout_seconds": hard_timeout_seconds,
             "events": [{"at": started_at, "message": "Scan queued and initializing."}],
             "message": f"Scan started on {target} in {mode} mode.",
         }

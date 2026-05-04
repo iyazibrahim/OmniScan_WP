@@ -206,6 +206,10 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
         }
     }
     demo_assessment["summary"] = summarize_workbook(demo_assessment["workbook"])
+    demo_scan_config = config.get_scan_config()
+    demo_output_formats = demo_scan_config.get("output_formats", ["html", "markdown", "json", "sarif", "csv"])
+    demo_report_profile = str(demo_scan_config.get("report_profile", "technical")).strip().lower()
+    demo_include_manual = bool(demo_scan_config.get("include_manual_assessment", False))
 
     paths = save_reports(
         findings=enriched,
@@ -213,14 +217,17 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
         scan_mode="Full (Passive + Active)",
         start_time=start_time,
         scan_overview=demo_overview,
-        assessment=demo_assessment,
+        assessment=demo_assessment if demo_include_manual else None,
         output_dir=config.REPORTS_DIR,
+        output_formats=demo_output_formats,
+        report_profile=demo_report_profile,
+        include_manual_assessment=demo_include_manual,
     )
 
     ui.ok("Demo reports generated:")
-    print(f"  HTML: {paths['html']}")
-    print(f"  MD:   {paths['md']}")
-    print(f"  JSON: {paths['json']}")
+    for label in ("html", "md", "json", "sarif", "csv"):
+        if label in paths:
+            print(f"  {label.upper():<5} {paths[label]}")
 
     # Send email if requested
     if send_email:
@@ -262,6 +269,9 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     ts = run_label or start_time.strftime("%Y%m%d_%H%M%S")
     scan_config = config.get_scan_config()
     tokens = config.get_tokens()
+    report_profile = str(scan_config.get("report_profile", "technical")).strip().lower()
+    include_manual_assessment = bool(scan_config.get("include_manual_assessment", False))
+    output_formats = scan_config.get("output_formats", ["html", "markdown", "json", "sarif", "csv"])
 
     # Create scan output directory
     safe_host = url.replace("https://", "").replace("http://", "").replace("/", "_")
@@ -303,11 +313,13 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         effective_profile=execution.get("effective_profile", profile),
         tool_runs=tool_runs,
     )
-    assessment_workbook = get_workbook(url)
-    assessment = {
-        "workbook": assessment_workbook,
-        "summary": summarize_workbook(assessment_workbook),
-    }
+    assessment = None
+    if include_manual_assessment:
+        assessment_workbook = get_workbook(url)
+        assessment = {
+            "workbook": assessment_workbook,
+            "summary": summarize_workbook(assessment_workbook),
+        }
 
     if not findings:
         ui.warn("No findings detected. The target may be well-secured or tools may need API tokens.")
@@ -332,7 +344,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "stage": "reporting",
         "progress": 96,
         "current_tool": "Generating reports",
-        "message": "Building HTML, Markdown, and JSON reports.",
+        "message": "Building configured report outputs.",
     })
     mode_label = {"passive": "Passive", "active": "Active", "full": "Full (Passive + Active)"}
     paths = save_reports(
@@ -343,6 +355,9 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         scan_overview=overview,
         assessment=assessment,
         output_dir=scan_dir,
+        output_formats=output_formats,
+        report_profile=report_profile,
+        include_manual_assessment=include_manual_assessment,
     )
     completion_path = scan_dir / "scan-complete.json"
     completion_path.write_text(
@@ -368,9 +383,9 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
 
     ui.section("Scan Complete")
     ui.ok(f"Reports saved to: {scan_dir}")
-    print(f"  HTML: {paths['html']}")
-    print(f"  MD:   {paths['md']}")
-    print(f"  JSON: {paths['json']}")
+    for label in ("html", "md", "json", "sarif", "csv"):
+        if label in paths:
+            print(f"  {label.upper():<5} {paths[label]}")
 
     # Send email if requested
     if send_email:
