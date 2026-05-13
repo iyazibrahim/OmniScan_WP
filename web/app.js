@@ -142,25 +142,21 @@ const App = {
         document.getElementById("refreshDashboard").onclick = () => this.loadDashboard();
         this.setupQuickScan();
 
-        const [targets, reports, tools, chartData, jobs] = await Promise.all([
+        const [targets, reports, tools, chartData, jobs, insights] = await Promise.all([
             this.api("/api/targets"),
             this.api("/api/reports"),
             this.api("/api/tools-status"),
             this.api("/api/monthly-stats"),
             this.api("/api/scan-jobs"),
+            this.api("/api/dashboard-insights"),
         ]);
 
-        document.getElementById("statTargets").textContent = Array.isArray(targets) ? targets.length : 0;
-        document.getElementById("statScans").textContent = Array.isArray(reports) ? reports.length : 0;
-
-        const criticalCount = Array.isArray(reports)
-            ? reports.reduce((sum, report) => sum + (report.severities?.critical || 0), 0)
-            : 0;
-        document.getElementById("statCritical").textContent = criticalCount;
-
-        const readyTools = Array.isArray(tools) ? tools.filter((tool) => tool.installed).length : 0;
-        const totalTools = Array.isArray(tools) ? tools.length : 0;
-        document.getElementById("statTools").textContent = `${readyTools}/${totalTools}`;
+        const ov = insights?.overview || {};
+        document.getElementById("statRiskScore").textContent = `${Number(ov.risk_score || 0)}`;
+        document.getElementById("statCriticalOpen").textContent = `${Number(ov.critical_open || 0)} | SLA ${Number(ov.critical_sla_breached || 0)}`;
+        document.getElementById("statHighRiskAssets").textContent = `${Number(ov.high_risk_assets || 0)}`;
+        document.getElementById("statMttr").textContent = ov.mttr_days != null ? `${ov.mttr_days}d` : "N/A";
+        document.getElementById("statExposure").textContent = `${Number(ov.exposure_pct || 0)}%`;
 
         const recentTargets = document.getElementById("dashTargetList");
         if (Array.isArray(targets) && targets.length > 0) {
@@ -176,6 +172,87 @@ const App = {
 
         this.renderActiveScansDash(jobs);
         this.renderChart(chartData);
+        this.renderDashboardInsights(insights);
+    },
+
+    renderDashboardInsights(insights) {
+        const attention = Array.isArray(insights?.attention_now) ? insights.attention_now : [];
+        const attentionBody = document.getElementById("attentionTableBody");
+        if (attentionBody) {
+            if (!attention.length) {
+                attentionBody.innerHTML = '<tr><td colspan="7" class="empty-state">No priority vulnerabilities right now.</td></tr>';
+            } else {
+                attentionBody.innerHTML = attention.map((item) => {
+                    const sev = (item.severity || "low").toLowerCase();
+                    const sevBadge = `<span class="badge badge-${this.esc(sev)}">${this.esc(sev)}</span>`;
+                    const exploitBadge = item.exploit_available
+                        ? '<span class="badge-pill exploit-yes">Yes</span>'
+                        : '<span class="badge-pill exploit-no">No</span>';
+                    return `<tr>
+                        <td>${this.esc(item.asset || "-")}</td>
+                        <td>${this.esc(item.cve || "-")}</td>
+                        <td>${sevBadge}</td>
+                        <td>${this.esc(String(item.cvss ?? "-"))}</td>
+                        <td>${exploitBadge}</td>
+                        <td>${this.esc(item.sla || "-")}</td>
+                        <td><strong>${this.esc(item.action || "Review")}</strong></td>
+                    </tr>`;
+                }).join("");
+            }
+        }
+
+        const attackSurface = Array.isArray(insights?.attack_surface) ? insights.attack_surface : [];
+        const attackNode = document.getElementById("attackSurfaceList");
+        if (attackNode) {
+            attackNode.innerHTML = attackSurface.length
+                ? `<div class="metric-list">${attackSurface.map((item) =>
+                    `<div class="metric-item"><span>${this.esc(item.category)} <span class="metric-muted">(${item.asset_count} assets)</span></span><strong>${item.vulnerability_count}</strong></div>`
+                ).join("")}</div>`
+                : '<div class="empty-state">No attack surface data yet.</div>';
+        }
+
+        const breakdown = insights?.vulnerability_breakdown || {};
+        const cvss = breakdown.cvss_histogram || {};
+        const topCwe = Array.isArray(breakdown.top_cwe) ? breakdown.top_cwe : [];
+        const exploit = breakdown.exploit_availability || {};
+        const breakdownNode = document.getElementById("vulnBreakdownList");
+        if (breakdownNode) {
+            breakdownNode.innerHTML = `
+                <div class="metric-list">
+                    <div class="metric-item"><span>CVSS 9-10</span><strong>${this.esc(String(cvss["9-10"] || 0))}</strong></div>
+                    <div class="metric-item"><span>CVSS 7-8.9</span><strong>${this.esc(String(cvss["7-8.9"] || 0))}</strong></div>
+                    <div class="metric-item"><span>CVSS 4-6</span><strong>${this.esc(String(cvss["4-6"] || 0))}</strong></div>
+                    <div class="metric-item"><span>CVSS 0-3</span><strong>${this.esc(String(cvss["0-3"] || 0))}</strong></div>
+                    <div class="metric-item"><span>Exploit Available</span><strong>${this.esc(String(exploit.yes || 0))}</strong></div>
+                    <div class="metric-item"><span>Exploit Not Public</span><strong>${this.esc(String(exploit.no || 0))}</strong></div>
+                    ${topCwe.slice(0, 4).map((row) => `<div class="metric-item"><span>${this.esc(row.cwe || "CWE")}</span><strong>${this.esc(String(row.count || 0))}</strong></div>`).join("")}
+                </div>
+            `;
+        }
+
+        const aging = insights?.aging_sla || {};
+        const agingNode = document.getElementById("agingSlaList");
+        if (agingNode) {
+            agingNode.innerHTML = `
+                <div class="metric-list">
+                    <div class="metric-item"><span>&lt; 7 days</span><strong>${this.esc(String(aging.lt_7 || 0))}</strong></div>
+                    <div class="metric-item"><span>7-30 days</span><strong>${this.esc(String(aging.d_7_30 || 0))}</strong></div>
+                    <div class="metric-item"><span>&gt; 30 days</span><strong>${this.esc(String(aging.gt_30 || 0))}</strong></div>
+                    <div class="metric-item"><span>SLA Breached</span><strong>${this.esc(String(aging.sla_breached || 0))}</strong></div>
+                    <div class="metric-item"><span>SLA Compliance</span><strong>${this.esc(String(aging.sla_compliance_pct || 0))}%</strong></div>
+                </div>
+            `;
+        }
+
+        const topAssets = Array.isArray(insights?.top_assets) ? insights.top_assets : [];
+        const topAssetsNode = document.getElementById("topAssetsList");
+        if (topAssetsNode) {
+            topAssetsNode.innerHTML = topAssets.length
+                ? `<div class="metric-list">${topAssets.map((row) =>
+                    `<div class="metric-item"><span>${this.esc(row.asset || "Asset")}</span><strong>${this.esc(String(row.risk_score || 0))}</strong></div>`
+                ).join("")}</div>`
+                : '<div class="empty-state">No asset risk ranking yet.</div>';
+        }
     },
 
     renderActiveScansDash(jobs) {
@@ -314,25 +391,16 @@ const App = {
         const rawH = raw.high || [];
         const rawM = raw.medium || [];
         const rawL = raw.low || [];
+        const riskSeries = raw.risk_score || [];
+        const newVulns = raw.new_vulns || [];
+        const criticalIncidents = raw.critical_incidents || [];
 
         let dC, dH, dM, dL, yAxisLabel, tooltipCallbacks;
         if (mode === "normalized") {
-            const totals = labels.map((_, i) =>
-                (rawC[i] || 0) + (rawH[i] || 0) + (rawM[i] || 0) + (rawL[i] || 0)
-            );
-            const pct = (arr, i) => totals[i] ? +((arr[i] || 0) / totals[i] * 100).toFixed(1) : 0;
-            dC = labels.map((_, i) => pct(rawC, i));
-            dH = labels.map((_, i) => pct(rawH, i));
-            dM = labels.map((_, i) => pct(rawM, i));
-            dL = labels.map((_, i) => pct(rawL, i));
-            yAxisLabel = "%";
+            dC = []; dH = []; dM = []; dL = [];
+            yAxisLabel = "Risk Score";
             tooltipCallbacks = {
-                label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}%`,
-                footer: (items) => {
-                    const t = (rawC[items[0].dataIndex] || 0) + (rawH[items[0].dataIndex] || 0) +
-                              (rawM[items[0].dataIndex] || 0) + (rawL[items[0].dataIndex] || 0);
-                    return `Total findings: ${t}`;
-                },
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y}`,
             };
         } else {
             dC = rawC; dH = rawH; dM = rawM; dL = rawL;
@@ -344,12 +412,18 @@ const App = {
             type: "bar",
             data: {
                 labels,
-                datasets: [
-                    { label: "Critical", data: dC, backgroundColor: "#ef4444", borderRadius: 4 },
-                    { label: "High",     data: dH, backgroundColor: "#f97316", borderRadius: 4 },
-                    { label: "Medium",   data: dM, backgroundColor: "#eab308", borderRadius: 4 },
-                    { label: "Low",      data: dL, backgroundColor: "#3b82f6", borderRadius: 4 },
-                ],
+                datasets: mode === "normalized"
+                    ? [
+                        { label: "New Vulnerabilities", data: newVulns, backgroundColor: "rgba(59,130,246,0.55)", borderRadius: 4, yAxisID: "yVol" },
+                        { label: "Critical Incidents", data: criticalIncidents, backgroundColor: "rgba(239,68,68,0.6)", borderRadius: 4, yAxisID: "yVol" },
+                        { label: "Risk Score", data: riskSeries, type: "line", borderColor: "#f97316", pointBackgroundColor: "#f97316", tension: 0.35, fill: false, yAxisID: "yRisk" },
+                    ]
+                    : [
+                        { label: "Critical", data: dC, backgroundColor: "#ef4444", borderRadius: 4 },
+                        { label: "High",     data: dH, backgroundColor: "#f97316", borderRadius: 4 },
+                        { label: "Medium",   data: dM, backgroundColor: "#eab308", borderRadius: 4 },
+                        { label: "Low",      data: dL, backgroundColor: "#3b82f6", borderRadius: 4 },
+                    ],
             },
             options: {
                 responsive: true,
@@ -369,17 +443,32 @@ const App = {
                     },
                 },
                 scales: {
-                    x: { stacked: true, grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
-                    y: {
-                        stacked: true,
-                        grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
-                        beginAtZero: true,
-                        max: mode === "normalized" ? 100 : undefined,
-                        ticks: {
-                            callback: mode === "normalized" ? (v) => v + "%" : undefined,
+                    x: { stacked: mode !== "normalized", grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
+                    y: mode === "normalized"
+                        ? undefined
+                        : {
+                            stacked: true,
+                            grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
+                            beginAtZero: true,
+                            title: yAxisLabel ? { display: true, text: yAxisLabel, color: "#94a3b8" } : undefined,
                         },
-                        title: yAxisLabel ? { display: true, text: yAxisLabel, color: "#94a3b8" } : undefined,
-                    },
+                    yRisk: mode === "normalized"
+                        ? {
+                            position: "left",
+                            beginAtZero: true,
+                            suggestedMax: 100,
+                            grid: { color: "rgba(255,255,255,0.05)", drawBorder: false },
+                            title: { display: true, text: "Risk Score", color: "#94a3b8" },
+                        }
+                        : undefined,
+                    yVol: mode === "normalized"
+                        ? {
+                            position: "right",
+                            beginAtZero: true,
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: "Vulnerability Count", color: "#94a3b8" },
+                        }
+                        : undefined,
                 },
             },
         });
@@ -677,6 +766,7 @@ const App = {
         }
 
         this._allReports = reports;
+        this._reportGroups = this.groupReportsByTarget(reports);
         if (toolbar) toolbar.style.display = "";
 
         // Wire up filter tabs
@@ -703,9 +793,10 @@ const App = {
         }
 
         // Update tab badges
-        const counts = { all: reports.length, critical: 0, high: 0, medium: 0, low: 0, clean: 0 };
-        reports.forEach((r) => {
-            const s = r.severities || {};
+        const groups = this._reportGroups || [];
+        const counts = { all: groups.length, critical: 0, high: 0, medium: 0, low: 0, clean: 0 };
+        groups.forEach((group) => {
+            const s = group.latest?.severities || {};
             if ((s.critical || 0) > 0) counts.critical++;
             if ((s.high || 0) > 0) counts.high++;
             if ((s.medium || 0) > 0) counts.medium++;
@@ -726,15 +817,125 @@ const App = {
         this._renderFilteredReports();
     },
 
+    groupReportsByTarget(reports) {
+        const grouped = new Map();
+        reports.forEach((report) => {
+            const target = (report.target_url || report.folder || report.name || "Unknown target").trim();
+            const key = target.toLowerCase();
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    key,
+                    target,
+                    reports: [],
+                });
+            }
+            grouped.get(key).reports.push(report);
+        });
+
+        return Array.from(grouped.values())
+            .map((group, index) => {
+                group.reports.sort((left, right) => (right.modified || 0) - (left.modified || 0));
+                group.latest = group.reports[0] || null;
+                group.id = `report-group-${index}`;
+                return group;
+            })
+            .sort((left, right) => ((right.latest?.modified || 0) - (left.latest?.modified || 0)));
+    },
+
+    _reportStatusSummary(severities = {}) {
+        const critical = severities.critical || 0;
+        const high = severities.high || 0;
+        const medium = severities.medium || 0;
+        const low = severities.low || 0;
+
+        if (critical > 0) {
+            return { label: critical > 1 ? `${critical} Critical` : "Critical", className: "badge-critical" };
+        }
+        if (high > 0) {
+            return { label: high > 1 ? `${high} High` : "High", className: "badge-high" };
+        }
+        if (medium > 0) {
+            return { label: medium > 1 ? `${medium} Medium` : "Medium", className: "badge-medium" };
+        }
+        if (low > 0) {
+            return { label: low > 1 ? `${low} Low` : "Low", className: "badge-low" };
+        }
+        return { label: "Clean", className: "badge-clean" };
+    },
+
+    _renderSeverityBadges(severities = {}) {
+        const totalFindings = (severities.critical || 0) + (severities.high || 0) + (severities.medium || 0) + (severities.low || 0);
+        return [
+            severities.critical ? `<span class="badge badge-critical">${severities.critical} Critical</span>` : "",
+            severities.high ? `<span class="badge badge-high">${severities.high} High</span>` : "",
+            severities.medium ? `<span class="badge badge-medium">${severities.medium} Medium</span>` : "",
+            severities.low ? `<span class="badge badge-low">${severities.low} Low</span>` : "",
+            totalFindings === 0 ? '<span class="badge badge-clean">Clean</span>' : "",
+        ].join("");
+    },
+
+    _formatReportDate(report) {
+        if (report.scan_started_at) {
+            const parsed = new Date(report.scan_started_at);
+            if (!Number.isNaN(parsed.getTime())) {
+                return parsed.toLocaleString();
+            }
+        }
+        return new Date((report.modified || 0) * 1000).toLocaleString();
+    },
+
+    toggleReportHistory(groupId) {
+        const panel = document.getElementById(groupId);
+        if (!panel) return;
+        const expanded = panel.classList.toggle("open");
+        const toggle = document.querySelector(`[data-report-toggle="${groupId}"]`);
+        if (toggle) {
+            toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+        }
+    },
+
+    async startReportScan(target, profile, button) {
+        if (!target) {
+            this.toast("Target URL is missing for this report.", "error");
+            return;
+        }
+        const originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner"></span> Starting...';
+
+        try {
+            const response = await fetch("/api/scan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target, mode: "full", profile: profile || "auto" }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                this.toast(result.error || "Failed to start scan", "error");
+                return;
+            }
+            if (result.scan_id) {
+                this.beginScanPolling(result.scan_id);
+            }
+            this.toast(result.message || "Scan started", "success");
+        } catch {
+            this.toast("Connection error", "error");
+        } finally {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        }
+    },
+
     _renderFilteredReports() {
-        const reports = this._allReports || [];
+        const groups = this._reportGroups || [];
         const filter = this._reportFilter || "all";
         const search = this._reportSearch || "";
         const container = document.getElementById("reportsList");
         if (!container) return;
 
-        const visible = reports.filter((r) => {
-            const s = r.severities || {};
+        const visible = groups.filter((group) => {
+            const report = group.latest || {};
+            const s = report.severities || {};
             const total = (s.critical || 0) + (s.high || 0) + (s.medium || 0) + (s.low || 0);
             let pass = true;
             if (filter === "critical") pass = (s.critical || 0) > 0;
@@ -743,7 +944,7 @@ const App = {
             else if (filter === "low") pass = (s.low || 0) > 0;
             else if (filter === "clean") pass = total === 0;
             if (pass && search) {
-                const haystack = ((r.target_url || "") + " " + (r.folder || "") + " " + (r.name || "")).toLowerCase();
+                const haystack = [group.target, ...group.reports.map((item) => `${item.folder || ""} ${item.name || ""}`)].join(" ").toLowerCase();
                 pass = haystack.includes(search);
             }
             return pass;
@@ -754,70 +955,82 @@ const App = {
             return;
         }
 
-        container.innerHTML = visible.map((report) => {
-            const severities = report.severities || {};
-            const totalFindings = (severities.critical || 0) + (severities.high || 0) + (severities.medium || 0) + (severities.low || 0);
-            const modifiedAt = new Date((report.modified || 0) * 1000).toLocaleString();
-            const assessmentMeta = this.renderAssessmentReportMeta(report.assessment_summary || {});
-            const folder = report.folder || "";
-            const displayName = report.target_url || folder || report.name;
+        container.innerHTML = `
+            <div class="reports-summary-shell">
+                <div class="reports-summary-head">
+                    <div>
+                        <h2>Website Report Summary</h2>
+                        <p>Filters apply to unique website views. Expand a row to inspect historical scan runs.</p>
+                    </div>
+                    <div class="reports-summary-meta">Displaying ${visible.length} unique websites / ${(this._allReports || []).length} total reports</div>
+                </div>
+                <div class="report-groups-table">
+                    <div class="report-groups-header">
+                        <span>Website</span>
+                        <span>Primary Status</span>
+                        <span>Last Scan</span>
+                        <span>Quick Actions</span>
+                    </div>
+                    ${visible.map((group) => {
+                        const latest = group.latest || {};
+                        const status = this._reportStatusSummary(latest.severities || {});
+                        const historyId = `${group.id}-history`;
+                        const latestDate = this._formatReportDate(latest);
+                        const historyRows = group.reports.map((report) => {
+                            const dlItems = [
+                                { path: report.path, label: "HTML Report" },
+                                ...(report.md_path ? [{ path: report.md_path, label: "Markdown" }] : []),
+                                ...(report.json_path ? [{ path: report.json_path, label: "JSON Data" }] : []),
+                                ...(report.csv_path ? [{ path: report.csv_path, label: "CSV Data" }] : []),
+                                ...(report.sarif_path ? [{ path: report.sarif_path, label: "SARIF" }] : []),
+                            ];
+                            const dlMenu = dlItems.map((d) => `<a href="/api/reports/${encodeURIComponent(d.path)}?dl=1" class="dl-menu-item" download>${this.esc(d.label)}</a>`).join("");
+                            const folder = report.folder || "";
+                            const profile = report.profile ? this.esc(report.profile) : "Auto";
+                            return `
+                                <div class="report-history-row">
+                                    <div class="report-history-cell">${this.esc(this._formatReportDate(report))}</div>
+                                    <div class="report-history-cell">${profile}</div>
+                                    <div class="report-history-cell report-history-badges">${this._renderSeverityBadges(report.severities || {})}</div>
+                                    <div class="report-history-cell report-history-actions">
+                                        <a href="/api/reports/${encodeURIComponent(report.path)}" target="_blank" class="btn-ghost btn-sm">Open</a>
+                                        <div class="dl-dropdown">
+                                            <button class="btn-ghost btn-sm dl-toggle" onclick="App.toggleDlMenu(this)">Download &#9662;</button>
+                                            <div class="dl-menu">${dlMenu}</div>
+                                        </div>
+                                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteReport('${this.esc(folder)}', this)" title="Delete report">Delete</button>
+                                    </div>
+                                </div>`;
+                        }).join("");
 
-            // Build download dropdown entries
-            const dlItems = [
-                { path: report.path, label: "HTML Report", ext: "html" },
-                ...(report.md_path ? [{ path: report.md_path, label: "Markdown", ext: "md" }] : []),
-                ...(report.json_path ? [{ path: report.json_path, label: "JSON Data", ext: "json" }] : []),
-                ...(report.csv_path ? [{ path: report.csv_path, label: "CSV Data", ext: "csv" }] : []),
-                ...(report.sarif_path ? [{ path: report.sarif_path, label: "SARIF", ext: "sarif" }] : []),
-            ];
-            const dlMenu = dlItems.map((d) =>
-                `<a href="/api/reports/${encodeURIComponent(d.path)}?dl=1" class="dl-menu-item" download>${this.esc(d.label)}</a>`
-            ).join("");
-
-            return `
-                <div class="report-card" data-folder="${this.esc(folder)}">
-                    <div class="report-info">
-                        <div class="report-headline">
-                            <span class="report-name-wrap">
-                                <span class="report-name" id="rn-${this.esc(folder)}">${this.esc(displayName)}</span>
-                                <button class="btn-icon-xs rename-btn" title="Rename report" onclick="App.startRenameReport('${this.esc(folder)}', '${this.esc(folder.split('/').pop())}')">
-                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                                </button>
-                            </span>
-                            <span class="report-date">${modifiedAt}</span>
-                        </div>
-                        <div class="report-meta">
-                            ${report.profile ? `<span class="report-size">Profile: ${this.esc(report.profile)}</span>` : ""}
-                            <span class="report-size">${this.esc(String(report.size_kb))} KB</span>
-                            ${assessmentMeta}
-                        </div>
-                    </div>
-                    <div class="report-badges">
-                        ${severities.critical ? `<span class="badge badge-critical">${severities.critical} Critical</span>` : ""}
-                        ${severities.high ? `<span class="badge badge-high">${severities.high} High</span>` : ""}
-                        ${severities.medium ? `<span class="badge badge-medium">${severities.medium} Medium</span>` : ""}
-                        ${severities.low ? `<span class="badge badge-low">${severities.low} Low</span>` : ""}
-                        ${totalFindings === 0 ? '<span class="badge badge-clean">Clean</span>' : ""}
-                    </div>
-                    <div class="report-actions">
-                        <a href="/api/reports/${encodeURIComponent(report.path)}" target="_blank" class="btn-ghost btn-sm">
-                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                            Open
-                        </a>
-                        <div class="dl-dropdown">
-                            <button class="btn-ghost btn-sm dl-toggle" onclick="App.toggleDlMenu(this)">
-                                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                Download &#9662;
-                            </button>
-                            <div class="dl-menu">${dlMenu}</div>
-                        </div>
-                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteReport('${this.esc(folder)}', this)" title="Delete report">
-                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            Delete
-                        </button>
-                    </div>
-                </div>`;
+                        return `
+                            <div class="report-group-card">
+                                <div class="report-group-row">
+                                    <button class="report-group-toggle" data-report-toggle="${historyId}" aria-expanded="false" onclick="App.toggleReportHistory('${historyId}')">
+                                        <span class="report-group-target">${this.esc(group.target)}</span>
+                                        <span class="report-group-count">${group.reports.length} report${group.reports.length === 1 ? "" : "s"}</span>
+                                    </button>
+                                    <div class="report-group-status"><span class="badge ${status.className}">${this.esc(status.label)}</span></div>
+                                    <div class="report-group-lastscan">${this.esc(latestDate)}</div>
+                                    <div class="report-group-actions">
+                                        <button class="btn-ghost btn-sm" onclick="App.toggleReportHistory('${historyId}')">View History</button>
+                                        <button class="btn-ghost btn-sm" data-target="${this.esc(group.target)}" data-profile="${this.esc(latest.profile || "auto")}" onclick="App.startReportScan(this.dataset.target, this.dataset.profile, this)">Scan Now</button>
+                                    </div>
+                                </div>
+                                <div class="report-history-panel" id="${historyId}">
+                                    <div class="report-history-header">
+                                        <span>Scan Date</span>
+                                        <span>Profile</span>
+                                        <span>Severity Profile</span>
+                                        <span>Actions</span>
+                                    </div>
+                                    ${historyRows}
+                                </div>
+                            </div>`;
+                    }).join("
         }).join("");
+                </div>
+            </div>`;
     },
 
     toggleDlMenu(btn) {
@@ -898,27 +1111,6 @@ const App = {
             if (e.key === "Enter") doRename();
             if (e.key === "Escape") restore();
         });
-    },
-
-    renderAssessmentReportMeta(summary) {
-        const caseStatus = summary.case_status || {};
-        const verification = summary.verification_status || {};
-        const activeCases = ["in_progress", "needs_evidence", "confirmed"].reduce((sum, key) => sum + (caseStatus[key] || 0), 0);
-        const verifiedCases = ["confirmed", "reproduced", "fixed"].reduce((sum, key) => sum + (verification[key] || 0), 0);
-        const noteCount = summary.note_count || 0;
-
-        const badges = [];
-        if (activeCases) {
-            badges.push(`<span class="badge badge-manual">${activeCases} Manual Active</span>`);
-        }
-        if (verifiedCases) {
-            badges.push(`<span class="badge badge-verified">${verifiedCases} Verified</span>`);
-        }
-        if (noteCount) {
-            badges.push(`<span class="badge badge-analyst">${noteCount} Analyst Notes</span>`);
-        }
-
-        return badges.join("");
     },
 
     async loadAssessmentsView() {

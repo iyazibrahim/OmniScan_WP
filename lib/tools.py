@@ -100,6 +100,18 @@ def _safe_read_head(path: Path, max_bytes: int = 200_000) -> str:
         return ""
 
 
+def _path_has_content(path: Path) -> bool:
+    try:
+        if path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_file() and child.stat().st_size > 0:
+                    return True
+            return False
+        return path.exists() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _result_template(
     tool_name: str,
     tool_label: str,
@@ -255,16 +267,22 @@ def _run_tool(
         if stdout_file is not None and stdout:
             _write_text(stdout_file, stdout)
 
-        outputs = [str(p) for p in (output_files or []) if p.exists()]
+        existing_output_paths = [p for p in (output_files or []) if p.exists()]
+        outputs = [str(p) for p in existing_output_paths]
         if stdout_file is not None and stdout_file.exists():
             outputs.append(str(stdout_file))
 
         ok_codes = acceptable_returncodes if acceptable_returncodes is not None else {0}
-        # If output file was produced, treat as completed even on non-zero exit
         has_output = bool(outputs)
+        has_meaningful_output = bool((stdout or "").strip()) or any(_path_has_content(path) for path in existing_output_paths)
+        if stdout_file is not None and stdout_file.exists():
+            has_meaningful_output = has_meaningful_output or _path_has_content(stdout_file)
+
         status = "completed" if (returncode in ok_codes or has_output) else "failed"
-        if returncode == 0 and not outputs and not (stdout or "").strip():
+        if returncode == 0 and not has_meaningful_output:
             status = "completed_no_output"
+        elif returncode not in ok_codes and has_output:
+            status = "completed_partial"
 
         result.update(
             {
@@ -286,18 +304,26 @@ def _run_tool(
     except subprocess.TimeoutExpired:
         duration = time.perf_counter() - start
         _write_text(stderr_log, f"{tool_label} timed out after {timeout} seconds.")
-        outputs = [str(p) for p in (output_files or []) if p.exists()]
+        existing_output_paths = [p for p in (output_files or []) if p.exists()]
+        outputs = [str(p) for p in existing_output_paths]
         if stdout_file is not None and stdout_file.exists():
             outputs.append(str(stdout_file))
+        has_meaningful_output = any(_path_has_content(path) for path in existing_output_paths)
+        if stdout_file is not None and stdout_file.exists():
+            has_meaningful_output = has_meaningful_output or _path_has_content(stdout_file)
         result.update(
             {
-                "status": "timeout",
+                "status": "completed_partial" if has_meaningful_output else "timeout",
                 "duration_seconds": round(duration, 2),
                 "stdout_log": str(stdout_log),
                 "stderr_log": str(stderr_log),
                 "output_files": outputs,
                 "primary_output": outputs[0] if outputs else "",
-                "note": f"Timed out after {timeout} seconds.",
+                "note": (
+                    f"Timed out after {timeout} seconds. Partial output was captured before termination."
+                    if has_meaningful_output
+                    else f"Timed out after {timeout} seconds."
+                ),
             }
         )
         return result
@@ -651,6 +677,8 @@ def run_gau(hostname: str, scan_dir: Path, config: dict, cancel_check=None) -> d
     cmd = ["gau", hostname, "--retries", "2", "--providers", "wayback,otx"]
     timeout = int(config.get("gau_timeout_seconds", 180))
     result = _run_tool(cmd, "gau", "gau", "passive", scan_dir, output_files=[output_file], stdout_file=output_file, timeout=timeout, cancel_check=cancel_check)
+    if result.get("status") == "completed_no_output" and not result.get("note"):
+        result["note"] = "gau finished successfully but did not return any archived URLs from the selected providers."
     if result["status"].startswith("completed"):
         ui.ok("gau complete.")
     return result
@@ -1179,9 +1207,22 @@ def run_all_tools(
                 return (effective_profile != "api"), "Adaptive tool selection disabled."
             if sql_error_hints:
                 return True, "Detected SQL error fingerprints from passive telemetry."
-            if surface.get("param_count", 0) >= min_sqlmap_params and surface.get("url_count", 0) >= min_sqlmap_urls:
-                return True, "Sufficient parameterized surface detected for SQLMap."
-            return False, "Skipped by adaptive planner: low SQL-injection signal for this target."
+            param_count = int(surface.get("param_count", 0) or 0)
+            url_count = int(surface.get("url_count", 0) or 0)
+            sqlmap_logic = str(config.get("adaptive_sqlmap_logic", "any")).strip().lower()
+            meets_param_threshold = param_count >= min_sqlmap_params
+            meets_url_threshold = url_count >= min_sqlmap_urls
+            if sqlmap_logic == "all":
+                if meets_param_threshold and meets_url_threshold:
+                    return True, f"Parameterized surface matched both SQLMap thresholds ({param_count}/{min_sqlmap_params} params, {url_count}/{min_sqlmap_urls} URLs)."
+            else:
+                if meets_param_threshold or meets_url_threshold:
+                    matched_signal = "parameterized inputs" if meets_param_threshold else "crawlable URLs"
+                    return True, f"Detected enough {matched_signal} for SQLMap ({param_count}/{min_sqlmap_params} params, {url_count}/{min_sqlmap_urls} URLs)."
+            return False, (
+                "Skipped by adaptive planner: low SQL-injection signal "
+                f"({param_count}/{min_sqlmap_params} params, {url_count}/{min_sqlmap_urls} URLs, logic={sqlmap_logic})."
+            )
 
         def _should_run_wapiti() -> tuple[bool, str]:
             if run_wapiti_api and effective_profile == "api":

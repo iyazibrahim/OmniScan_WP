@@ -8,6 +8,7 @@ import threading
 import uuid
 import time
 import functools
+import ipaddress
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from collections import defaultdict
@@ -507,6 +508,308 @@ def _format_eta(seconds: int) -> str:
     if mins > 0:
         return f"~{mins}m {secs:02d}s"
     return f"~{secs}s"
+
+
+def _parse_iso_datetime(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except Exception:
+        return None
+
+
+def _severity_weight(sev: str) -> float:
+    return {
+        "critical": 9.5,
+        "high": 7.2,
+        "medium": 4.8,
+        "low": 2.0,
+        "info": 0.8,
+    }.get(str(sev or "low").strip().lower(), 2.0)
+
+
+def _extract_cvss(finding: dict) -> float:
+    for key in ("cvss", "cvss_score", "cvss_v3", "cvss_v31"):
+        value = finding.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            score = float(value)
+            if 0 <= score <= 10:
+                return score
+        except Exception:
+            continue
+    return 0.0
+
+
+def _is_internet_facing(asset: str) -> bool:
+    parsed = urlparse(str(asset or ""))
+    host = parsed.hostname or str(asset or "")
+    host = host.strip().strip("/")
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return False
+    try:
+        ip_obj = ipaddress.ip_address(host)
+        return not (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local)
+    except Exception:
+        pass
+    lowered = host.lower()
+    if lowered.endswith(".local") or lowered.endswith(".lan"):
+        return False
+    return True
+
+
+def _infer_asset_type(asset: str) -> str:
+    token = str(asset or "").lower()
+    if any(x in token for x in ("api", "graphql", "swagger")):
+        return "api"
+    if any(x in token for x in ("db", "database", "sql", "postgres", "mysql")):
+        return "internal"
+    if any(x in token for x in ("iot", "camera", "sensor", "switch", "router", "firewall")):
+        return "network"
+    if any(x in token for x in ("aws", "azure", "gcp", "cloudfront", "s3")):
+        return "cloud"
+    if any(x in token for x in ("laptop", "desktop", "workstation", "endpoint", "client")):
+        return "endpoint"
+    return "internet" if _is_internet_facing(asset) else "internal"
+
+
+def _load_dashboard_findings(limit_reports: int = 300) -> list[dict]:
+    now = datetime.now(UTC)
+    selected_reports: list[Path] = []
+    seen_targets: set[str] = set()
+
+    index_data = _load_json(REPORT_INDEX_FILE)
+    if isinstance(index_data, dict) and isinstance(index_data.get("reports"), list):
+        sorted_items = sorted(
+            [item for item in index_data.get("reports", []) if isinstance(item, dict)],
+            key=lambda item: float(item.get("modified", 0) or 0),
+            reverse=True,
+        )
+        for item in sorted_items:
+            target = str(item.get("target_url", "")).strip().lower() or str(item.get("folder", "")).strip().lower()
+            if target and target in seen_targets:
+                continue
+            json_rel = str(item.get("json_path", "")).strip().replace("\\", "/")
+            if not json_rel:
+                continue
+            report_path = REPORTS_DIR / json_rel
+            if not report_path.exists():
+                continue
+            selected_reports.append(report_path)
+            if target:
+                seen_targets.add(target)
+            if len(selected_reports) >= limit_reports:
+                break
+
+    if not selected_reports and REPORTS_DIR.exists():
+        selected_reports = sorted(REPORTS_DIR.rglob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit_reports]
+
+    findings_rows: list[dict] = []
+    for json_file in selected_reports:
+        try:
+            report_data = json.loads(json_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(report_data, dict):
+            continue
+        findings = report_data.get("findings", [])
+        if not isinstance(findings, list):
+            continue
+        scan_started = _parse_iso_datetime(report_data.get("scan_started_at")) or datetime.fromtimestamp(json_file.stat().st_mtime, UTC)
+        target_url = str(report_data.get("target_url", "")).strip()
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            sev = str(finding.get("severity", "low")).strip().lower()
+            status = str(finding.get("status", "open")).strip().lower() or "open"
+            cvss = _extract_cvss(finding)
+            exploitability = str(finding.get("exploitability", "")).strip().lower()
+            exploit_available = bool(finding.get("exploit_available") or exploitability == "high")
+            asset = str(finding.get("asset") or finding.get("url") or finding.get("endpoint") or target_url or "Unknown")
+            asset_type = _infer_asset_type(asset)
+            found_at = _parse_iso_datetime(finding.get("first_seen_at") or finding.get("detected_at") or finding.get("created_at")) or scan_started
+            age_days = max(0, int((now - found_at).total_seconds() // 86400))
+            base = cvss if cvss > 0 else _severity_weight(sev)
+            criticality = 1.25 if asset_type in {"internet", "cloud", "network"} else 1.0
+            exploit_factor = 1.2 if exploit_available else 1.0
+            findings_rows.append(
+                {
+                    "asset": asset,
+                    "asset_type": asset_type,
+                    "target": target_url,
+                    "cve": str(finding.get("cve", "")).strip(),
+                    "cwe": str(finding.get("cwe", "")).strip(),
+                    "severity": sev,
+                    "cvss": cvss,
+                    "status": status,
+                    "exploit_available": exploit_available,
+                    "title": str(finding.get("title", "")).strip(),
+                    "age_days": age_days,
+                    "fixed": status in {"fixed", "resolved", "closed", "mitigated"},
+                    "risk_points": round(base * criticality * exploit_factor, 2),
+                }
+            )
+    return findings_rows
+
+
+def _dashboard_insights_payload() -> dict:
+    rows = _load_dashboard_findings()
+    now = datetime.now(UTC)
+    open_rows = [r for r in rows if not r.get("fixed")]
+    resolved_rows = [r for r in rows if r.get("fixed")]
+
+    def _sla_days(sev: str) -> int:
+        return {"critical": 7, "high": 14, "medium": 30, "low": 60, "info": 90}.get(sev, 30)
+
+    open_count = len(open_rows)
+    total_risk_points = sum(float(r.get("risk_points", 0)) for r in open_rows)
+    risk_score = min(100, round((total_risk_points / max(1.0, open_count * 10.0)) * 100))
+
+    critical_open = [r for r in open_rows if r.get("severity") == "critical"]
+    critical_new = [r for r in critical_open if r.get("age_days", 0) <= 7]
+    sla_breached = [r for r in open_rows if int(r.get("age_days", 0)) > _sla_days(str(r.get("severity", "medium")))]
+    critical_sla_breached = [r for r in sla_breached if r.get("severity") == "critical"]
+
+    assets = {str(r.get("asset", "Unknown")) for r in open_rows}
+    internet_assets = {str(r.get("asset", "Unknown")) for r in open_rows if _is_internet_facing(str(r.get("asset", "")))}
+    exposure_pct = round((len(internet_assets) / max(1, len(assets))) * 100, 1)
+
+    mttr_days = None
+    if resolved_rows:
+        mttr_days = round(sum(int(r.get("age_days", 0)) for r in resolved_rows) / max(1, len(resolved_rows)), 1)
+
+    high_risk_assets = {
+        str(r.get("asset", "Unknown"))
+        for r in open_rows
+        if float(r.get("risk_points", 0)) >= 8.5 or r.get("severity") in {"critical", "high"}
+    }
+
+    priority = sorted(
+        open_rows,
+        key=lambda r: (
+            1 if r.get("exploit_available") else 0,
+            float(r.get("cvss", 0) or 0),
+            float(r.get("risk_points", 0) or 0),
+            1 if _is_internet_facing(str(r.get("asset", ""))) else 0,
+        ),
+        reverse=True,
+    )[:12]
+
+    attention_now = []
+    for item in priority:
+        sev = str(item.get("severity", "medium"))
+        due = _sla_days(sev)
+        age = int(item.get("age_days", 0))
+        sla_text = "Overdue" if age > due else f"{max(0, due - age)} days"
+        attention_now.append(
+            {
+                "asset": item.get("asset"),
+                "cve": item.get("cve") or "-",
+                "severity": sev,
+                "cvss": round(float(item.get("cvss", 0) or 0), 1),
+                "exploit_available": bool(item.get("exploit_available")),
+                "sla": sla_text,
+                "action": "Patch now" if bool(item.get("exploit_available")) and sev in {"critical", "high"} else "Review",
+            }
+        )
+
+    surface_order = ["internet", "internal", "cloud", "endpoint", "network", "api"]
+    surface = {key: {"assets": set(), "vulns": 0} for key in surface_order}
+    for row in open_rows:
+        key = row.get("asset_type", "internal")
+        if key not in surface:
+            surface[key] = {"assets": set(), "vulns": 0}
+        surface[key]["assets"].add(str(row.get("asset", "Unknown")))
+        surface[key]["vulns"] += 1
+    attack_surface = [
+        {
+            "category": key,
+            "asset_count": len(surface[key]["assets"]),
+            "vulnerability_count": surface[key]["vulns"],
+            "density": round(surface[key]["vulns"] / max(1, len(surface[key]["assets"])), 2),
+        }
+        for key in surface_order
+    ]
+
+    cvss_hist = {"0-3": 0, "4-6": 0, "7-8.9": 0, "9-10": 0}
+    cwe_counts: dict[str, int] = defaultdict(int)
+    exploit_yes = 0
+    exploit_no = 0
+    for row in open_rows:
+        cvss = float(row.get("cvss", 0) or 0)
+        if cvss >= 9:
+            cvss_hist["9-10"] += 1
+        elif cvss >= 7:
+            cvss_hist["7-8.9"] += 1
+        elif cvss >= 4:
+            cvss_hist["4-6"] += 1
+        else:
+            cvss_hist["0-3"] += 1
+        cwe = str(row.get("cwe", "")).strip()
+        if cwe:
+            cwe_counts[cwe] += 1
+        if row.get("exploit_available"):
+            exploit_yes += 1
+        else:
+            exploit_no += 1
+
+    aging = {
+        "lt_7": sum(1 for r in open_rows if int(r.get("age_days", 0)) < 7),
+        "d_7_30": sum(1 for r in open_rows if 7 <= int(r.get("age_days", 0)) <= 30),
+        "gt_30": sum(1 for r in open_rows if int(r.get("age_days", 0)) > 30),
+        "sla_breached": len(sla_breached),
+        "sla_compliance_pct": round(((len(open_rows) - len(sla_breached)) / max(1, len(open_rows))) * 100, 1),
+    }
+
+    asset_rollup: dict[str, dict] = defaultdict(lambda: {"risk": 0.0, "critical": 0, "count": 0})
+    for row in open_rows:
+        asset = str(row.get("asset", "Unknown"))
+        asset_rollup[asset]["risk"] += float(row.get("risk_points", 0))
+        asset_rollup[asset]["count"] += 1
+        if row.get("severity") == "critical":
+            asset_rollup[asset]["critical"] += 1
+    top_assets = [
+        {
+            "asset": asset,
+            "risk_score": min(100, round((metrics["risk"] / max(1.0, metrics["count"] * 10.0)) * 100)),
+            "critical_count": metrics["critical"],
+            "open_findings": metrics["count"],
+        }
+        for asset, metrics in sorted(asset_rollup.items(), key=lambda item: (item[1]["risk"], item[1]["critical"]), reverse=True)[:10]
+    ]
+
+    return {
+        "generated_at": now.isoformat(),
+        "overview": {
+            "risk_score": risk_score,
+            "critical_open": len(critical_open),
+            "critical_new": len(critical_new),
+            "critical_sla_breached": len(critical_sla_breached),
+            "high_risk_assets": len(high_risk_assets),
+            "mttr_days": mttr_days,
+            "exposure_pct": exposure_pct,
+            "open_findings": open_count,
+        },
+        "attention_now": attention_now,
+        "attack_surface": attack_surface,
+        "vulnerability_breakdown": {
+            "cvss_histogram": cvss_hist,
+            "exploit_availability": {"yes": exploit_yes, "no": exploit_no},
+            "top_cwe": [
+                {"cwe": cwe, "count": count}
+                for cwe, count in sorted(cwe_counts.items(), key=lambda item: item[1], reverse=True)[:10]
+            ],
+        },
+        "aging_sla": aging,
+        "top_assets": top_assets,
+    }
 
 
 def _compute_scan_estimates() -> dict:
@@ -1157,6 +1460,12 @@ def rename_report():
     return jsonify({"message": "Renamed successfully", "new_folder": new_rel})
 
 # ── Monthly Stats (for chart) ──────────────────────────────────────────────────
+
+@app.route('/api/dashboard-insights', methods=['GET'])
+@login_required
+def dashboard_insights():
+    return jsonify(_dashboard_insights_payload())
+
 @app.route('/api/reports/delete', methods=['DELETE'])
 @login_required
 def delete_report():
@@ -1192,6 +1501,9 @@ def get_monthly_stats():
         "confirmed": 0,
         "exploitable": 0,
         "total": 0,
+        "risk_points": 0.0,
+        "critical_incidents": 0,
+        "new_vulns": 0,
     })
 
     if REPORTS_DIR.exists():
@@ -1213,6 +1525,16 @@ def get_monthly_stats():
                         if sev in stats[month_str]:
                             stats[month_str][sev] += 1
                         stats[month_str]["total"] += 1
+                        stats[month_str]["new_vulns"] += 1
+
+                        cvss = _extract_cvss(finding)
+                        base_score = cvss if cvss > 0 else _severity_weight(sev)
+                        exploitability = str(finding.get("exploitability", "")).strip().lower()
+                        exploit_factor = 1.2 if bool(finding.get("exploit_available") or exploitability == "high") else 1.0
+                        stats[month_str]["risk_points"] += base_score * exploit_factor
+
+                        if sev == "critical":
+                            stats[month_str]["critical_incidents"] += 1
 
                         if str(finding.get("cve", "")).strip():
                             stats[month_str]["cve_backed"] += 1
@@ -1267,6 +1589,12 @@ def get_monthly_stats():
             "confirmed": [stats[m]["confirmed"] for m in sorted_months],
             "exploitable": [stats[m]["exploitable"] for m in sorted_months],
             "total": [stats[m]["total"] for m in sorted_months],
+            "risk_score": [
+                min(100, round((stats[m]["risk_points"] / max(1.0, stats[m]["total"] * 10.0)) * 100, 1))
+                for m in sorted_months
+            ],
+            "new_vulns": [stats[m]["new_vulns"] for m in sorted_months],
+            "critical_incidents": [stats[m]["critical_incidents"] for m in sorted_months],
         },
         "insights": insights,
     }

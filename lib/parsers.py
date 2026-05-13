@@ -780,11 +780,12 @@ def collect_scan_overview(
     parameters = _collect_parameters(scan_dir)
 
     tools_summary = {
-        "completed": sum(1 for run in tool_runs if run.get("status") in {"completed", "completed_no_output"}),
+        "completed": sum(1 for run in tool_runs if run.get("status") in {"completed", "completed_no_output", "completed_partial"}),
         "failed": sum(1 for run in tool_runs if run.get("status") == "failed"),
         "missing": sum(1 for run in tool_runs if run.get("status") == "missing"),
         "skipped": sum(1 for run in tool_runs if run.get("status") == "skipped"),
         "timeout": sum(1 for run in tool_runs if run.get("status") == "timeout"),
+        "partial": sum(1 for run in tool_runs if run.get("status") == "completed_partial"),
     }
 
     return {

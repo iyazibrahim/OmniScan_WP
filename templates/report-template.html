@@ -6,40 +6,68 @@
     <title>OmniScan Assessment Report - {{TITLE_TARGET}}</title>
     <style>
         :root {
-            --bg: #08101d;
-            --panel: #101826;
-            --text: #e6eef8;
-            --muted: #91a3c1;
-            --border: #283750;
-            --accent: #46b7ff;
-            --critical: #ef4444;
-            --high: #f97316;
-            --medium: #f59e0b;
-            --low: #60a5fa;
-            --info: #94a3b8;
+            --bg: #eef3f8;
+            --panel: rgba(255,255,255,0.94);
+            --panel-strong: #ffffff;
+            --text: #132033;
+            --muted: #5c6b81;
+            --border: #d7e0ea;
+            --accent: #1d4ed8;
+            --accent-soft: rgba(29,78,216,0.08);
+            --critical: #b42318;
+            --high: #c2410c;
+            --medium: #b45309;
+            --low: #2563eb;
+            --info: #64748b;
+            --good: #15803d;
+            --shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0b1220;
+                --panel: rgba(15, 23, 42, 0.96);
+                --panel-strong: #121b2d;
+                --text: #edf2fb;
+                --muted: #98a7bf;
+                --border: #253249;
+                --accent: #60a5fa;
+                --accent-soft: rgba(96,165,250,0.12);
+                --critical: #f87171;
+                --high: #fb923c;
+                --medium: #fbbf24;
+                --low: #93c5fd;
+                --info: #94a3b8;
+                --good: #4ade80;
+                --shadow: 0 18px 54px rgba(2, 6, 23, 0.42);
+            }
         }
         * { box-sizing: border-box; }
-        body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: radial-gradient(circle at top left, rgba(70,183,255,0.12), transparent 35%), linear-gradient(180deg, #07101d, #101826 28%); color: var(--text); }
+        body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: radial-gradient(circle at top right, rgba(29,78,216,0.08), transparent 24%), linear-gradient(180deg, #f5f8fb, var(--bg) 22%); color: var(--text); }
         .wrap { max-width: 1320px; margin: 0 auto; padding: 28px; }
-        .toc { position: sticky; top: 12px; z-index: 10; background: rgba(16,24,38,0.92); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; }
+        .toc { position: sticky; top: 12px; z-index: 10; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; box-shadow: var(--shadow); }
         .toc a { color: var(--muted); text-decoration: none; font-size: 12px; margin-right: 12px; }
         .toc a:hover { color: var(--text); }
-        .hero { background: linear-gradient(135deg, rgba(16,24,38,0.95), rgba(23,37,84,0.92)); border: 1px solid var(--border); border-radius: 22px; padding: 28px; box-shadow: 0 18px 60px rgba(2, 6, 23, 0.35); }
-        .hero h1 { margin: 0 0 8px; font-size: 32px; }
+        .hero { background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(240,245,251,0.94)); border: 1px solid var(--border); border-radius: 22px; padding: 30px; box-shadow: var(--shadow); }
+        @media (prefers-color-scheme: dark) {
+            body { background: radial-gradient(circle at top right, rgba(96,165,250,0.08), transparent 24%), linear-gradient(180deg, #08101d, var(--bg) 22%); }
+            .hero { background: linear-gradient(135deg, rgba(18,27,45,0.98), rgba(15,23,42,0.95)); }
+        }
+        .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px; }
+        .hero h1 { margin: 0 0 8px; font-size: 34px; font-family: Cambria, Georgia, serif; }
         .hero p { margin: 0; color: var(--muted); }
         .grid { display: grid; gap: 16px; }
         .meta-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 20px; }
-        .metrics { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 24px 0; }
+        .metrics { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 24px 0; }
         .two { grid-template-columns: 1.15fr 1fr; }
         .three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         .actions-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-        .card, .metric-card { background: rgba(16,24,38,0.94); border: 1px solid var(--border); border-radius: 18px; padding: 18px; overflow: hidden; }
+        .card, .metric-card { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 18px; overflow: hidden; box-shadow: var(--shadow); }
         .risk-banner { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }
-        .risk-chip { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(8,16,29,0.65); }
+        .risk-chip { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; background: var(--panel-strong); }
         .risk-chip .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .risk-chip .v { font-size: 20px; font-weight: 700; margin-top: 4px; }
+        .risk-chip .v { font-size: 22px; font-weight: 800; margin-top: 6px; }
         .metric-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .metric-card .value { font-size: 34px; font-weight: 800; margin-top: 8px; }
+        .metric-card .value { font-size: 32px; font-weight: 800; margin-top: 10px; }
         h2 { margin: 30px 0 12px; font-size: 22px; }
         h3 { margin-top: 0; }
         table { width: 100%; border-collapse: collapse; }
@@ -53,19 +81,24 @@
         .sev.info { background: rgba(148,163,184,0.14); color: var(--info); }
         .meta { color: var(--muted); font-size: 13px; }
         .narrative { white-space: pre-wrap; line-height: 1.6; }
+        .summary-prose { margin: 0; font-size: 1.02rem; line-height: 1.8; color: var(--text); }
         .legend { color: var(--muted); font-size: 13px; margin-top: 8px; }
         .appendix-note { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+        .action-timeline { position: relative; padding-top: 8px; }
+        .action-timeline::before { content: ""; position: absolute; left: 18px; right: 18px; top: 24px; height: 2px; background: linear-gradient(90deg, var(--critical), var(--medium), var(--good)); opacity: 0.35; }
+        .timeline-card { position: relative; padding-top: 28px; }
+        .timeline-card::before { content: ""; position: absolute; top: 16px; left: 18px; width: 12px; height: 12px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); }
         .findings-toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
-        .findings-toolbar input, .findings-toolbar select { padding: 8px 10px; background: #0d1929; border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+        .findings-toolbar input, .findings-toolbar select { padding: 8px 10px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
         .findings-toolbar input { flex: 1; min-width: 220px; }
         .findings-pages { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
-        .findings-pages button { padding: 5px 11px; background: rgba(255,255,255,0.06); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 13px; }
-        .findings-pages button.active { background: var(--accent); color: #000; border-color: var(--accent); }
-        details.finding > summary { list-style: none; cursor: pointer; padding: 14px 18px; border-radius: 12px; background: rgba(16,24,38,0.94); border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+        .findings-pages button { padding: 5px 11px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 13px; }
+        .findings-pages button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        details.finding > summary { list-style: none; cursor: pointer; padding: 14px 18px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
         details.finding > summary::-webkit-details-marker { display: none; }
         details.finding > summary .sum-chevron { margin-left: auto; transition: transform 0.2s; }
         details.finding[open] > summary .sum-chevron { transform: rotate(180deg); }
-        .finding-body { padding: 14px 18px; background: rgba(14,22,36,0.96); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
+        .finding-body { padding: 14px 18px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
         .sum-title { font-weight: 600; font-size: 0.93rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .standards-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 10px; }
         .std-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-decoration: none; }
@@ -75,7 +108,7 @@
         .nist-tag { background: rgba(34,197,94,0.12); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
         td, th { word-break: break-word; overflow-wrap: anywhere; max-width: 480px; }
         .url-cell { word-break: break-all; font-size: 0.82em; }
-        .disc-card ul { max-height: 280px; overflow-y: auto; }
+        .disc-card ul { max-height: 280px; overflow-y: auto; columns: 2; column-gap: 18px; padding-left: 18px; }
         @media (max-width: 980px) { .two { grid-template-columns: 1fr; } }
         @media print { .toc, .findings-toolbar, .findings-pages { display: none !important; } }
     </style>
@@ -93,6 +126,7 @@
     </nav>
 
     <section class="hero">
+        <div class="eyebrow">Official Security Assessment</div>
         <h1>OmniScan Comprehensive Assessment Report</h1>
         <p>{{TARGET_URL}}</p>
         <div class="grid meta-grid">
@@ -113,7 +147,7 @@
     <section class="grid metrics">{{METRIC_CARDS}}</section>
 
     <h2 id="executive-summary">Executive Summary</h2>
-    <div class="card"><ul>{{EXEC_SUMMARY_LIST}}</ul></div>
+    <div class="card"><p class="summary-prose">{{EXEC_SUMMARY_LIST}}</p></div>
 
     <h2 id="coverage-limitations">Coverage and Limitations</h2>
     <div class="grid two">
@@ -134,11 +168,11 @@
         </div>
     </div>
 
-    <h2 id="immediate-actions">Immediate Actions</h2>
-    <div class="grid actions-grid">
-        <div class="card"><h3>Next 24 Hours</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_24H_ROWS}}</tbody></table></div>
-        <div class="card"><h3>Next 7 Days</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_7D_ROWS}}</tbody></table></div>
-        <div class="card"><h3>Next 30 Days</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_30D_ROWS}}</tbody></table></div>
+    <h2 id="immediate-actions">Action Timeline</h2>
+    <div class="grid actions-grid action-timeline">
+        <div class="card timeline-card"><h3>Next 24 Hours</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_24H_ROWS}}</tbody></table></div>
+        <div class="card timeline-card"><h3>Next 7 Days</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_7D_ROWS}}</tbody></table></div>
+        <div class="card timeline-card"><h3>Strategic Follow-up</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_30D_ROWS}}</tbody></table></div>
     </div>
 
     <h2 id="risk-snapshot">Risk Snapshot</h2>
@@ -150,7 +184,7 @@
         </table>
     </div>
 
-    <h2>Target Overview</h2>
+    <h2>Target and Coverage Overview</h2>
     <div class="grid two">
         <div class="card">
             <h3>Fingerprint</h3>
@@ -163,8 +197,10 @@
             </table>
         </div>
         <div class="card">
-            <h3>Discovery Summary</h3>
+            <h3>Discovery and Coverage Summary</h3>
             <table>
+                <tr><th>Coverage Completeness</th><td>{{COVERAGE_COMPLETENESS}}%</td></tr>
+                <tr><th>Total Tool Runs</th><td>{{TOTAL_TOOLS}}</td></tr>
                 <tr><th>Subdomains</th><td>{{DISCOVERY_SUBDOMAINS}}</td></tr>
                 <tr><th>Parameters</th><td>{{DISCOVERY_PARAMETERS}}</td></tr>
                 <tr><th>gau URLs</th><td>{{DISCOVERY_GAU}}</td></tr>
@@ -173,25 +209,6 @@
                 <tr><th>Feroxbuster Hits</th><td>{{DISCOVERY_FEROX}}</td></tr>
             </table>
         </div>
-    </div>
-
-    <h2>Assessment Narrative</h2>
-    <div class="grid two">
-        <div class="card"><h3>Analyst Summary</h3><div class="narrative">{{ASSESSMENT_SUMMARY_TEXT}}</div></div>
-        <div class="card"><h3>Authentication Context</h3><div class="narrative">{{AUTH_CONTEXT_NOTES}}</div></div>
-        <div class="card"><h3>Attack Path Hypotheses</h3><div class="narrative">{{ATTACK_HYPOTHESES}}</div></div>
-        <div class="card"><h3>Verification Strategy</h3><div class="narrative">{{VERIFICATION_STRATEGY}}</div></div>
-    </div>
-
-    <h2>Manual Assessment Analytics</h2>
-    <div class="grid two">
-        <div class="card"><h3>Case Status</h3><table><tr><th>Status</th><th>Count</th></tr>{{CASE_STATUS_ROWS}}</table></div>
-        <div class="card"><h3>Verification Status</h3><table><tr><th>Status</th><th>Count</th></tr>{{VERIFICATION_STATUS_ROWS}}</table></div>
-    </div>
-
-    <div class="card">
-        <h3>Category Coverage</h3>
-        <table><thead><tr><th>Category</th><th>Total Cases</th><th>Worked</th><th>Verified</th></tr></thead><tbody>{{CATEGORY_COVERAGE_ROWS}}</tbody></table>
     </div>
 
     <h2 id="appendix">Appendix: Tool Telemetry</h2>

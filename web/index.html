@@ -113,38 +113,47 @@
                 <div class="stats-grid" id="statsGrid">
                     <div class="stat-card" data-accent="blue">
                         <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4z"/><path d="M9 12h6"/></svg>
                         </div>
                         <div class="stat-info">
-                            <span class="stat-value" id="statTargets">0</span>
-                            <span class="stat-label">Targets</span>
+                            <span class="stat-value" id="statRiskScore">0</span>
+                            <span class="stat-label">Risk Score</span>
                         </div>
                     </div>
                     <div class="stat-card" data-accent="green">
                         <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
                         </div>
                         <div class="stat-info">
-                            <span class="stat-value" id="statScans">0</span>
-                            <span class="stat-label">Reports</span>
+                            <span class="stat-value" id="statCriticalOpen">0</span>
+                            <span class="stat-label">Critical Open</span>
                         </div>
                     </div>
                     <div class="stat-card" data-accent="red">
                         <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
                         </div>
                         <div class="stat-info">
-                            <span class="stat-value" id="statCritical">0</span>
-                            <span class="stat-label">Critical</span>
+                            <span class="stat-value" id="statHighRiskAssets">0</span>
+                            <span class="stat-label">High-Risk Assets</span>
                         </div>
                     </div>
                     <div class="stat-card" data-accent="cyan">
                         <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
                         </div>
                         <div class="stat-info">
-                            <span class="stat-value" id="statTools">0</span>
-                            <span class="stat-label">Tools Ready</span>
+                            <span class="stat-value" id="statMttr">0d</span>
+                            <span class="stat-label">MTTR</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" data-accent="orange">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statExposure">0%</span>
+                            <span class="stat-label">Exposure</span>
                         </div>
                     </div>
                 </div>
@@ -154,15 +163,34 @@
                         <div class="card-header">
                             <div>
                                 <h3>Vulnerability Trend</h3>
-                                <p class="subtitle">Monthly severity distribution across all scans</p>
+                                <p class="subtitle">Risk and vulnerability volume over time</p>
                             </div>
                             <div class="chart-mode-toggle">
-                                <button class="btn-ghost btn-xs active" id="chartModeStacked" onclick="App.setChartMode('stacked')">Stacked</button>
-                                <button class="btn-ghost btn-xs" id="chartModeNorm" onclick="App.setChartMode('normalized')">% Relative</button>
+                                <button class="btn-ghost btn-xs active" id="chartModeStacked" onclick="App.setChartMode('stacked')">Severity Mix</button>
+                                <button class="btn-ghost btn-xs" id="chartModeNorm" onclick="App.setChartMode('normalized')">Risk + Volume</button>
                             </div>
                         </div>
                         <div class="card-body chart-container">
                             <canvas id="monthlyChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card widget-attention">
+                        <div class="card-header">
+                            <h3>What Needs Attention Now</h3>
+                            <p class="subtitle">Prioritized by exploitability, CVSS, and asset risk</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-scroll">
+                                <table class="decision-table" id="attentionTable">
+                                    <thead>
+                                        <tr><th>Asset</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Exploit</th><th>SLA</th><th>Action</th></tr>
+                                    </thead>
+                                    <tbody id="attentionTableBody">
+                                        <tr><td colspan="7" class="empty-state">Loading risk priorities...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
@@ -217,6 +245,46 @@
                             <div id="dashActiveScansList" class="active-scans-list">
                                 <div class="empty-state">No scans in session.</div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="card widget-breakdown">
+                        <div class="card-header">
+                            <h3>Attack Surface</h3>
+                            <p class="subtitle">Vulnerability density by asset category</p>
+                        </div>
+                        <div class="card-body" id="attackSurfaceList">
+                            <div class="empty-state">Loading attack surface...</div>
+                        </div>
+                    </div>
+
+                    <div class="card widget-breakdown">
+                        <div class="card-header">
+                            <h3>Vulnerability Breakdown</h3>
+                            <p class="subtitle">CVSS bands, exploit availability, and top CWE</p>
+                        </div>
+                        <div class="card-body" id="vulnBreakdownList">
+                            <div class="empty-state">Loading vulnerability breakdown...</div>
+                        </div>
+                    </div>
+
+                    <div class="card widget-breakdown">
+                        <div class="card-header">
+                            <h3>Aging & SLA</h3>
+                            <p class="subtitle">Unresolved findings by age and compliance state</p>
+                        </div>
+                        <div class="card-body" id="agingSlaList">
+                            <div class="empty-state">Loading SLA metrics...</div>
+                        </div>
+                    </div>
+
+                    <div class="card widget-breakdown">
+                        <div class="card-header">
+                            <h3>Top Vulnerable Assets</h3>
+                            <p class="subtitle">Heat ranking by asset risk score and critical count</p>
+                        </div>
+                        <div class="card-body" id="topAssetsList">
+                            <div class="empty-state">Loading asset risk ranking...</div>
                         </div>
                     </div>
                 </div>
@@ -339,7 +407,7 @@
                 <header class="view-header">
                     <div>
                         <h1>Reports</h1>
-                        <p class="view-subtitle">Browse past scan results</p>
+                        <p class="view-subtitle">Browse past scan results by website and latest security posture</p>
                     </div>
                     <button class="btn-ghost" id="refreshReports">
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -355,7 +423,7 @@
                         <button class="filter-tab" data-sev="low">&#128994; Low</button>
                         <button class="filter-tab" data-sev="clean">&#9989; Clean</button>
                     </div>
-                    <input type="search" class="reports-search" id="reportsSearch" placeholder="Search target or report name&#8230;">
+                    <input type="search" class="reports-search" id="reportsSearch" placeholder="Search target, history, or report name&#8230;">
                 </div>
                 <div class="reports-container" id="reportsList">
                     <div class="empty-state-big">

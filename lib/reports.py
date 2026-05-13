@@ -86,6 +86,7 @@ def _severity_counts(findings: list[dict]) -> dict[str, int]:
 def _tool_status_badge(status: str) -> str:
     cls = {
         "completed": "good",
+        "completed_partial": "warn",
         "completed_no_output": "warn",
         "missing": "muted",
         "skipped": "muted",
@@ -123,6 +124,9 @@ def _build_executive_summary(payload: dict) -> list[str]:
     failed = tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0)
     if failed:
         lines.append(f"Tool coverage was incomplete: {failed} tool run(s) failed, timed out, or were unavailable.")
+    partial = tool_summary.get("partial", 0)
+    if partial:
+        lines.append(f"{partial} tool run(s) produced partial evidence before exiting or timing out; review telemetry before dismissing those findings.")
 
     if case_status:
         total_cases = sum(case_status.values())
@@ -183,6 +187,7 @@ def _render_metric_cards(summary: dict, assessment_summary: dict, overview: dict
         ("Medium", severity_counts.get("medium", 0), "medium"),
         ("Low", severity_counts.get("low", 0), "low"),
         ("Tool Failures", tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0), "info"),
+        ("Partial Tool Runs", tool_summary.get("partial", 0), "warn"),
         ("Verified Cases", verified, "good"),
         ("Analyst Notes", note_count, "info"),
         ("Total Findings", summary.get("finding_count", 0), "total"),
@@ -505,7 +510,7 @@ def generate_html_report(payload: dict) -> str:
         missing = 0
         for run in tool_runs:
             status = str(run.get("status", "")).lower()
-            if status in {"completed", "completed_no_output"}:
+            if status in {"completed", "completed_no_output", "completed_partial"}:
                 completed += 1
             elif status == "failed":
                 failed += 1
@@ -758,88 +763,7 @@ def generate_html_report(payload: dict) -> str:
     actions_30d = _build_action_rows(findings_sorted, "30d")
     compliance_rows = _compliance_crosswalk_rows(findings)
 
-    case_status_rows = ""
-    verification_status_rows = ""
-    if include_manual_assessment:
-        case_status_rows = "".join(
-            f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
-            for k, v in assessment_summary.get("case_status", {}).items()
-        )
-        verification_status_rows = "".join(
-            f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>"
-            for k, v in assessment_summary.get("verification_status", {}).items()
-        )
-    executive_summary_html = "".join(f"<li>{html.escape(item)}</li>" for item in executive_summary)
-
-    if include_manual_assessment:
-        auth_context_notes = html.escape(workbook.get("auth_context_notes", "") or "Not documented.")
-        attack_hypotheses = html.escape(workbook.get("attack_path_hypotheses", "") or "No attack path hypotheses recorded yet.")
-        verification_strategy = html.escape(workbook.get("verification_strategy", "") or "No explicit verification strategy recorded yet.")
-        assessment_summary_text = html.escape(assessment_summary.get("summary", "") or "No analyst summary has been recorded for this target.")
-    else:
-        disabled_note = "Manual assessment appendix is disabled for this report profile."
-        auth_context_notes = disabled_note
-        attack_hypotheses = disabled_note
-        verification_strategy = disabled_note
-        assessment_summary_text = disabled_note
-
-    assessment_narrative_html = ""
-    manual_analytics_html = ""
-    category_coverage_html = ""
-    if include_manual_assessment:
-        assessment_narrative_html = f"""
-        <h2>Assessment Narrative</h2>
-        <div class="grid two">
-            <div class="card">
-                <h3>Analyst Summary</h3>
-                <div class="narrative">{assessment_summary_text}</div>
-            </div>
-            <div class="card">
-                <h3>Authentication Context</h3>
-                <div class="narrative">{auth_context_notes}</div>
-            </div>
-            <div class="card">
-                <h3>Attack Path Hypotheses</h3>
-                <div class="narrative">{attack_hypotheses}</div>
-            </div>
-            <div class="card">
-                <h3>Verification Strategy</h3>
-                <div class="narrative">{verification_strategy}</div>
-            </div>
-        </div>
-        """
-
-        manual_analytics_html = f"""
-        <h2>Manual Assessment Analytics</h2>
-        <div class="grid two">
-            <div class="card">
-                <h3>Case Status</h3>
-                <table>
-                    <tr><th>Status</th><th>Count</th></tr>
-                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('case_status', {}).items()) or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>"}
-                </table>
-            </div>
-            <div class="card">
-                <h3>Verification Status</h3>
-                <table>
-                    <tr><th>Status</th><th>Count</th></tr>
-                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('verification_status', {}).items()) or "<tr><td colspan='2'>No verification records yet.</td></tr>"}
-                </table>
-            </div>
-        </div>
-        """
-
-        category_coverage_html = f"""
-        <div class="card">
-            <h3>Category Coverage</h3>
-            <table>
-                <thead><tr><th>Category</th><th>Total Cases</th><th>Worked</th><th>Verified</th></tr></thead>
-                <tbody>
-                    {''.join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-        """
+    executive_summary_html = html.escape(" ".join(item.strip() for item in executive_summary if str(item).strip()))
 
     rendered_from_template = _render_report_template(
         {
@@ -876,12 +800,6 @@ def generate_html_report(payload: dict) -> str:
             "DISCOVERY_KATANA": str(discovery.get("katana_count", 0)),
             "DISCOVERY_FFUF": str(discovery.get("ffuf_count", 0)),
             "DISCOVERY_FEROX": str(discovery.get("feroxbuster_count", 0)),
-            "ASSESSMENT_SUMMARY_TEXT": assessment_summary_text,
-            "AUTH_CONTEXT_NOTES": auth_context_notes,
-            "ATTACK_HYPOTHESES": attack_hypotheses,
-            "VERIFICATION_STRATEGY": verification_strategy,
-            "CASE_STATUS_ROWS": case_status_rows or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>",
-            "VERIFICATION_STATUS_ROWS": verification_status_rows or "<tr><td colspan='2'>No verification records yet.</td></tr>",
             "CATEGORY_COVERAGE_ROWS": "".join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>",
             "TOOLS_ROWS": "".join(tools_rows) or "<tr><td colspan='7'>No tool telemetry captured.</td></tr>",
             "DISCOVERY_BLOCKS": "".join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>",
@@ -1468,21 +1386,6 @@ def generate_markdown_report(payload: dict) -> str:
             "|------|-------|--------|---------|------|",
         ]
     )
-
-    if include_manual_assessment:
-        lines.extend(
-            [
-                "",
-                "## Manual Assessment Narrative",
-                "",
-                f"- Analyst summary: {assessment_summary.get('summary', '') or 'Not recorded'}",
-                f"- Authentication context: {workbook.get('auth_context_notes', '') or 'Not recorded'}",
-                f"- Attack path hypotheses: {workbook.get('attack_path_hypotheses', '') or 'Not recorded'}",
-                f"- Verification strategy: {workbook.get('verification_strategy', '') or 'Not recorded'}",
-            ]
-        )
-    else:
-        lines.extend(["", "## Manual Assessment Narrative", "", "- Manual assessment appendix is disabled for this report profile."])
 
     for run in tool_runs:
         lines.append(
