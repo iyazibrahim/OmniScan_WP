@@ -18,99 +18,118 @@ document.addEventListener("DOMContentLoaded", () => {
 // ── Global authenticated fetch (redirect to /login on 401) ───────────────────
 async function _authedFetch(url, options) {
     const res = await fetch(url, options);
-    if (res.status === 401 && !url.includes("/api/auth/")) {
+        const reports = this._allReports || [];
         window.location.href = "/login";
         return res;
     }
     return res;
-}
 
-const App = {
-    currentView: "dashboard",
-    chart: null,
-    assessmentCatalog: [],
-    assessmentTarget: "",
-    assessmentWorkbook: null,
-    scanEstimates: null,
-    activeScanId: "",
-    scanPollingTimer: null,
-    _dashRefreshTimer: null,
-
-    init() {
-        this.setupNav();
-        this.setupMobileMenu();
-        this.setupTabs();
-        this.setupLogout();
-        this.checkServer();
-        this.loadDashboard();
-    },
-
-    setupLogout() {
-        const btn = document.getElementById("logoutBtn");
-        if (!btn) return;
-        btn.onclick = async () => {
-            await fetch("/api/auth/logout", { method: "POST" });
-            window.location.href = "/login";
-        };
-    },
-
-    setupNav() {
-        document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
-            item.addEventListener("click", (event) => {
-                event.preventDefault();
-                this.navigateTo(item.dataset.view);
+        const grouped = new Map();
+        reports
+            .slice()
+            .sort((a, b) => Number(b.modified || 0) - Number(a.modified || 0))
+            .forEach((report) => {
+                const key = (report.target_url || report.folder || report.name || "unknown").toLowerCase();
+                if (!grouped.has(key)) {
+                    grouped.set(key, { key, target: report.target_url || report.folder || report.name || "Unknown target", reports: [] });
+                }
+                grouped.get(key).reports.push(report);
             });
+
+        const visible = Array.from(grouped.values()).filter((group) => {
+            const latest = group.reports[0];
+            const latestSeverities = latest?.severities || {};
+            const total = (latestSeverities.critical || 0) + (latestSeverities.high || 0) + (latestSeverities.medium || 0) + (latestSeverities.low || 0);
+            let pass = true;
+            if (filter === "critical") pass = (latestSeverities.critical || 0) > 0;
+            else if (filter === "high") pass = (latestSeverities.high || 0) > 0;
+            else if (filter === "medium") pass = (latestSeverities.medium || 0) > 0;
+            else if (filter === "low") pass = (latestSeverities.low || 0) > 0;
+            else if (filter === "clean") pass = total === 0;
+            if (pass && search) {
+                const haystack = [group.target, latest?.folder || "", latest?.name || "", ...group.reports.map((r) => r.folder || "")].join(" ").toLowerCase();
+                pass = haystack.includes(search);
+            }
+            return pass;
         });
-    },
 
-    navigateTo(viewId) {
-        document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
-        document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
-
-        const targetView = document.getElementById(`view-${viewId}`);
-        if (targetView) {
-            targetView.classList.add("active");
-            requestAnimationFrame(() => targetView.classList.add("active"));
+        if (visible.length === 0) {
+            container.innerHTML = `<div class="empty-state-big"><p>No reports match the current filter.</p></div>`;
+            return;
         }
 
-        const navItem = document.querySelector(`.nav-item[data-view="${viewId}"]`);
-        if (navItem) {
-            navItem.classList.add("active");
-        }
+        container.innerHTML = visible.map((group) => {
+            const latest = group.reports[0];
+            const severities = latest?.severities || {};
+            const totalFindings = (severities.critical || 0) + (severities.high || 0) + (severities.medium || 0) + (severities.low || 0);
+            const modifiedAt = new Date((latest?.modified || 0) * 1000).toLocaleString();
+            const assessmentMeta = this.renderAssessmentReportMeta(latest?.assessment_summary || {});
+            const folder = latest?.folder || "";
+            const displayName = group.target || latest?.target_url || folder || latest?.name || "Unknown target";
+            const siblingCount = Math.max(0, group.reports.length - 1);
 
-        this.currentView = viewId;
-        document.getElementById("sidebar").classList.remove("open");
-        document.getElementById("sidebarOverlay").classList.remove("open");
-        this.onViewEnter(viewId);
-    },
+            const dlItems = [
+                { path: latest?.path, label: "HTML Report", ext: "html" },
+                ...(latest?.md_path ? [{ path: latest.md_path, label: "Markdown", ext: "md" }] : []),
+                ...(latest?.json_path ? [{ path: latest.json_path, label: "JSON Data", ext: "json" }] : []),
+                ...(latest?.csv_path ? [{ path: latest.csv_path, label: "CSV Data", ext: "csv" }] : []),
+                ...(latest?.sarif_path ? [{ path: latest.sarif_path, label: "SARIF", ext: "sarif" }] : []),
+            ].filter((item) => item.path);
+            const dlMenu = dlItems.map((d) =>
+                `<a href="/api/reports/${encodeURIComponent(d.path)}?dl=1" class="dl-menu-item" download>${this.esc(d.label)}</a>`
+            ).join("");
 
-    onViewEnter(viewId) {
-        if (viewId !== "dashboard" && this._dashRefreshTimer) {
-            clearInterval(this._dashRefreshTimer);
-            this._dashRefreshTimer = null;
-        }
-        switch (viewId) {
-            case "dashboard":
-                this.loadDashboard();
-                break;
-            case "scan":
-                this.loadScanView();
-                break;
-            case "reports":
-                this.loadReports();
-                break;
-            case "assessments":
-                this.loadAssessmentsView();
-                break;
-            case "targets":
-                this.loadTargets();
-                break;
-            case "settings":
-                this.loadSettings();
-                break;
-            default:
-                break;
-        }
+            const historyHtml = siblingCount > 0
+                ? `<details class="report-history"><summary>${siblingCount} older report(s)</summary>${group.reports.slice(1, 6).map((item) => `<div class="report-history-item"><span>${this.esc(new Date((item.modified || 0) * 1000).toLocaleString())}</span><a href="/api/reports/${encodeURIComponent(item.path || "")}" target="_blank">${this.esc(item.folder || item.name || "Report")}</a></div>`).join("")}</details>`
+                : "";
+
+            return `
+                <div class="report-card" data-folder="${this.esc(folder)}">
+                    <div class="report-info">
+                        <div class="report-headline">
+                            <span class="report-name-wrap">
+                                <span class="report-name" id="rn-${this.esc(folder)}">${this.esc(displayName)}</span>
+                                <button class="btn-icon-xs rename-btn" title="Rename report" onclick="App.startRenameReport('${this.esc(folder)}', '${this.esc(folder.split('/').pop())}')">
+                                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                            </span>
+                            <span class="report-date">${modifiedAt}</span>
+                        </div>
+                        <div class="report-meta">
+                            <span class="report-size">Latest report</span>
+                            ${group.reports.length > 1 ? `<span class="report-size">${group.reports.length} total</span>` : ""}
+                            ${latest?.profile ? `<span class="report-size">Profile: ${this.esc(latest.profile)}</span>` : ""}
+                            <span class="report-size">${this.esc(String(latest?.size_kb || 0))} KB</span>
+                            ${assessmentMeta}
+                        </div>
+                    </div>
+                    <div class="report-badges">
+                        ${severities.critical ? `<span class="badge badge-critical">${severities.critical} Critical</span>` : ""}
+                        ${severities.high ? `<span class="badge badge-high">${severities.high} High</span>` : ""}
+                        ${severities.medium ? `<span class="badge badge-medium">${severities.medium} Medium</span>` : ""}
+                        ${severities.low ? `<span class="badge badge-low">${severities.low} Low</span>` : ""}
+                        ${totalFindings === 0 ? '<span class="badge badge-clean">Clean</span>' : ""}
+                    </div>
+                    <div class="report-actions">
+                        <a href="/api/reports/${encodeURIComponent(latest?.path || folder)}" target="_blank" class="btn-ghost btn-sm">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                            Open latest
+                        </a>
+                        <div class="dl-dropdown">
+                            <button class="btn-ghost btn-sm dl-toggle" onclick="App.toggleDlMenu(this)">
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                Download &#9662;
+                            </button>
+                            <div class="dl-menu">${dlMenu}</div>
+                        </div>
+                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteReport('${this.esc(folder)}', this)" title="Delete report">
+                            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            Delete
+                        </button>
+                    </div>
+                    ${historyHtml}
+                </div>`;
+        }).join("");
     },
 
     setupMobileMenu() {
@@ -313,6 +332,11 @@ const App = {
         const canvas = document.getElementById("monthlyChart");
         if (!canvas) return;
         if (this.chart) this.chart.destroy();
+
+        const subtitleNode = document.querySelector(".widget-chart .subtitle");
+        if (subtitleNode) {
+            subtitleNode.textContent = data?.insights?.summary || "Monthly severity distribution across all scans";
+        }
 
         Chart.defaults.color = "#94a3b8";
         Chart.defaults.font.family = "Inter";
@@ -549,7 +573,8 @@ const App = {
             currentToolNode.textContent = status.current_tool || "-";
         }
         if (toolsNode) {
-            toolsNode.textContent = `${status.completed_tools || 0} / ${status.total_tools || 0} tools`;
+            const missingCount = Array.isArray(status.missing_tools) ? status.missing_tools.length : 0;
+            toolsNode.textContent = `${status.completed_tools || 0} / ${status.total_tools || 0} tools${missingCount ? ` · ${missingCount} unavailable` : ""}`;
         }
         if (elapsedNode) {
             elapsedNode.textContent = status.elapsed_label || "~0s";
@@ -558,7 +583,10 @@ const App = {
             etaNode.textContent = status.status === "running" ? (status.eta_label || "-") : "~0s";
         }
         if (subtitleNode) {
-            subtitleNode.textContent = status.message || "Scan in progress";
+            const missingNames = Array.isArray(status.missing_tools) && status.missing_tools.length
+                ? ` Missing: ${status.missing_tools.slice(0, 4).join(", ")}${status.missing_tools.length > 4 ? "..." : ""}`
+                : "";
+            subtitleNode.textContent = `${status.message || "Scan in progress"}${missingNames}`;
         }
         if (fillNode) {
             fillNode.style.width = `${percent}%`;
@@ -987,7 +1015,7 @@ const App = {
     async fetchAssessmentWorkbook(target) {
         const data = await this.api(`/api/assessments?target=${encodeURIComponent(target)}`);
         if (!data?.workbook) {
-            this.toast("Failed to load assessment workbook.", "error");
+            this.toast("Failed to load playbook workspace.", "error");
             return;
         }
 
@@ -1004,8 +1032,8 @@ const App = {
             container.innerHTML = `
                 <div class="empty-state-big">
                     <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path><path d="M9 12l2 2 4-4"></path></svg>
-                    <h3>No Workbook Loaded</h3>
-                    <p>Select a saved target or enter a URL to start guided manual testing.</p>
+                    <h3>No Playbook Loaded</h3>
+                    <p>Select a saved target or enter a URL to start guided analyst testing.</p>
                 </div>`;
             return;
         }
@@ -1024,7 +1052,7 @@ const App = {
 
         container.innerHTML = `
             <div class="assessment-summary-grid">
-                ${this.renderMetricCard("Target", this.assessmentTarget, "Current workbook")}
+                ${this.renderMetricCard("Target", this.assessmentTarget, "Current playbook")}
                 ${this.renderMetricCard("Cases In Motion", String(this.sumCounts(summary.case_status, ["in_progress", "needs_evidence", "confirmed"])), "Manual scenarios under review")}
                 ${this.renderMetricCard("Verified", String(this.sumCounts(summary.verification_status, ["confirmed", "reproduced", "fixed"])), "Cases reproduced or fixed")}
                 ${this.renderMetricCard("Notes + Runs", `${summary.note_count || 0} / ${summary.verification_run_count || 0}`, "Operator notes and verification logs")}

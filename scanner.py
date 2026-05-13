@@ -21,6 +21,7 @@ import os
 import sys
 import webbrowser
 from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from typing import Callable
 
@@ -35,11 +36,37 @@ from lib.reports import save_reports
 from lib.installer import install_missing_tools, install_tool
 from lib.notifier import send_scan_email, configure_email
 from lib.assessments import get_workbook, summarize_workbook
+from lib.ai_runner import apply_verdicts_to_findings
 
 
 def _is_ci() -> bool:
     """Check if running in CI/headless mode."""
     return ui.is_ci()
+
+
+def _apply_ai_verdicts(findings: list[dict], target_url: str, scan_config: dict) -> list[dict]:
+    if not bool(scan_config.get("ai_operator_enabled", False)):
+        return findings
+
+    results_file = config.CONFIG_DIR / "ai-results.json"
+    if not results_file.exists():
+        return findings
+
+    try:
+        store = json.loads(results_file.read_text(encoding="utf-8"))
+    except Exception:
+        return findings
+    if not isinstance(store, dict):
+        return findings
+
+    target_results = store.get(target_url)
+    if not isinstance(target_results, dict):
+        return findings
+    results = target_results.get("results")
+    if not isinstance(results, list) or not results:
+        return findings
+
+    return apply_verdicts_to_findings(findings, results)
 
 
 # ── Demo Mode ───────────────────────────────────────────────────────────────────
@@ -48,7 +75,7 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
     """Generate a demo report with sample findings."""
     ui.section("Demo Mode - Generating Sample Report")
 
-    start_time = datetime.now()
+    start_time = datetime.now(UTC)
 
     # Sample findings
     demo_findings = [
@@ -258,7 +285,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
             progress_callback(event)
 
     ui.section(f"Starting {mode.upper()} scan on {url} (Profile: {profile.upper()})")
-    start_time = datetime.now()
+    start_time = datetime.now(UTC)
     _emit({
         "event": "stage",
         "stage": "initializing",
@@ -292,8 +319,16 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
     tool_runs = execution.get("tools", [])
 
     if not tools_used:
-        ui.err("No tools were available to run. Install at least one tool first.")
-        _emit({"event": "error", "message": "No tools were available to run."})
+        missing_tools = sorted({item.get("label") or item.get("name") or "unknown" for item in tool_runs if item.get("status") == "missing"})
+        skipped_tools = sorted({item.get("label") or item.get("name") or "unknown" for item in tool_runs if item.get("status") == "skipped"})
+        detail_bits = []
+        if missing_tools:
+            detail_bits.append(f"missing: {', '.join(missing_tools[:6])}{'...' if len(missing_tools) > 6 else ''}")
+        if skipped_tools:
+            detail_bits.append(f"skipped: {', '.join(skipped_tools[:6])}{'...' if len(skipped_tools) > 6 else ''}")
+        detail_text = f" ({'; '.join(detail_bits)})" if detail_bits else ""
+        ui.err(f"No tools were available to run{detail_text}. Install the missing tools or adjust the scan profile.")
+        _emit({"event": "error", "message": f"No tools were available to run{detail_text}."})
         return
 
     # Parse results
@@ -336,6 +371,7 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "message": "Correlating findings with remediation guidance.",
     })
     enriched = enrich_findings(findings)
+    enriched = _apply_ai_verdicts(enriched, url, scan_config)
 
     # Generate reports
     ui.section("Generating Reports")

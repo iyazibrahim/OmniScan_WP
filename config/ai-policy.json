@@ -1,0 +1,10 @@
+{
+  "allowed_methods": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
+  "blocked_payload_classes": ["destructive", "rce", "lateral_movement", "malware"],
+  "high_impact_payload_classes": ["state_change", "privilege", "credential", "destructive"],
+  "allow_subdomains": true,
+  "max_actions_per_plan": 50,
+  "rate_limits": {
+    "requests_per_minute": 30
+  }
+}

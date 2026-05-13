@@ -6,11 +6,73 @@ import csv
 import html
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from lib.config import HTML_TEMPLATE_FILE, REPORTS_DIR
+from lib.config import HTML_TEMPLATE_FILE, REPORTS_DIR, load_json, save_json
 from lib.standards import SARIF_LEVEL_MAP
+
+MALAYSIA_TZ = timezone(timedelta(hours=8))
+REPORT_INDEX_FILE = REPORTS_DIR / "report-index.json"
+
+
+def _as_malaysia_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(MALAYSIA_TZ)
+
+
+def _rel_report_path(path: Path) -> str | None:
+    try:
+        return str(path.resolve().relative_to(REPORTS_DIR.resolve())).replace("\\", "/")
+    except Exception:
+        return None
+
+
+def _upsert_report_index(paths: dict[str, Path], payload: dict):
+    html_path = paths.get("html")
+    if html_path is None or not html_path.exists():
+        return
+
+    rel_html = _rel_report_path(html_path)
+    if not rel_html:
+        return
+
+    entry = {
+        "path": rel_html,
+        "name": html_path.stem,
+        "folder": str(Path(rel_html).parent).replace("\\", "/"),
+        "target_url": payload.get("target_url", ""),
+        "profile": payload.get("overview", {}).get("effective_profile", ""),
+        "assessment_summary": payload.get("assessment", {}).get("summary", {}) if isinstance(payload.get("assessment"), dict) else {},
+        "severities": payload.get("summary", {}).get("severity_counts", {}),
+        "scan_started_at": payload.get("scan_started_at", ""),
+        "scan_started_at_utc": payload.get("scan_started_at_utc", ""),
+        "scan_mode": payload.get("scan_mode", ""),
+        "size_kb": round(html_path.stat().st_size / 1024, 1),
+        "modified": html_path.stat().st_mtime,
+        "md_path": _rel_report_path(paths["md"]) if "md" in paths and paths["md"].exists() else None,
+        "json_path": _rel_report_path(paths["json"]) if "json" in paths and paths["json"].exists() else None,
+        "csv_path": _rel_report_path(paths["csv"]) if "csv" in paths and paths["csv"].exists() else None,
+        "sarif_path": _rel_report_path(paths["sarif"]) if "sarif" in paths and paths["sarif"].exists() else None,
+    }
+
+    index = load_json(REPORT_INDEX_FILE)
+    if not isinstance(index, dict):
+        index = {"version": 1, "reports": []}
+    reports = index.get("reports")
+    if not isinstance(reports, list):
+        reports = []
+
+    reports = [item for item in reports if isinstance(item, dict) and item.get("path") != rel_html]
+    reports.append(entry)
+    reports.sort(key=lambda item: float(item.get("modified", 0) or 0), reverse=True)
+    if len(reports) > 5000:
+        reports = reports[:5000]
+
+    index["reports"] = reports
+    index["version"] = 1
+    save_json(REPORT_INDEX_FILE, index)
 
 
 def _severity_counts(findings: list[dict]) -> dict[str, int]:
@@ -86,13 +148,15 @@ def build_report_payload(
     report_profile: str = "technical",
     include_manual_assessment: bool = True,
 ) -> dict:
-    duration = datetime.now() - start_time
+    started_at_malaysia = _as_malaysia_time(start_time)
+    duration = datetime.now(timezone.utc) - (start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc))
     duration_seconds = int(duration.total_seconds())
     payload = {
         "report_version": 3,
         "target_url": target_url,
         "scan_mode": scan_mode,
-        "scan_started_at": start_time.isoformat(),
+        "scan_started_at": started_at_malaysia.isoformat(),
+        "scan_started_at_utc": (start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat(),
         "scan_duration_seconds": duration_seconds,
         "summary": {
             "finding_count": len(findings),
@@ -659,7 +723,7 @@ def generate_html_report(payload: dict) -> str:
                 "</div>"
             )
 
-    scan_date = datetime.fromisoformat(payload["scan_started_at"]).strftime("%Y-%m-%d %H:%M:%S")
+    scan_date = _as_malaysia_time(datetime.fromisoformat(payload["scan_started_at"])).strftime("%Y-%m-%d %H:%M:%S %Z")
     duration_seconds = payload.get("scan_duration_seconds", 0)
     severity_counts = summary.get("severity_counts", {})
     overall_risk = _overall_risk(summary)
@@ -718,6 +782,64 @@ def generate_html_report(payload: dict) -> str:
         attack_hypotheses = disabled_note
         verification_strategy = disabled_note
         assessment_summary_text = disabled_note
+
+    assessment_narrative_html = ""
+    manual_analytics_html = ""
+    category_coverage_html = ""
+    if include_manual_assessment:
+        assessment_narrative_html = f"""
+        <h2>Assessment Narrative</h2>
+        <div class="grid two">
+            <div class="card">
+                <h3>Analyst Summary</h3>
+                <div class="narrative">{assessment_summary_text}</div>
+            </div>
+            <div class="card">
+                <h3>Authentication Context</h3>
+                <div class="narrative">{auth_context_notes}</div>
+            </div>
+            <div class="card">
+                <h3>Attack Path Hypotheses</h3>
+                <div class="narrative">{attack_hypotheses}</div>
+            </div>
+            <div class="card">
+                <h3>Verification Strategy</h3>
+                <div class="narrative">{verification_strategy}</div>
+            </div>
+        </div>
+        """
+
+        manual_analytics_html = f"""
+        <h2>Manual Assessment Analytics</h2>
+        <div class="grid two">
+            <div class="card">
+                <h3>Case Status</h3>
+                <table>
+                    <tr><th>Status</th><th>Count</th></tr>
+                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('case_status', {}).items()) or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>"}
+                </table>
+            </div>
+            <div class="card">
+                <h3>Verification Status</h3>
+                <table>
+                    <tr><th>Status</th><th>Count</th></tr>
+                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('verification_status', {}).items()) or "<tr><td colspan='2'>No verification records yet.</td></tr>"}
+                </table>
+            </div>
+        </div>
+        """
+
+        category_coverage_html = f"""
+        <div class="card">
+            <h3>Category Coverage</h3>
+            <table>
+                <thead><tr><th>Category</th><th>Total Cases</th><th>Worked</th><th>Verified</th></tr></thead>
+                <tbody>
+                    {''.join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+        """
 
     rendered_from_template = _render_report_template(
         {
@@ -1029,53 +1151,9 @@ def generate_html_report(payload: dict) -> str:
             </div>
         </div>
 
-        <h2>Assessment Narrative</h2>
-        <div class="grid two">
-            <div class="card">
-                <h3>Analyst Summary</h3>
-                <div class="narrative">{assessment_summary_text}</div>
-            </div>
-            <div class="card">
-                <h3>Authentication Context</h3>
-                <div class="narrative">{auth_context_notes}</div>
-            </div>
-            <div class="card">
-                <h3>Attack Path Hypotheses</h3>
-                <div class="narrative">{attack_hypotheses}</div>
-            </div>
-            <div class="card">
-                <h3>Verification Strategy</h3>
-                <div class="narrative">{verification_strategy}</div>
-            </div>
-        </div>
-
-        <h2>Manual Assessment Analytics</h2>
-        <div class="grid two">
-            <div class="card">
-                <h3>Case Status</h3>
-                <table>
-                    <tr><th>Status</th><th>Count</th></tr>
-                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('case_status', {}).items()) or "<tr><td colspan='2'>No manual assessment activity yet.</td></tr>"}
-                </table>
-            </div>
-            <div class="card">
-                <h3>Verification Status</h3>
-                <table>
-                    <tr><th>Status</th><th>Count</th></tr>
-                    {''.join(f"<tr><td>{html.escape(k.replace('_', ' '))}</td><td>{v}</td></tr>" for k, v in assessment_summary.get('verification_status', {}).items()) or "<tr><td colspan='2'>No verification records yet.</td></tr>"}
-                </table>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>Category Coverage</h3>
-            <table>
-                <thead><tr><th>Category</th><th>Total Cases</th><th>Worked</th><th>Verified</th></tr></thead>
-                <tbody>
-                    {''.join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>"}
-                </tbody>
-            </table>
-        </div>
+        {assessment_narrative_html}
+        {manual_analytics_html}
+        {category_coverage_html}
 
         <h2 id="appendix">Appendix: Tool Telemetry</h2>
         <p class="appendix-note">Detailed command telemetry and raw discovery artifacts are provided for analyst traceability.</p>
@@ -1548,5 +1626,10 @@ def save_reports(
         csv_path = report_dir / f"report_{ts}.csv"
         csv_path.write_text(generate_csv_report(payload), encoding="utf-8", newline="")
         paths["csv"] = csv_path
+
+    try:
+        _upsert_report_index(paths, payload)
+    except Exception:
+        pass
 
     return paths

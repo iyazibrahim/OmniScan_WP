@@ -8,13 +8,15 @@ import threading
 import uuid
 import time
 import functools
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from collections import defaultdict
 from urllib.parse import urlparse
 from flask import Flask, jsonify, request, send_from_directory, session, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from lib.assessments import get_catalog, get_workbook, save_workbook, summarize_workbook
+from lib.ai_policy import load_policy, evaluate_plan
+from lib.ai_runner import execute_actions, persist_evidence
 
 # ── Logging setup ───────────────────────────────────────────────────────────────
 
@@ -36,11 +38,15 @@ app = Flask(__name__, static_folder='web')
 
 BASE_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = BASE_DIR / "reports"
+REPORT_INDEX_FILE = REPORTS_DIR / "report-index.json"
 CONFIG_DIR = BASE_DIR / "config"
 TARGETS_FILE = CONFIG_DIR / "targets.json"
 SCAN_CONFIG_FILE = CONFIG_DIR / "scan-config.json"
 TOKENS_FILE = CONFIG_DIR / "tokens.json"
 AUTH_FILE = CONFIG_DIR / "auth.json"
+AI_POLICY_FILE = CONFIG_DIR / "ai-policy.json"
+AI_PLANS_FILE = CONFIG_DIR / "ai-plans.json"
+AI_RESULTS_FILE = CONFIG_DIR / "ai-results.json"
 
 # ── Auth bootstrap ───────────────────────────────────────────────────────────────
 
@@ -440,6 +446,44 @@ def _save_json(path: Path, obj):
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding='utf-8')
 
 
+def _load_ai_plan_store() -> dict:
+    data = _load_json(AI_PLANS_FILE)
+    return data if isinstance(data, dict) else {}
+
+
+def _save_ai_plan_store(store: dict):
+    _save_json(AI_PLANS_FILE, store)
+
+
+def _load_ai_results_store() -> dict:
+    data = _load_json(AI_RESULTS_FILE)
+    return data if isinstance(data, dict) else {}
+
+
+def _save_ai_results_store(store: dict):
+    _save_json(AI_RESULTS_FILE, store)
+
+
+def _scan_dir_for_scan_id(scan_id: str | None) -> Path | None:
+    if not scan_id:
+        return None
+    with SCAN_JOBS_LOCK:
+        job = SCAN_JOBS.get(scan_id)
+        raw = (job or {}).get("scan_dir")
+    if not raw:
+        return None
+    return Path(str(raw))
+
+
+def _is_full_testing_bypass_enabled(scan_cfg: dict, bypass_token: str) -> bool:
+    if not bool(scan_cfg.get("ai_allow_full_autonomous_testing", False)):
+        return False
+    expected = str(scan_cfg.get("ai_full_testing_bypass_token", "")).strip()
+    if not expected or not bypass_token:
+        return False
+    return bypass_token == expected
+
+
 def _require_target_arg():
     target = (request.args.get("target") or "").strip().rstrip("/")
     if not target:
@@ -789,23 +833,195 @@ def update_assessment():
     summary = summarize_workbook(workbook)
     return jsonify({"message": "Assessment workbook saved", "workbook": workbook, "summary": summary})
 
+
+# ── AI Action Plans ─────────────────────────────────────────────────────────────
+
+@app.route('/api/ai/plans', methods=['POST'])
+@login_required
+def create_ai_plan():
+    body = request.json or {}
+    target = str(body.get("target", "")).strip().rstrip("/")
+    actions = body.get("actions", [])
+    scan_id = str(body.get("scan_id", "")).strip() or None
+    bypass_token = str(body.get("bypass_token", "")).strip()
+
+    if not target:
+        return jsonify({"error": "target is required"}), 400
+    if not isinstance(actions, list) or not actions:
+        return jsonify({"error": "actions array is required"}), 400
+
+    scan_cfg = _load_json(SCAN_CONFIG_FILE)
+    if not isinstance(scan_cfg, dict):
+        scan_cfg = {}
+
+    require_approval = bool(scan_cfg.get("ai_require_approval_high_impact", True))
+    allow_bypass = _is_full_testing_bypass_enabled(scan_cfg, bypass_token)
+    policy = load_policy(AI_POLICY_FILE)
+    evaluated = evaluate_plan(
+        plan_actions=actions,
+        target_url=target,
+        policy=policy,
+        require_approval_high_impact=require_approval,
+        allow_full_testing_bypass=allow_bypass,
+    )
+
+    plan_id = uuid.uuid4().hex
+    created_at = datetime.now(UTC).isoformat()
+    status = "approved" if (evaluated.get("requires_approval_count", 0) == 0 or allow_bypass) else "pending_approval"
+
+    plan = {
+        "id": plan_id,
+        "created_at": created_at,
+        "created_by": session.get("user", ""),
+        "target": target,
+        "scan_id": scan_id,
+        "status": status,
+        "bypass_used": allow_bypass,
+        "approved_actions": evaluated.get("approved_actions", []),
+        "rejected_actions": evaluated.get("rejected_actions", []),
+        "requires_approval_count": evaluated.get("requires_approval_count", 0),
+        "execution": None,
+    }
+
+    store = _load_ai_plan_store()
+    store[plan_id] = plan
+    _save_ai_plan_store(store)
+
+    return jsonify({"message": "AI action plan created", "plan": plan}), 201
+
+
+@app.route('/api/ai/plans/<plan_id>', methods=['GET'])
+@login_required
+def get_ai_plan(plan_id):
+    store = _load_ai_plan_store()
+    plan = store.get(plan_id)
+    if not isinstance(plan, dict):
+        return jsonify({"error": "Plan not found"}), 404
+    return jsonify(plan)
+
+
+@app.route('/api/ai/plans/<plan_id>/approve', methods=['POST'])
+@login_required
+def approve_ai_plan(plan_id):
+    store = _load_ai_plan_store()
+    plan = store.get(plan_id)
+    if not isinstance(plan, dict):
+        return jsonify({"error": "Plan not found"}), 404
+
+    approved_actions = plan.get("approved_actions", [])
+    for action in approved_actions:
+        if isinstance(action, dict) and action.get("requires_approval"):
+            action["approved"] = True
+
+    plan["approved_actions"] = approved_actions
+    plan["status"] = "approved"
+    plan["approved_at"] = datetime.now(UTC).isoformat()
+    plan["approved_by"] = session.get("user", "")
+    store[plan_id] = plan
+    _save_ai_plan_store(store)
+
+    return jsonify({"message": "Plan approved", "plan": plan})
+
+
+@app.route('/api/ai/plans/<plan_id>/execute', methods=['POST'])
+@login_required
+def execute_ai_plan(plan_id):
+    store = _load_ai_plan_store()
+    plan = store.get(plan_id)
+    if not isinstance(plan, dict):
+        return jsonify({"error": "Plan not found"}), 404
+
+    body = request.json or {}
+    bypass_token = str(body.get("bypass_token", "")).strip()
+
+    scan_cfg = _load_json(SCAN_CONFIG_FILE)
+    if not isinstance(scan_cfg, dict):
+        scan_cfg = {}
+    allow_bypass = _is_full_testing_bypass_enabled(scan_cfg, bypass_token)
+
+    if plan.get("status") not in {"approved", "executed"} and not allow_bypass:
+        return jsonify({"error": "Plan requires approval before execution"}), 409
+
+    approved_actions = plan.get("approved_actions", []) if isinstance(plan.get("approved_actions"), list) else []
+    actions_to_run: list[dict] = []
+    for action in approved_actions:
+        if not isinstance(action, dict):
+            continue
+        if allow_bypass:
+            action["approved"] = True
+        if action.get("approved"):
+            actions_to_run.append(action)
+
+    if not actions_to_run:
+        return jsonify({"error": "No approved actions to execute"}), 400
+
+    policy = load_policy(AI_POLICY_FILE)
+    rpm = int((policy.get("rate_limits") or {}).get("requests_per_minute", 30) or 30)
+    execution = execute_actions(actions_to_run, requests_per_minute=rpm)
+
+    scan_dir = _scan_dir_for_scan_id(plan.get("scan_id"))
+    evidence_paths = persist_evidence(scan_dir, execution)
+
+    target = str(plan.get("target", "")).strip()
+    result_store = _load_ai_results_store()
+    target_entry = result_store.get(target)
+    if not isinstance(target_entry, dict):
+        target_entry = {"updated_at": "", "results": []}
+    target_results = target_entry.get("results", []) if isinstance(target_entry.get("results"), list) else []
+    target_results.extend(execution.get("results", []))
+    # Keep only recent results to limit unbounded growth.
+    if len(target_results) > 500:
+        target_results = target_results[-500:]
+    target_entry["updated_at"] = datetime.now(UTC).isoformat()
+    target_entry["results"] = target_results
+    target_entry["last_execution"] = {
+        "plan_id": plan_id,
+        "executed_at": execution.get("executed_at"),
+        "verdict_counts": execution.get("verdict_counts", {}),
+        "evidence_file": evidence_paths.get("evidence_file", ""),
+        "actions_file": evidence_paths.get("actions_file", ""),
+    }
+    result_store[target] = target_entry
+    _save_ai_results_store(result_store)
+
+    plan["status"] = "executed"
+    plan["executed_at"] = execution.get("executed_at")
+    plan["executed_by"] = session.get("user", "")
+    plan["bypass_used"] = bool(plan.get("bypass_used") or allow_bypass)
+    plan["execution"] = {
+        "result_count": execution.get("result_count", 0),
+        "verdict_counts": execution.get("verdict_counts", {}),
+        "evidence_file": evidence_paths.get("evidence_file", ""),
+        "actions_file": evidence_paths.get("actions_file", ""),
+    }
+
+    store[plan_id] = plan
+    _save_ai_plan_store(store)
+
+    return jsonify({
+        "message": "AI plan executed",
+        "plan": plan,
+        "execution": execution,
+        "evidence": evidence_paths,
+    })
+
 # ── Reports ─────────────────────────────────────────────────────────────────────
 
 @app.route('/api/reports', methods=['GET'])
 @login_required
 def list_reports():
-    reports = []
-    if REPORTS_DIR.exists():
-        # Find all HTML report files recursively
+    def _scan_reports_from_disk() -> list[dict]:
+        reports_list: list[dict] = []
+        if not REPORTS_DIR.exists():
+            return reports_list
+
         for html_file in sorted(REPORTS_DIR.rglob("*.html"), reverse=True):
             rel = html_file.relative_to(REPORTS_DIR)
             size_kb = html_file.stat().st_size / 1024
             mtime = html_file.stat().st_mtime
 
-            # Try to find companion JSON for severity counts
             json_companion = html_file.with_suffix('.json')
             if not json_companion.exists():
-                # Check for report_*.json in the same folder
                 parent = html_file.parent
                 json_files = list(parent.glob("report_*.json"))
                 json_companion = json_files[0] if json_files else None
@@ -814,6 +1030,7 @@ def list_reports():
             target_url = ""
             effective_profile = ""
             assessment_summary = {}
+            scan_started_at = ""
             if json_companion and json_companion.exists():
                 try:
                     report_data = json.loads(json_companion.read_text(encoding='utf-8'))
@@ -822,6 +1039,7 @@ def list_reports():
                         target_url = report_data.get("target_url", "")
                         effective_profile = report_data.get("overview", {}).get("effective_profile", "")
                         assessment_summary = report_data.get("assessment", {}).get("summary", {})
+                        scan_started_at = report_data.get("scan_started_at", "")
                     else:
                         findings = report_data
                     if isinstance(findings, list):
@@ -845,13 +1063,14 @@ def list_reports():
                 except ValueError:
                     pass
 
-            reports.append({
+            reports_list.append({
                 "path": str(rel).replace('\\', '/'),
                 "name": html_file.stem,
                 "folder": str(rel.parent).replace('\\', '/'),
                 "target_url": target_url,
                 "profile": effective_profile,
                 "assessment_summary": assessment_summary,
+                "scan_started_at": scan_started_at,
                 "size_kb": round(size_kb, 1),
                 "modified": mtime,
                 "severities": severity_counts,
@@ -860,6 +1079,43 @@ def list_reports():
                 "csv_path": str(csv_rel).replace('\\', '/') if csv_rel else None,
                 "sarif_path": str(sarif_rel).replace('\\', '/') if sarif_rel else None,
             })
+        return reports_list
+
+    reports: list[dict] = []
+    index_data = _load_json(REPORT_INDEX_FILE)
+    if isinstance(index_data, dict) and isinstance(index_data.get("reports"), list):
+        for item in index_data.get("reports", []):
+            if not isinstance(item, dict):
+                continue
+            rel_path = str(item.get("path", "")).strip().replace('\\', '/')
+            if not rel_path:
+                continue
+            html_path = REPORTS_DIR / rel_path
+            if not html_path.exists():
+                continue
+            reports.append(
+                {
+                    "path": rel_path,
+                    "name": item.get("name") or html_path.stem,
+                    "folder": item.get("folder") or str(Path(rel_path).parent).replace('\\', '/'),
+                    "target_url": item.get("target_url", ""),
+                    "profile": item.get("profile", ""),
+                    "assessment_summary": item.get("assessment_summary", {}),
+                    "scan_started_at": item.get("scan_started_at", ""),
+                    "size_kb": round(float(item.get("size_kb", round(html_path.stat().st_size / 1024, 1)) or 0), 1),
+                    "modified": float(item.get("modified", html_path.stat().st_mtime) or html_path.stat().st_mtime),
+                    "severities": item.get("severities") if isinstance(item.get("severities"), dict) else {"critical": 0, "high": 0, "medium": 0, "low": 0},
+                    "md_path": item.get("md_path"),
+                    "json_path": item.get("json_path"),
+                    "csv_path": item.get("csv_path"),
+                    "sarif_path": item.get("sarif_path"),
+                }
+            )
+
+    if not reports:
+        reports = _scan_reports_from_disk()
+
+    reports.sort(key=lambda item: float(item.get("modified", 0) or 0), reverse=True)
 
     # Server-side pagination
     try:
@@ -927,7 +1183,16 @@ def delete_report():
 @app.route('/api/monthly-stats', methods=['GET'])
 @login_required
 def get_monthly_stats():
-    stats = defaultdict(lambda: {"critical": 0, "high": 0, "medium": 0, "low": 0})
+    stats = defaultdict(lambda: {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "cve_backed": 0,
+        "confirmed": 0,
+        "exploitable": 0,
+        "total": 0,
+    })
 
     if REPORTS_DIR.exists():
         for json_file in REPORTS_DIR.rglob("report_*.json"):
@@ -947,10 +1212,50 @@ def get_monthly_stats():
                         sev = finding.get('severity', 'low').lower()
                         if sev in stats[month_str]:
                             stats[month_str][sev] += 1
+                        stats[month_str]["total"] += 1
+
+                        if str(finding.get("cve", "")).strip():
+                            stats[month_str]["cve_backed"] += 1
+
+                        status = str(finding.get("status", "")).strip().lower()
+                        if status in {"confirmed", "reproduced", "exploited"}:
+                            stats[month_str]["confirmed"] += 1
+
+                        exploitability = str(finding.get("exploitability", "")).strip().lower()
+                        if exploitability == "high":
+                            stats[month_str]["exploitable"] += 1
             except Exception:
                 pass
 
     sorted_months = sorted(stats.keys())
+    insights = {
+        "summary": "No trend data yet. Run scans to build monthly risk insights.",
+        "latest_month": "",
+        "critical_high_delta": 0,
+        "direction": "flat",
+    }
+
+    if sorted_months:
+        latest_month = sorted_months[-1]
+        latest = stats[latest_month]
+        latest_critical_high = latest["critical"] + latest["high"]
+        prev_critical_high = 0
+        if len(sorted_months) > 1:
+            prev = stats[sorted_months[-2]]
+            prev_critical_high = prev["critical"] + prev["high"]
+        delta = latest_critical_high - prev_critical_high
+        direction = "flat"
+        if delta > 0:
+            direction = "up"
+        elif delta < 0:
+            direction = "down"
+        insights = {
+            "summary": f"{latest_month}: {latest['critical']} critical, {latest['high']} high, {latest['cve_backed']} CVE-backed, {latest['confirmed']} confirmed findings.",
+            "latest_month": latest_month,
+            "critical_high_delta": delta,
+            "direction": direction,
+        }
+
     result = {
         "labels": sorted_months,
         "datasets": {
@@ -958,7 +1263,12 @@ def get_monthly_stats():
             "high": [stats[m]["high"] for m in sorted_months],
             "medium": [stats[m]["medium"] for m in sorted_months],
             "low": [stats[m]["low"] for m in sorted_months],
-        }
+            "cve_backed": [stats[m]["cve_backed"] for m in sorted_months],
+            "confirmed": [stats[m]["confirmed"] for m in sorted_months],
+            "exploitable": [stats[m]["exploitable"] for m in sorted_months],
+            "total": [stats[m]["total"] for m in sorted_months],
+        },
+        "insights": insights,
     }
     return jsonify(result)
 
@@ -1027,6 +1337,10 @@ def start_scan():
             patch["total_tools"] = _safe_int(event.get("total_tools"), 0)
             if isinstance(event.get("phase"), str):
                 patch["phase"] = event["phase"]
+            if isinstance(event.get("planned_tools"), list):
+                patch["planned_tools"] = event["planned_tools"]
+            if isinstance(event.get("missing_tools"), list):
+                patch["missing_tools"] = event["missing_tools"]
 
         elif event_type == "tool_started":
             with SCAN_JOBS_LOCK:
@@ -1057,7 +1371,7 @@ def start_scan():
                 }
             )
             _append_scan_event(scan_id, f"{tool_name} finished with status: {status}.")
-            if note and status in {"timeout", "skipped", "cancelled", "failed"}:
+            if note and status in {"timeout", "skipped", "cancelled", "failed", "missing"}:
                 _append_scan_event(scan_id, note)
 
             with SCAN_JOBS_LOCK:

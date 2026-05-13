@@ -969,6 +969,8 @@ def run_all_tools(
             message = note
         elif status == "cancelled":
             message = f"{tool_meta.get('label', tool_name)} cancelled."
+        elif status == "missing":
+            message = f"{tool_meta.get('label', tool_name)} is missing from PATH."
         else:
             message = f"{tool_meta.get('label', tool_name)} completed with status {status}."
         _emit(
@@ -1248,12 +1250,27 @@ def run_all_tools(
         prepared_static_deferred.append((tool_name, phase, runner))
 
     total_tools = len(static_plan) + len(dynamic_plan)
+    planned_tools = [
+        {
+            "name": tool_name,
+            "label": _tool_meta(tool_name).get("label", tool_name),
+            "phase": phase,
+            "installed": bool(installed.get(tool_name)),
+        }
+        for tool_name, phase, _runner in (static_plan + dynamic_plan)
+    ]
+    missing_tools = [item["label"] for item in planned_tools if not item["installed"]]
+    availability_message = f"Planned {total_tools} tools; {len(planned_tools) - len(missing_tools)} available, {len(missing_tools)} missing from PATH."
+    if missing_tools:
+        availability_message += f" Missing: {', '.join(missing_tools[:5])}{'...' if len(missing_tools) > 5 else ''}."
     _emit(
         {
             "event": "plan_updated",
             "phase": "tool_execution",
             "total_tools": total_tools,
-            "message": f"Profile resolved as {effective_profile}; updated scan plan has {total_tools} tools.",
+            "planned_tools": planned_tools,
+            "missing_tools": missing_tools,
+            "message": f"Profile resolved as {effective_profile}; {availability_message}",
         }
     )
 

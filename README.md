@@ -241,6 +241,7 @@ Dockerfile             # Container image definition
 | --- | --- |
 | `config/targets.json` | Saved targets and selected profile |
 | `config/scan-config.json` | Timeouts, rate limits, threads, run parameters |
+| `config/ai-policy.json` | AI action policy rules (scope/method/payload/rate limits) |
 | `config/tokens.json` | API tokens for integrated tooling |
 | `config/auth.json` | Generated admin auth record (hashed password) |
 | `fixes/remediation-db.json` | Finding-to-remediation mapping |
@@ -274,6 +275,26 @@ Operational reliability knobs in `config/scan-config.json`:
 
 - `scan_time_budget_*_seconds`: planner budget for adaptive low-priority tool skipping near deadline
 - `scan_hard_timeout_seconds`: hard upper bound for stale running scans before auto-fail cleanup
+
+AI operator controls in `config/scan-config.json`:
+
+- `ai_operator_enabled`: apply stored AI verification verdicts into finding/report statuses
+- `ai_require_approval_high_impact`: require manual approval for state-changing/high-impact actions
+- `ai_allow_full_autonomous_testing`: allow approval bypass when a valid token is provided
+- `ai_full_testing_bypass_token`: shared secret used to enable full autonomous execution bypass
+
+AI action API endpoints:
+
+- `POST /api/ai/plans`: submit JSON action plan for policy evaluation
+- `GET /api/ai/plans/<plan_id>`: fetch evaluated plan and execution status
+- `POST /api/ai/plans/<plan_id>/approve`: approve pending high-impact actions
+- `POST /api/ai/plans/<plan_id>/execute`: run approved actions with deterministic runner
+
+Execution artifacts:
+
+- Plans are stored in `config/ai-plans.json`
+- Target verdict history is stored in `config/ai-results.json`
+- Per-scan execution evidence is written to `ai-evidence.jsonl` and `ai-actions.json` inside the scan folder when `scan_id` is provided
 
 ## GitHub Publishing Checklist
 

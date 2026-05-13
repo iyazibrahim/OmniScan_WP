@@ -53,7 +53,7 @@
                         <path d="M9 12l2 2 4-4"></path>
                         <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path>
                     </svg>
-                    <span>Assessments</span>
+                    <span>Playbook</span>
                 </a>
                 <a href="#" class="nav-item" data-view="targets" id="nav-targets">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -368,8 +368,8 @@
             <section class="view" id="view-assessments">
                 <header class="view-header">
                     <div>
-                        <h1>Assessments</h1>
-                        <p class="view-subtitle">Step-by-step manual testing with collapsible guidance</p>
+                        <h1>Security Playbook</h1>
+                        <p class="view-subtitle">Step-by-step analyst workflow with guided test cases</p>
                     </div>
                     <button class="btn-ghost" id="refreshAssessments">
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -380,8 +380,8 @@
                 <div class="assessment-shell">
                     <div class="card">
                         <div class="card-header">
-                            <h3>Target Workbook</h3>
-                            <p class="subtitle">Load or continue a guided manual assessment for a saved or custom target</p>
+                            <h3>Target Playbook</h3>
+                            <p class="subtitle">Load or continue a guided playbook for a saved or custom target</p>
                         </div>
                         <div class="card-body">
                             <form id="assessmentTargetForm">
@@ -392,11 +392,11 @@
                                     </select>
                                     <button type="submit" class="btn-primary">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
-                                        Load Workbook
+                                        Load Playbook
                                     </button>
                                     <button type="button" class="btn-ghost" id="saveAssessmentBtn">
                                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                                        Save Workbook
+                                        Save Playbook
                                     </button>
                                 </div>
                             </form>
@@ -406,8 +406,8 @@
                     <div id="assessmentWorkspace" class="assessment-workspace">
                         <div class="empty-state-big">
                             <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path><path d="M9 12l2 2 4-4"></path></svg>
-                            <h3>No Workbook Loaded</h3>
-                            <p>Select a saved target or enter a URL to start guided manual testing.</p>
+                            <h3>No Playbook Loaded</h3>
+                            <p>Select a saved target or enter a URL to start guided analyst testing.</p>
                         </div>
                     </div>
                 </div>
