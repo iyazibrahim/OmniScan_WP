@@ -1027,8 +1027,7 @@ const App = {
                                     ${historyRows}
                                 </div>
                             </div>`;
-                    }).join("
-        }).join("");
+                        }).join("")}
                 </div>
             </div>`;
     },
