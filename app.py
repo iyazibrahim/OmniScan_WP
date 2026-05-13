@@ -1759,8 +1759,31 @@ def start_scan():
         from scanner import run_scan
 
         def _is_cancel_requested() -> bool:
+            global _scan_jobs_dirty
+            timeout_triggered = False
             with SCAN_JOBS_LOCK:
-                return bool(SCAN_JOBS.get(scan_id, {}).get("cancel_requested"))
+                job = SCAN_JOBS.get(scan_id)
+                if not job:
+                    return True
+                if bool(job.get("cancel_requested")):
+                    return True
+
+                hard_timeout_seconds = max(1, _safe_int(job.get("hard_timeout_seconds"), 0))
+                started_at = float(job.get("started_at") or time.time())
+                if hard_timeout_seconds > 0 and (time.time() - started_at) >= hard_timeout_seconds:
+                    if not bool(job.get("timeout_reached")):
+                        job["timeout_reached"] = True
+                        job["timeout_triggered_at"] = time.time()
+                        job["message"] = "Global scan timeout reached. Finalizing partial report from available outputs."
+                        job["updated_at"] = time.time()
+                        _scan_jobs_dirty = True
+                        timeout_triggered = True
+                    return True
+
+            if timeout_triggered:
+                _append_scan_event(scan_id, "Global scan timeout reached. Finalizing partial report from available outputs.")
+                _flush_scan_jobs_to_disk()
+            return False
 
         try:
             run_scan(

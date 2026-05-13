@@ -178,9 +178,20 @@ Use dashboard to:
 
 ### Modes
 
-- `passive`: low-noise recon and baseline checks.
-- `active`: deeper, higher-noise vulnerability testing.
-- `full`: passive + active.
+- `passive`: scan/recon only (passive tools only).
+- `active`: active tools only, aggressive scanning and testing.
+- `full`: passive + active combined for maximum coverage (longer runtime).
+
+### Recommended Coverage Policy (All Tools + Graceful Reports)
+
+To prioritize full tool coverage while keeping scans bounded around 45-60 minutes:
+
+- `strict_tool_coverage: true`
+- `adaptive_tool_selection: false`
+- `automation_scheduler: false`
+- `scan_hard_timeout_seconds: 3600`
+
+When this policy is enabled, OmniScan attempts to run the complete tool set and still includes output from completed/partial tool runs in generated reports.
 
 ## Architecture
 

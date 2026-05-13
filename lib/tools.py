@@ -611,8 +611,10 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
     result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
 
     retry_on_empty = bool(config.get("nuclei_retry_auto_scan_on_empty", True))
+    full_only_auto_fallback = bool(config.get("nuclei_retry_auto_scan_on_empty_full_only", True))
+    run_auto_fallback = retry_on_empty and (scan_mode == "full" or not full_only_auto_fallback)
     fallback_notes: list[str] = []
-    if result.get("status") == "completed_no_output" and retry_on_empty:
+    if result.get("status") == "completed_no_output" and run_auto_fallback:
         ui.status("Nuclei returned no tagged matches; retrying with auto-scan templates...")
         auto_cmd = [
             "nuclei",
@@ -628,6 +630,7 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             str(output_file),
             "-silent",
         ]
+        auto_timeout = int(config.get("nuclei_auto_fallback_timeout_seconds", max(timeout, 1200)) or max(timeout, 1200))
         auto_result = _run_tool(
             auto_cmd,
             "nuclei",
@@ -635,14 +638,20 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             "passive",
             scan_dir,
             output_files=[output_file],
-            timeout=timeout,
+            timeout=auto_timeout,
             cancel_check=cancel_check,
         )
-        if auto_result.get("status") != "completed_no_output":
-            fallback_notes.append("Primary tagged scan returned no output; fallback auto-scan run was used.")
+        if auto_result.get("status") in {"completed", "completed_partial"}:
+            fallback_notes.append("Primary tagged scan returned no output; fallback auto-scan run produced findings or artifacts.")
+            result = auto_result
+        elif auto_result.get("status") == "timeout":
+            fallback_notes.append("Primary tagged scan returned no output; auto-scan fallback timed out before producing results.")
             result = auto_result
         else:
             result = auto_result
+
+    if result.get("status") == "completed_no_output" and retry_on_empty and scan_mode != "full" and full_only_auto_fallback:
+        fallback_notes.append("Auto-scan fallback is limited to full scans; passive run completed with no Nuclei matches.")
 
     run_full_fallback = bool(config.get("nuclei_retry_full_template_on_empty_full", True)) and scan_mode == "full"
     if result.get("status") == "completed_no_output" and run_full_fallback:
@@ -1032,6 +1041,7 @@ def run_all_tools(
     max_parallel_tools = max(1, int(config.get("max_parallel_tools", 3)))
     max_parallel_heavy_tools = max(1, int(config.get("max_parallel_heavy_tools", 2)))
     automation_scheduler = bool(config.get("automation_scheduler", True))
+    strict_tool_coverage = bool(config.get("strict_tool_coverage", False))
     fast_profile_tools = set(config.get("fast_profile_tools", ["httpx", "whatweb", "corsy", "gau", "sslyze", "subfinder"]))
     deferred_passive_tools = set(config.get("deferred_passive_tools", ["katana"]))
     deferred_profile_tools = set(config.get("deferred_profile_tools", ["wpscan"]))
@@ -1044,6 +1054,40 @@ def run_all_tools(
     def _emit(event: dict):
         if progress_callback:
             progress_callback(event)
+
+    def _finalize_execution(
+        effective_profile: str,
+        profile_info: dict,
+        interrupted: bool = False,
+        interrupt_reason: str = "",
+    ) -> dict:
+        completed = [item["name"] for item in tool_runs if item["status"] in ("completed", "completed_no_output", "completed_partial")]
+        profile_info = profile_info or {
+            "requested_profile": profile,
+            "effective_profile": effective_profile,
+            "confidence": "unknown",
+            "scores": {effective_profile: 1},
+            "reasons": [],
+        }
+        if interrupted:
+            profile_info = dict(profile_info)
+            reasons = list(profile_info.get("reasons", []))
+            if interrupt_reason:
+                reasons.append(interrupt_reason)
+            profile_info["reasons"] = reasons[-8:]
+            profile_info["interrupted"] = True
+            profile_info["interrupt_reason"] = interrupt_reason
+        profile_info["tools_completed"] = completed
+        profile_info["tools_attempted"] = [item["name"] for item in tool_runs]
+        return {
+            "requested_profile": profile,
+            "effective_profile": effective_profile,
+            "profile_detection": profile_info,
+            "tools": tool_runs,
+            "tools_used": completed,
+            "interrupted": interrupted,
+            "interrupt_reason": interrupt_reason,
+        }
 
     def _tool_meta(tool_name: str) -> dict:
         return next((t for t in TOOLS if t["name"] == tool_name), {"name": tool_name, "label": tool_name, "phase": "active"})
@@ -1101,6 +1145,8 @@ def run_all_tools(
         return _result_template(tool_name, tool_meta.get("label", tool_name), phase, [], "skipped", reason)
 
     def _budget_skip(tool_name: str, phase: str) -> dict | None:
+        if strict_tool_coverage:
+            return None
         if scan_time_budget_seconds <= 0 or tool_name not in low_priority_tools:
             return None
         if (time.monotonic() - run_started) < max(0, scan_time_budget_seconds - deadline_skip_grace_seconds):
@@ -1116,7 +1162,11 @@ def run_all_tools(
         nonlocal completed_count
 
         if should_cancel and should_cancel():
-            raise InterruptedError("Scan cancelled by user.")
+            cancel_result = _skip_tool_result(tool_name, phase, "Execution interrupted by timeout/cancellation before this tool started.")
+            cancel_result["status"] = "cancelled"
+            completed_count += 1
+            _emit_tool_finished(total_tools, tool_name, phase, cancel_result)
+            return cancel_result
         skip_result = _budget_skip(tool_name, phase)
         if skip_result is not None:
             completed_count += 1
@@ -1204,7 +1254,21 @@ def run_all_tools(
 
     tool_runs.extend(_execute_plan(static_fast_plan, len(static_plan), max_parallel_tools))
     if should_cancel and should_cancel():
-        raise InterruptedError("Scan cancelled by user.")
+        fallback_profile = profile if profile in {"wordpress", "joomla", "drupal", "api", "webapp"} else "webapp"
+        partial_profile = {
+            "requested_profile": profile,
+            "effective_profile": fallback_profile,
+            "confidence": "interrupted",
+            "scores": {fallback_profile: 1},
+            "surface_signals": {},
+            "reasons": [],
+        }
+        return _finalize_execution(
+            fallback_profile,
+            partial_profile,
+            interrupted=True,
+            interrupt_reason="Execution interrupted during initial scan phase.",
+        )
 
     _emit(
         {
@@ -1256,7 +1320,12 @@ def run_all_tools(
         if nikto_enabled and (effective_profile != "wordpress" or nikto_wordpress_enabled):
             dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir, effective_profile, cancel_check=should_cancel)))
         if effective_profile == "wordpress":
-            if profile == "auto" and bool(config.get("adaptive_skip_wpscan_low_confidence", True)) and profile_info.get("confidence") == "low":
+            if (
+                profile == "auto"
+                and not strict_tool_coverage
+                and bool(config.get("adaptive_skip_wpscan_low_confidence", True))
+                and profile_info.get("confidence") == "low"
+            ):
                 dynamic_plan.append(("wpscan", "passive", lambda: _skip_tool_result("wpscan", "passive", "Skipped by automation rule: WordPress confidence is too low for a full WPScan pass.")))
             else:
                 dynamic_plan.append(("wpscan", "passive", lambda: run_wpscan(url, config, tokens, scan_dir, local_target, cancel_check=should_cancel)))
@@ -1280,6 +1349,8 @@ def run_all_tools(
         sql_error_hints = any(hint in detect_text for hint in ("sql syntax", "mysql", "postgres", "odbc", "sqlite", "sqlstate"))
 
         def _should_run_sqlmap() -> tuple[bool, str]:
+            if strict_tool_coverage:
+                return True, "Forced by strict coverage mode."
             if run_sqlmap_api and effective_profile == "api":
                 return True, "Forced by run_sqlmap_api override."
             if not adaptive_tools:
@@ -1304,6 +1375,8 @@ def run_all_tools(
             )
 
         def _should_run_wapiti() -> tuple[bool, str]:
+            if strict_tool_coverage:
+                return True, "Forced by strict coverage mode."
             if run_wapiti_api and effective_profile == "api":
                 return True, "Forced by run_wapiti_api override."
             if not adaptive_tools:
@@ -1313,6 +1386,8 @@ def run_all_tools(
             return False, "Skipped by adaptive planner: target appears API-first with limited crawlable HTML surface."
 
         def _should_run_commix() -> tuple[bool, str]:
+            if strict_tool_coverage:
+                return True, "Forced by strict coverage mode."
             if not adaptive_tools:
                 return True, "Adaptive tool selection disabled."
             if surface.get("param_count", 0) >= min_commix_params:
@@ -1361,10 +1436,10 @@ def run_all_tools(
             skip_api = bool(config.get("skip_katana_for_api", True)) and effective_profile == "api"
             skip_threshold = int(config.get("skip_katana_when_gau_count_gte", 600) or 0)
             skip_large = skip_threshold > 0 and surface.get("url_count", 0) >= skip_threshold
-            if skip_api:
+            if skip_api and not strict_tool_coverage:
                 prepared_static_deferred.append((tool_name, phase, lambda: _skip_tool_result("katana", "passive", "Skipped by automation rule: Katana is deferred for API-first targets.")))
                 continue
-            if skip_large:
+            if skip_large and not strict_tool_coverage:
                 prepared_static_deferred.append((tool_name, phase, lambda threshold=skip_threshold: _skip_tool_result("katana", "passive", f"Skipped by automation rule: gau already exposed a large surface ({surface.get('url_count', 0)} URLs >= {threshold}).")))
                 continue
         prepared_static_deferred.append((tool_name, phase, runner))
@@ -1406,20 +1481,20 @@ def run_all_tools(
     else:
         tool_runs.extend(_execute_plan(priority_passive_plan + deferred_profile_plan + prepared_static_deferred, total_tools, max_parallel_tools))
         if should_cancel and should_cancel():
-            raise InterruptedError("Scan cancelled by user.")
+            return _finalize_execution(
+                effective_profile,
+                profile_info,
+                interrupted=True,
+                interrupt_reason="Execution interrupted before active testing phase.",
+            )
         tool_runs.extend(_execute_plan(active_dynamic, total_tools, max_parallel_heavy_tools))
 
     if should_cancel and should_cancel():
-        raise InterruptedError("Scan cancelled by user.")
+        return _finalize_execution(
+            effective_profile,
+            profile_info,
+            interrupted=True,
+            interrupt_reason="Execution interrupted near completion due to timeout/cancellation.",
+        )
 
-    completed = [item["name"] for item in tool_runs if item["status"] in ("completed", "completed_no_output")]
-    profile_info["tools_completed"] = completed
-    profile_info["tools_attempted"] = [item["name"] for item in tool_runs]
-
-    return {
-        "requested_profile": profile,
-        "effective_profile": effective_profile,
-        "profile_detection": profile_info,
-        "tools": tool_runs,
-        "tools_used": completed,
-    }
+    return _finalize_execution(effective_profile, profile_info)

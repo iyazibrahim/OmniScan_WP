@@ -314,7 +314,39 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "current_tool": "Tool orchestration",
         "message": "Launching scan tools.",
     })
-    execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile, progress_callback=_emit, should_cancel=should_cancel)
+    interrupted = False
+    interrupt_note = ""
+    try:
+        execution = run_all_tools(url, scan_dir, scan_config, tokens, mode, profile, progress_callback=_emit, should_cancel=should_cancel)
+    except InterruptedError as exc:
+        interrupted = True
+        interrupt_note = str(exc) or "Tool execution interrupted."
+        fallback_profile = profile if profile in {"wordpress", "joomla", "drupal", "api", "webapp"} else "webapp"
+        execution = {
+            "requested_profile": profile,
+            "effective_profile": fallback_profile,
+            "profile_detection": {
+                "requested_profile": profile,
+                "effective_profile": fallback_profile,
+                "confidence": "interrupted",
+                "scores": {fallback_profile: 1},
+                "reasons": [interrupt_note],
+            },
+            "tools": [],
+            "tools_used": [],
+        }
+        _emit(
+            {
+                "event": "stage",
+                "stage": "tool_execution",
+                "progress": 82,
+                "current_tool": "Finalizing partial results",
+                "message": "Tool execution interrupted. Finalizing report from available outputs.",
+            }
+        )
+    interrupted = interrupted or bool(execution.get("interrupted"))
+    if not interrupt_note:
+        interrupt_note = str(execution.get("interrupt_reason") or "").strip()
     tools_used = execution.get("tools_used", [])
     tool_runs = execution.get("tools", [])
 
@@ -327,9 +359,10 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         if skipped_tools:
             detail_bits.append(f"skipped: {', '.join(skipped_tools[:6])}{'...' if len(skipped_tools) > 6 else ''}")
         detail_text = f" ({'; '.join(detail_bits)})" if detail_bits else ""
-        ui.err(f"No tools were available to run{detail_text}. Install the missing tools or adjust the scan profile.")
-        _emit({"event": "error", "message": f"No tools were available to run{detail_text}."})
-        return
+        if not interrupted:
+            ui.err(f"No tools were available to run{detail_text}. Install the missing tools or adjust the scan profile.")
+            _emit({"event": "error", "message": f"No tools were available to run{detail_text}."})
+            return
 
     # Parse results
     ui.section("Parsing Results")
@@ -436,9 +469,14 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         if choice == "y":
             webbrowser.open(str(paths["html"]))
 
+    completion_message = "Scan completed successfully."
+    if interrupted:
+        completion_message = "Scan reached timeout/cancellation during tool execution and completed with partial results."
+        if interrupt_note:
+            completion_message = f"{completion_message} {interrupt_note}"
     _emit({
         "event": "complete",
-        "message": "Scan completed successfully.",
+        "message": completion_message,
         "report_paths": {key: str(val) for key, val in paths.items()},
     })
 
