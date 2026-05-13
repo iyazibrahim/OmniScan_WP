@@ -573,7 +573,7 @@ def run_whatweb(url: str, config: dict, scan_dir: Path, cancel_check=None) -> di
     return result
 
 
-def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, cancel_check=None) -> dict:
+def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: str = "passive", cancel_check=None) -> dict:
     ui.status("Running Nuclei...")
     output_file = scan_dir / "nuclei.jsonl"
     if profile == "wordpress":
@@ -607,7 +607,86 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, cancel_chec
         str(output_file),
         "-silent",
     ]
-    result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=900, cancel_check=cancel_check)
+    timeout = int(config.get("nuclei_timeout_seconds", 900) or 900)
+    result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
+
+    retry_on_empty = bool(config.get("nuclei_retry_auto_scan_on_empty", True))
+    fallback_notes: list[str] = []
+    if result.get("status") == "completed_no_output" and retry_on_empty:
+        ui.status("Nuclei returned no tagged matches; retrying with auto-scan templates...")
+        auto_cmd = [
+            "nuclei",
+            "-u",
+            url,
+            "-as",
+            "-severity",
+            severities,
+            "-rate-limit",
+            rate,
+            "-jsonl",
+            "-o",
+            str(output_file),
+            "-silent",
+        ]
+        auto_result = _run_tool(
+            auto_cmd,
+            "nuclei",
+            "Nuclei",
+            "passive",
+            scan_dir,
+            output_files=[output_file],
+            timeout=timeout,
+            cancel_check=cancel_check,
+        )
+        if auto_result.get("status") != "completed_no_output":
+            fallback_notes.append("Primary tagged scan returned no output; fallback auto-scan run was used.")
+            result = auto_result
+        else:
+            result = auto_result
+
+    run_full_fallback = bool(config.get("nuclei_retry_full_template_on_empty_full", True)) and scan_mode == "full"
+    if result.get("status") == "completed_no_output" and run_full_fallback:
+        ui.status("Nuclei auto-scan returned no matches; retrying with broad full-template pass...")
+        full_timeout = int(config.get("nuclei_full_fallback_timeout_seconds", max(timeout, 1500)) or max(timeout, 1500))
+        full_cmd = [
+            "nuclei",
+            "-u",
+            url,
+            "-severity",
+            severities,
+            "-rate-limit",
+            rate,
+            "-jsonl",
+            "-o",
+            str(output_file),
+            "-silent",
+        ]
+        full_result = _run_tool(
+            full_cmd,
+            "nuclei",
+            "Nuclei",
+            "passive",
+            scan_dir,
+            output_files=[output_file],
+            timeout=full_timeout,
+            cancel_check=cancel_check,
+        )
+        if full_result.get("status") != "completed_no_output":
+            fallback_notes.append("Auto-scan fallback was empty; broad full-template pass was used.")
+            result = full_result
+        else:
+            result = full_result
+            fallback_notes.append("Tagged, auto-scan, and broad full-template Nuclei passes all returned no matches.")
+
+    if result.get("status") == "completed_no_output":
+        fallback_notes.append(
+            "Nuclei executed successfully but reported no findings. This can be normal for low-exposure targets; update templates and widen scope if needed."
+        )
+
+    if fallback_notes:
+        existing = str(result.get("note", "") or "").strip()
+        result["note"] = " ".join([part for part in [existing, *fallback_notes] if part]).strip()
+
     if result["status"].startswith("completed"):
         ui.ok("Nuclei complete.")
     return result
@@ -1173,7 +1252,7 @@ def run_all_tools(
     if mode in ("passive", "full"):
         nikto_enabled = bool(config.get("run_nikto", True))
         nikto_wordpress_enabled = bool(config.get("run_nikto_wordpress", False))
-        dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile, cancel_check=should_cancel)))
+        dynamic_plan.append(("nuclei", "passive", lambda: run_nuclei(url, config, scan_dir, effective_profile, mode, cancel_check=should_cancel)))
         if nikto_enabled and (effective_profile != "wordpress" or nikto_wordpress_enabled):
             dynamic_plan.append(("nikto", "passive", lambda: run_nikto(url, config, scan_dir, effective_profile, cancel_check=should_cancel)))
         if effective_profile == "wordpress":
