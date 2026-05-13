@@ -408,6 +408,39 @@ const App = {
             tooltipCallbacks = {};
         }
 
+        const scales = mode === "normalized"
+            ? {
+                x: { stacked: false, grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
+                yRisk: {
+                    type: "linear",
+                    axis: "y",
+                    position: "left",
+                    beginAtZero: true,
+                    suggestedMax: 100,
+                    grid: { color: "rgba(255,255,255,0.05)", drawBorder: false },
+                    title: { display: true, text: "Risk Score", color: "#94a3b8" },
+                },
+                yVol: {
+                    type: "linear",
+                    axis: "y",
+                    position: "right",
+                    beginAtZero: true,
+                    grid: { drawOnChartArea: false },
+                    title: { display: true, text: "Vulnerability Count", color: "#94a3b8" },
+                },
+            }
+            : {
+                x: { stacked: true, grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
+                y: {
+                    type: "linear",
+                    axis: "y",
+                    stacked: true,
+                    grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
+                    beginAtZero: true,
+                    title: yAxisLabel ? { display: true, text: yAxisLabel, color: "#94a3b8" } : undefined,
+                },
+            };
+
         this.chart = new Chart(canvas.getContext("2d"), {
             type: "bar",
             data: {
@@ -442,34 +475,7 @@ const App = {
                         callbacks: tooltipCallbacks,
                     },
                 },
-                scales: {
-                    x: { stacked: mode !== "normalized", grid: { color: "rgba(255,255,255,0.04)", drawBorder: false } },
-                    y: mode === "normalized"
-                        ? undefined
-                        : {
-                            stacked: true,
-                            grid: { color: "rgba(255,255,255,0.04)", drawBorder: false },
-                            beginAtZero: true,
-                            title: yAxisLabel ? { display: true, text: yAxisLabel, color: "#94a3b8" } : undefined,
-                        },
-                    yRisk: mode === "normalized"
-                        ? {
-                            position: "left",
-                            beginAtZero: true,
-                            suggestedMax: 100,
-                            grid: { color: "rgba(255,255,255,0.05)", drawBorder: false },
-                            title: { display: true, text: "Risk Score", color: "#94a3b8" },
-                        }
-                        : undefined,
-                    yVol: mode === "normalized"
-                        ? {
-                            position: "right",
-                            beginAtZero: true,
-                            grid: { drawOnChartArea: false },
-                            title: { display: true, text: "Vulnerability Count", color: "#94a3b8" },
-                        }
-                        : undefined,
-                },
+                scales,
             },
         });
     },
