@@ -631,6 +631,15 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             "-silent",
         ]
         auto_timeout = int(config.get("nuclei_auto_fallback_timeout_seconds", max(timeout, 1200)) or max(timeout, 1200))
+        auto_concurrency = int(config.get("nuclei_auto_scan_concurrency", 10) or 10)
+        auto_bulk_size = int(config.get("nuclei_auto_scan_bulk_size", 10) or 10)
+        req_timeout = int(config.get("nuclei_request_timeout", 10) or 10)
+        auto_cmd += [
+            "-concurrency", str(auto_concurrency),
+            "-bulk-size", str(auto_bulk_size),
+            "-timeout", str(req_timeout),
+            "-retries", "0",
+        ]
         auto_result = _run_tool(
             auto_cmd,
             "nuclei",
@@ -657,6 +666,9 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
     if result.get("status") == "completed_no_output" and run_full_fallback:
         ui.status("Nuclei auto-scan returned no matches; retrying with broad full-template pass...")
         full_timeout = int(config.get("nuclei_full_fallback_timeout_seconds", max(timeout, 1500)) or max(timeout, 1500))
+        full_concurrency = int(config.get("nuclei_auto_scan_concurrency", 10) or 10)
+        full_bulk_size = int(config.get("nuclei_auto_scan_bulk_size", 10) or 10)
+        req_timeout = int(config.get("nuclei_request_timeout", 10) or 10)
         full_cmd = [
             "nuclei",
             "-u",
@@ -669,6 +681,10 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             "-o",
             str(output_file),
             "-silent",
+            "-concurrency", str(full_concurrency),
+            "-bulk-size", str(full_bulk_size),
+            "-timeout", str(req_timeout),
+            "-retries", "0",
         ]
         full_result = _run_tool(
             full_cmd,
