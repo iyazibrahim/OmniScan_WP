@@ -1,4 +1,4 @@
-"""Security framework mappings for OmniScan findings enrichment.
+"""Security framework mappings for DP Security Platform findings enrichment.
 
 Maps vulnerability findings to international security standards:
 - OWASP Top 10 (2021)

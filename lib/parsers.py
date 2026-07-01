@@ -1,4 +1,4 @@
-"""Result parsers and scan overview extraction for OmniScan."""
+"""Result parsers and scan overview extraction for DP Security Platform."""
 
 import json
 import re

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OmniScan - Multi-Tool Automated Security Pipeline.
+"""DP Security Platform - Multi-Tool Automated Security Pipeline.
 
 Usage:
     python scanner.py                   # Interactive menu
@@ -37,6 +37,7 @@ from lib.installer import install_missing_tools, install_tool
 from lib.notifier import send_scan_email, configure_email
 from lib.assessments import get_workbook, summarize_workbook
 from lib.ai_runner import apply_verdicts_to_findings
+from lib.branding import ORGANIZATION_TEAM, PRODUCT_NAME
 
 
 def _is_ci() -> bool:
@@ -217,7 +218,7 @@ def run_demo(ci_mode: bool = False, send_email: bool = False):
             "attack_path_hypotheses": "An attacker could chain exposed plugin versioning, directory listing, and weak update hygiene into plugin exploitation or account compromise attempts.",
             "verification_strategy": "Prioritize retesting of update hygiene, harden exposed paths, then repeat CMS and content-discovery testing with authenticated coverage.",
             "operator_notes": [
-                {"id": "note-demo-1", "created_at": start_time.isoformat(), "updated_at": start_time.isoformat(), "title": "Scope note", "body": "Demo assessment only covers public unauthenticated surface.", "type": "context", "author": "OmniScan Demo"}
+                {"id": "note-demo-1", "created_at": start_time.isoformat(), "updated_at": start_time.isoformat(), "title": "Scope note", "body": "Demo assessment only covers public unauthenticated surface.", "type": "context", "author": ORGANIZATION_TEAM}
             ],
             "verification_runs": [
                 {"id": "verify-demo-1", "created_at": start_time.isoformat(), "title": "Demo validation pass", "scope": "Public web surface", "outcome": "confirmed", "notes": "Sample findings mapped to evidence successfully.", "related_case_ids": ["business-logic-flaws"], "related_finding_ids": ["F-001"]}
@@ -629,7 +630,7 @@ def interactive_menu():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OmniScan - Multi-Tool Security Pipeline",
+        description=f"{PRODUCT_NAME} - Multi-Tool Security Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   python scanner.py                          Interactive menu

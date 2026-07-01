@@ -12,7 +12,7 @@ fi
 
 if [[ $# -eq 0 || "$1" == "app" ]]; then
     shift || true
-        echo "[+] Starting OmniScan dashboard via gunicorn on 0.0.0.0:5000"
+        echo "[+] Starting DP Security Platform via gunicorn on 0.0.0.0:5000"
         exec gunicorn \
             --workers 1 \
             --threads 4 \

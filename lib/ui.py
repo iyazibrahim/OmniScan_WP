@@ -1,7 +1,9 @@
-"""Colored terminal output and interactive menu for the OmniScan."""
+"""Colored terminal output and interactive menu for DP Security Platform."""
 
 import os
 import sys
+
+from lib.branding import PRODUCT_NAME, VERSION_LABEL
 
 
 def is_ci() -> bool:
@@ -24,7 +26,7 @@ except ImportError:
 def print_banner():
     print()
     print(f"{Fore.CYAN}  ==============================================")
-    print(f"{Fore.CYAN}    OmniScan v2.0")
+    print(f"{Fore.CYAN}    {PRODUCT_NAME} {VERSION_LABEL}")
     print(f"{Fore.CYAN}    Multi-Tool Automated Security Pipeline")
     print(f"{Fore.CYAN}    Python Edition")
     print(f"{Fore.CYAN}  ==============================================")

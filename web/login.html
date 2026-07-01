@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OmniScan — Sign In</title>
+    <title>DP Security Platform - Sign In</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; }
@@ -15,7 +15,6 @@
             --text: #e2e8f0;
             --muted: #64748b;
             --red: #ef4444;
-            --green: #22c55e;
         }
         body {
             margin: 0;
@@ -34,28 +33,23 @@
             padding: 24px;
         }
         .logo {
-            display: flex;
-            align-items: center;
+            display: grid;
             gap: 10px;
-            justify-content: center;
+            justify-items: center;
             margin-bottom: 36px;
         }
-        .logo-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, #1d4ed8, #4f8ff7);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .logo img {
+            width: 180px;
+            height: auto;
+            display: block;
         }
         .logo h1 {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1rem;
             font-weight: 800;
-            background: linear-gradient(135deg, #e2e8f0, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #c5d2e8;
         }
         .card {
             background: var(--bg-card);
@@ -133,17 +127,13 @@
 <body>
     <div class="login-wrap">
         <div class="logo">
-            <div class="logo-icon">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                </svg>
-            </div>
-            <h1>OmniScan</h1>
+            <img src="assets/dp-logo-white-text.svg" alt="Digital Penang">
+            <h1>DP Security Platform</h1>
         </div>
 
         <div class="card">
             <h2>Sign in</h2>
-            <p>Enter your credentials to access the security dashboard.</p>
+            <p>Enter your credentials to access the Digital Penang security dashboard.</p>
 
             <div class="error-msg" id="errorMsg"></div>
 
@@ -186,7 +176,7 @@
             const password = document.getElementById("password").value;
 
             btn.disabled = true;
-            btn.textContent = "Signing in…";
+            btn.textContent = "Signing in...";
             err.classList.remove("show");
 
             try {

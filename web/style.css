@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
- * OmniScan Dashboard – style.css
+ * DP Security Platform dashboard stylesheet
  * Premium dark theme with glassmorphism, micro-animations & responsive design
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -99,25 +99,29 @@ a:hover { text-decoration: underline; }
     margin-bottom: 36px;
 }
 
-.logo-icon {
-    width: 36px;
-    height: 36px;
-    background: linear-gradient(135deg, var(--brand), #818cf8);
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    box-shadow: 0 4px 16px rgba(79,143,247,0.35);
+.brand-logo {
+    width: 132px;
+    height: auto;
+    display: block;
 }
 
-.logo h2 {
-    font-size: 1.2rem;
+.logo-copy {
+    display: grid;
+    gap: 2px;
+}
+
+.logo-copy strong {
+    font-size: 1rem;
     font-weight: 800;
-    letter-spacing: -0.03em;
-    background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.02em;
+    color: #fff;
+}
+
+.logo-copy span {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
 }
 
 .nav-menu {
@@ -249,10 +253,10 @@ a:hover { text-decoration: underline; }
     z-index: 90;
 }
 
-.mobile-header h2 {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text-primary);
+.mobile-brand-logo {
+    width: 120px;
+    height: auto;
+    display: block;
 }
 
 .hamburger {

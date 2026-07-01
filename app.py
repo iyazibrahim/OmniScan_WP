@@ -18,6 +18,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from lib.assessments import get_catalog, get_workbook, save_workbook, summarize_workbook
 from lib.ai_policy import load_policy, evaluate_plan
 from lib.ai_runner import execute_actions, persist_evidence
+from lib.branding import (
+    LOG_FILE_NAME,
+    PRODUCT_NAME,
+    SERVICE_SLUG,
+)
 
 # ── Logging setup ───────────────────────────────────────────────────────────────
 
@@ -27,13 +32,13 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(
-            Path(__file__).resolve().parent / "logs" / "omniscan.log",
+            Path(__file__).resolve().parent / "logs" / LOG_FILE_NAME,
             encoding="utf-8",
             delay=True,
         ),
     ],
 )
-logger = logging.getLogger("omniscan")
+logger = logging.getLogger(SERVICE_SLUG)
 
 app = Flask(__name__, static_folder='web')
 
@@ -70,7 +75,7 @@ def _is_auth_initialized() -> bool:
 
 
 _auth_data = _load_auth_data() or {}
-_env_secret = os.environ.get("OMNISCAN_SECRET_KEY")
+_env_secret = os.environ.get("DP_SECURITY_PLATFORM_SECRET_KEY") or os.environ.get("OMNISCAN_SECRET_KEY")
 app.secret_key = _auth_data.get("secret_key") or _env_secret or uuid.uuid4().hex
 if not _auth_data.get("secret_key") and not _env_secret:
     logger.warning(
@@ -319,7 +324,7 @@ def _scan_cancel_recovery_patch(job: dict) -> dict | None:
 @app.route('/health')
 def health_check():
     """Docker/load-balancer health probe. Always returns 200 when app is up."""
-    return jsonify({"status": "ok", "service": "omniscan"})
+    return jsonify({"status": "ok", "service": SERVICE_SLUG})
 
 
 @app.route('/login')
@@ -1925,5 +1930,5 @@ def list_scan_jobs():
 
 if __name__ == '__main__':
     # Development only — production deployments use gunicorn via docker/entrypoint.sh
-    logger.info("Starting OmniScan in development mode on http://0.0.0.0:5000")
+    logger.info("Starting %s in development mode on http://0.0.0.0:5000", PRODUCT_NAME)
     app.run(host='0.0.0.0', port=5000, debug=False)

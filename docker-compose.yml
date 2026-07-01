@@ -1,10 +1,10 @@
 services:
-  omniscan:
+  dp-security-platform:
     build:
       context: .
       dockerfile: Dockerfile
-    image: omniscan:latest
-    container_name: omniscan
+    image: dp-security-platform:latest
+    container_name: dp-security-platform
     ports:
       - "5000:5000"
     environment:
@@ -12,7 +12,7 @@ services:
       PYTHONUNBUFFERED: "1"
       # Set a strong secret key in production — if unset, a random key is
       # generated per-process which invalidates sessions on restart.
-      OMNISCAN_SECRET_KEY: ""
+      DP_SECURITY_PLATFORM_SECRET_KEY: ""
     volumes:
       - ./config:/app/config
       - ./reports:/app/reports

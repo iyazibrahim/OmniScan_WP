@@ -9,6 +9,16 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from lib.branding import (
+    ORGANIZATION_NAME,
+    ORGANIZATION_TEAM,
+    PRODUCT_NAME,
+    REPORT_SUBTITLE,
+    REPORT_TAGLINE,
+    REPORT_TITLE,
+    assessment_profile_label,
+    get_logo_svg,
+)
 from lib.config import HTML_TEMPLATE_FILE, REPORTS_DIR, load_json, save_json
 from lib.standards import SARIF_LEVEL_MAP
 
@@ -142,6 +152,90 @@ def _build_executive_summary(payload: dict) -> list[str]:
     return lines
 
 
+def _severity_rank_value(severity: str) -> int:
+    return {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}.get(str(severity or "info").lower(), 0)
+
+
+def _overall_risk_from_summary(summary: dict) -> str:
+    sev = summary.get("severity_counts", {})
+    if sev.get("critical", 0) > 0:
+        return "critical"
+    if sev.get("high", 0) > 0:
+        return "high"
+    if sev.get("medium", 0) > 0:
+        return "medium"
+    return "low"
+
+
+def _shorten_text(value: str, limit: int = 140) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _priority_finding_entries(findings: list[dict], target_url: str) -> list[dict]:
+    ranked = sorted(
+        findings,
+        key=lambda finding: (
+            _severity_rank_value(str(finding.get("severity", "info"))),
+            1 if finding.get("evidence") else 0,
+        ),
+        reverse=True,
+    )
+    rows: list[dict] = []
+    for finding in ranked[:5]:
+        recommendation = str(finding.get("fix") or "").strip()
+        if not recommendation:
+            steps = finding.get("fix_steps") or []
+            if steps:
+                recommendation = str(steps[0]).strip()
+        rows.append(
+            {
+                "id": str(finding.get("id", "") or "-"),
+                "severity": str(finding.get("severity", "info")).lower(),
+                "title": str(finding.get("title", "Finding")).strip() or "Finding",
+                "affected_area": str(finding.get("asset") or finding.get("url") or finding.get("endpoint") or target_url or "-"),
+                "business_impact": _shorten_text(str(finding.get("description") or finding.get("evidence") or "Review analyst evidence and validate exposure."), 130),
+                "recommendation": _shorten_text(recommendation or "Review the detailed finding and apply the recommended remediation steps.", 120),
+            }
+        )
+    return rows
+
+
+def _coverage_summary(tool_runs: list[dict]) -> dict:
+    total = len(tool_runs)
+    completed = 0
+    failed = 0
+    timeout = 0
+    missing = 0
+    partial = 0
+    for run in tool_runs:
+        status = str(run.get("status", "")).lower()
+        if status in {"completed", "completed_no_output", "completed_partial"}:
+            completed += 1
+        if status == "completed_partial":
+            partial += 1
+        elif status == "failed":
+            failed += 1
+        elif status == "timeout":
+            timeout += 1
+        elif status in {"missing", "skipped"}:
+            missing += 1
+    completion_pct = int((completed / total) * 100) if total else 0
+    confidence = "high" if completion_pct >= 85 else ("medium" if completion_pct >= 60 else "low")
+    return {
+        "total_tools": total,
+        "completed_tools": completed,
+        "failed_tools": failed,
+        "timeout_tools": timeout,
+        "missing_tools": missing,
+        "partial_tools": partial,
+        "completion_pct": completion_pct,
+        "confidence": confidence,
+    }
+
+
 def build_report_payload(
     findings: list[dict],
     target_url: str,
@@ -155,6 +249,7 @@ def build_report_payload(
     started_at_malaysia = _as_malaysia_time(start_time)
     duration = datetime.now(timezone.utc) - (start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc))
     duration_seconds = int(duration.total_seconds())
+    overview = dict(scan_overview or {})
     payload = {
         "report_version": 3,
         "target_url": target_url,
@@ -166,31 +261,27 @@ def build_report_payload(
             "finding_count": len(findings),
             "severity_counts": _severity_counts(findings),
         },
-        "overview": scan_overview or {},
+        "overview": overview,
         "assessment": assessment or {},
         "report_profile": report_profile,
         "include_manual_assessment": bool(include_manual_assessment),
         "findings": findings,
     }
     payload["summary"]["executive_summary"] = _build_executive_summary(payload)
+    payload["summary"]["priority_findings"] = _priority_finding_entries(findings, target_url)
+    payload["summary"]["overall_risk"] = _overall_risk_from_summary(payload["summary"])
+    payload["overview"]["coverage_summary"] = _coverage_summary(payload["overview"].get("tool_runs", []))
     return payload
 
 
 def _render_metric_cards(summary: dict, assessment_summary: dict, overview: dict) -> str:
     severity_counts = summary.get("severity_counts", {})
-    tool_summary = overview.get("tool_summary", {})
-    note_count = assessment_summary.get("note_count", 0)
-    verified = assessment_summary.get("verification_status", {}).get("confirmed", 0) + assessment_summary.get("verification_status", {}).get("reproduced", 0)
+    coverage = overview.get("coverage_summary", {}) if isinstance(overview.get("coverage_summary"), dict) else {}
     metrics = [
         ("Critical", severity_counts.get("critical", 0), "critical"),
         ("High", severity_counts.get("high", 0), "high"),
-        ("Medium", severity_counts.get("medium", 0), "medium"),
-        ("Low", severity_counts.get("low", 0), "low"),
-        ("Tool Failures", tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0), "info"),
-        ("Partial Tool Runs", tool_summary.get("partial", 0), "warn"),
-        ("Verified Cases", verified, "good"),
-        ("Analyst Notes", note_count, "info"),
-        ("Total Findings", summary.get("finding_count", 0), "total"),
+        ("Coverage", f"{coverage.get('completion_pct', 0)}%", "good"),
+        ("Confidence", str(coverage.get("confidence", "low")).title(), "info"),
     ]
     return "".join(
         f"<div class='metric-card {css}'><div class='label'>{html.escape(label)}</div><div class='value'>{value}</div></div>"
@@ -232,16 +323,31 @@ def _render_standards_tags(finding: dict) -> str:
     return "<div class='standards-row'>" + "".join(parts) + "</div>"
 
 
-def _render_report_template(template_vars: dict[str, str]) -> str | None:
+def _default_report_template_source() -> str:
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE_TARGET}}</title>
+</head>
+<body>{{EXEC_SUMMARY_LIST}}{{PRIORITY_FINDING_ROWS}}</body>
+</html>"""
+
+
+def _render_report_template(template_vars: dict[str, str], template_source: str | None = None) -> str | None:
     """Render the external HTML report template with {{TOKEN}} substitution.
 
     Returns None if the template file is unavailable, so callers can fall back
     to an inline renderer.
     """
     try:
-        if not HTML_TEMPLATE_FILE.exists():
-            return None
-        template = HTML_TEMPLATE_FILE.read_text(encoding="utf-8")
+        if template_source is not None:
+            template = template_source
+        elif HTML_TEMPLATE_FILE.exists():
+            template = HTML_TEMPLATE_FILE.read_text(encoding="utf-8")
+        else:
+            template = _default_report_template_source()
         for key, value in template_vars.items():
             template = template.replace("{{" + key + "}}", value)
         return template
@@ -366,9 +472,9 @@ def generate_sarif_report(payload: dict) -> dict:
             {
                 "tool": {
                     "driver": {
-                        "name": "OmniScan",
+                        "name": PRODUCT_NAME,
                         "version": "3.0.0",
-                        "informationUri": "https://github.com/omniscan",
+                        "informationUri": "https://digitalpenang.my",
                         "rules": rules,
                         "properties": {
                             "frameworkReferences": [
@@ -731,10 +837,20 @@ def generate_html_report(payload: dict) -> str:
     scan_date = _as_malaysia_time(datetime.fromisoformat(payload["scan_started_at"])).strftime("%Y-%m-%d %H:%M:%S %Z")
     duration_seconds = payload.get("scan_duration_seconds", 0)
     severity_counts = summary.get("severity_counts", {})
-    overall_risk = _overall_risk(summary)
+    overall_risk = summary.get("overall_risk", _overall_risk(summary))
     total_tools, completed_tools, failed_tools, timeout_tools, missing_tools = _coverage_metrics(tool_runs)
     coverage_pct = int((completed_tools / total_tools) * 100) if total_tools else 0
     confidence_level = "high" if coverage_pct >= 85 else ("medium" if coverage_pct >= 60 else "low")
+    overview["coverage_summary"] = overview.get("coverage_summary") or {
+        "total_tools": total_tools,
+        "completed_tools": completed_tools,
+        "failed_tools": failed_tools,
+        "timeout_tools": timeout_tools,
+        "missing_tools": missing_tools,
+        "partial_tools": sum(1 for run in tool_runs if str(run.get("status", "")).lower() == "completed_partial"),
+        "completion_pct": coverage_pct,
+        "confidence": confidence_level,
+    }
 
     findings_sorted = sorted(
         findings,
@@ -746,6 +862,7 @@ def generate_html_report(payload: dict) -> str:
         reverse=True,
     )
     top_risk_rows: list[str] = []
+    priority_finding_rows: list[str] = []
     for f in findings_sorted[:5]:
         top_risk_rows.append(
             "<tr>"
@@ -757,22 +874,49 @@ def generate_html_report(payload: dict) -> str:
             f"<td>{html.escape(_derive_status(f).replace('_', ' '))}</td>"
             "</tr>"
         )
+        recommendation = str(f.get("fix") or "").strip()
+        if not recommendation:
+            steps = f.get("fix_steps") or []
+            if steps:
+                recommendation = str(steps[0]).strip()
+        priority_finding_rows.append(
+            "<tr>"
+            f"<td><span class='sev {html.escape(str(f.get('severity', 'info')).lower())}'>{html.escape(str(f.get('severity', 'info')))}</span></td>"
+            f"<td>{html.escape(str(f.get('title', 'Finding')))}</td>"
+            f"<td class='url-cell'>{html.escape(_derive_asset(f, payload.get('target_url', '')))}</td>"
+            f"<td>{html.escape(_shorten_text(str(f.get('description') or f.get('evidence') or 'Review analyst evidence and validate exposure.'), 130))}</td>"
+            f"<td>{html.escape(_shorten_text(recommendation or 'Review the detailed finding and apply the recommended remediation steps.', 120))}</td>"
+            "</tr>"
+        )
 
     actions_24h = _build_action_rows(findings_sorted, "24h")
     actions_7d = _build_action_rows(findings_sorted, "7d")
     actions_30d = _build_action_rows(findings_sorted, "30d")
     compliance_rows = _compliance_crosswalk_rows(findings)
 
-    executive_summary_html = html.escape(" ".join(item.strip() for item in executive_summary if str(item).strip()))
+    executive_summary_html = "".join(
+        f"<p class='summary-prose'>{html.escape(str(item).strip())}</p>"
+        for item in executive_summary
+        if str(item).strip()
+    )
 
     rendered_from_template = _render_report_template(
         {
-            "TITLE_TARGET": html.escape(payload.get("target_url", "target")),
+            "TITLE_TARGET": html.escape(f"{REPORT_TITLE} - {payload.get('target_url', 'target')}"),
+            "REPORT_ORGANIZATION": html.escape(ORGANIZATION_NAME),
+            "REPORT_PRODUCT_NAME": html.escape(PRODUCT_NAME),
+            "REPORT_TITLE": html.escape(REPORT_TITLE),
+            "REPORT_SUBTITLE": html.escape(REPORT_SUBTITLE),
+            "REPORT_TAGLINE": html.escape(REPORT_TAGLINE),
+            "REPORT_LOGO_LIGHT": get_logo_svg("white"),
+            "REPORT_LOGO_DARK": get_logo_svg("dark"),
             "TARGET_URL": html.escape(payload.get("target_url", "")),
             "SCAN_DATE": scan_date,
             "SCAN_MODE": html.escape(payload.get("scan_mode", "")),
             "REQUESTED_PROFILE": html.escape(overview.get("requested_profile", "")),
             "EFFECTIVE_PROFILE": html.escape(overview.get("effective_profile", "")),
+            "ASSESSMENT_PROFILE_LABEL": html.escape(assessment_profile_label(overview.get("effective_profile", ""))),
+            "PREPARED_BY": html.escape(ORGANIZATION_TEAM),
             "SCAN_DURATION_SECONDS": str(duration_seconds),
             "RISK_POSTURE": overall_risk.upper(),
             "DATA_CONFIDENCE": confidence_level.upper(),
@@ -780,6 +924,7 @@ def generate_html_report(payload: dict) -> str:
             "COVERAGE_COMPLETENESS": str(coverage_pct),
             "METRIC_CARDS": _render_metric_cards(summary, assessment_summary, overview),
             "EXEC_SUMMARY_LIST": executive_summary_html,
+            "PRIORITY_FINDING_ROWS": "".join(priority_finding_rows) or "<tr><td colspan='5'>No prioritized findings are available for this report.</td></tr>",
             "TOTAL_TOOLS": str(total_tools),
             "COMPLETED_TOOLS": str(completed_tools),
             "FAILED_TOOLS": str(failed_tools),
@@ -819,7 +964,7 @@ def generate_html_report(payload: dict) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OmniScan Assessment Report - {html.escape(payload.get('target_url', 'target'))}</title>
+    <title>{REPORT_TITLE} - {html.escape(payload.get('target_url', 'target'))}</title>
     <style>
         :root {{
             --bg: #08101d;
@@ -959,7 +1104,7 @@ def generate_html_report(payload: dict) -> str:
             <a href="#appendix">Appendix</a>
         </nav>
         <section class="hero">
-            <h1>OmniScan Comprehensive Assessment Report</h1>
+            <h1>{REPORT_TITLE}</h1>
             <p>{html.escape(payload.get('target_url', ''))}</p>
             <div class="grid meta-grid">
                 <div class="card"><div class="meta">Scan Started</div><div>{scan_date}</div></div>
@@ -1347,13 +1492,15 @@ def generate_markdown_report(payload: dict) -> str:
     assessment_summary = _assessment_summary(assessment)
 
     lines = [
-        "# OmniScan Comprehensive Assessment Report",
+        f"# {PRODUCT_NAME} {REPORT_TITLE}",
         "",
         f"- Target: {payload.get('target_url', '')}",
         f"- Scan started: {payload.get('scan_started_at', '')}",
         f"- Mode: {payload.get('scan_mode', '')}",
         f"- Requested profile: {overview.get('requested_profile', '')}",
         f"- Effective profile: {overview.get('effective_profile', '')}",
+        f"- Assessment profile: {assessment_profile_label(overview.get('effective_profile', ''))}",
+        f"- Prepared by: {ORGANIZATION_TEAM}",
         f"- Duration: {payload.get('scan_duration_seconds', 0)}s",
         "",
         "## Executive Summary",
@@ -1362,6 +1509,28 @@ def generate_markdown_report(payload: dict) -> str:
     lines.extend([f"- {item}" for item in summary.get("executive_summary", [])])
     lines.extend(
         [
+            "",
+            "## Prioritized Findings",
+            "",
+            "| Severity | Issue | Affected Area | Business Impact | Recommendation |",
+            "|----------|-------|---------------|-----------------|----------------|",
+        ]
+    )
+
+    for finding in summary.get("priority_findings", []):
+        lines.append(
+            f"| {finding.get('severity', '')} | {finding.get('title', '')} | {finding.get('affected_area', '')} | "
+            f"{finding.get('business_impact', '')} | {finding.get('recommendation', '')} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Coverage and Limitations",
+            "",
+            f"- Coverage completeness: {overview.get('coverage_summary', {}).get('completion_pct', 0)}%",
+            f"- Confidence: {overview.get('coverage_summary', {}).get('confidence', 'low')}",
+            f"- Tool runs: {overview.get('coverage_summary', {}).get('completed_tools', 0)} completed / {overview.get('coverage_summary', {}).get('total_tools', 0)} total",
             "",
             "## Severity Summary",
             "",

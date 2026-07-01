@@ -13,6 +13,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 
 from lib import ui
+from lib.branding import ORGANIZATION_TEAM, PRODUCT_NAME
 from lib.config import CONFIG_DIR, load_json, save_json
 
 EMAIL_CONFIG_FILE = CONFIG_DIR / "email-config.json"
@@ -117,7 +118,7 @@ def _build_summary(findings: list[dict], target_url: str,
         sev_counts[sev] = sev_counts.get(sev, 0) + 1
 
     lines = [
-        "WordPress Vulnerability Scan Complete",
+        f"{PRODUCT_NAME} Scan Complete",
         "=" * 40,
         "",
         f"Target:     {target_url}",
@@ -144,7 +145,7 @@ def _build_summary(findings: list[dict], target_url: str,
     lines.append("")
     lines.append("Full report is attached as HTML.")
     lines.append("")
-    lines.append("-- OmniScan (automated)")
+    lines.append(f"-- {ORGANIZATION_TEAM}")
 
     return "\n".join(lines)
 
@@ -182,7 +183,7 @@ def send_scan_email(
         sev_counts[f.get("severity", "info")] = sev_counts.get(f.get("severity", "info"), 0) + 1
 
     subject = (
-        f"[WP Scan] {target_url} — "
+        f"[DP Security Platform] {target_url} - "
         f"{sev_counts['critical']}C/{sev_counts['high']}H/"
         f"{sev_counts['medium']}M/{sev_counts['low']}L "
         f"({len(findings)} total)"

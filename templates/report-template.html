@@ -3,278 +3,549 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OmniScan Assessment Report - {{TITLE_TARGET}}</title>
+    <title>{{TITLE_TARGET}}</title>
     <style>
         :root {
-            --bg: #eef3f8;
-            --panel: rgba(255,255,255,0.94);
-            --panel-strong: #ffffff;
-            --text: #132033;
-            --muted: #5c6b81;
-            --border: #d7e0ea;
-            --accent: #1d4ed8;
-            --accent-soft: rgba(29,78,216,0.08);
-            --critical: #b42318;
-            --high: #c2410c;
-            --medium: #b45309;
+            --bg: #f4f7fb;
+            --surface: #ffffff;
+            --surface-soft: #f8fbff;
+            --text: #14263f;
+            --muted: #5f738f;
+            --border: #d9e3ee;
+            --navy: #14345f;
+            --teal: #0a7db1;
+            --critical: #d92d20;
+            --high: #f97316;
+            --medium: #eab308;
             --low: #2563eb;
             --info: #64748b;
-            --good: #15803d;
-            --shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
-        }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg: #0b1220;
-                --panel: rgba(15, 23, 42, 0.96);
-                --panel-strong: #121b2d;
-                --text: #edf2fb;
-                --muted: #98a7bf;
-                --border: #253249;
-                --accent: #60a5fa;
-                --accent-soft: rgba(96,165,250,0.12);
-                --critical: #f87171;
-                --high: #fb923c;
-                --medium: #fbbf24;
-                --low: #93c5fd;
-                --info: #94a3b8;
-                --good: #4ade80;
-                --shadow: 0 18px 54px rgba(2, 6, 23, 0.42);
-            }
+            --good: #0f9f6e;
+            --shadow: 0 20px 48px rgba(20, 38, 63, 0.08);
         }
         * { box-sizing: border-box; }
-        body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: radial-gradient(circle at top right, rgba(29,78,216,0.08), transparent 24%), linear-gradient(180deg, #f5f8fb, var(--bg) 22%); color: var(--text); }
-        .wrap { max-width: 1320px; margin: 0 auto; padding: 28px; }
-        .toc { position: sticky; top: 12px; z-index: 10; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; box-shadow: var(--shadow); }
-        .toc a { color: var(--muted); text-decoration: none; font-size: 12px; margin-right: 12px; }
-        .toc a:hover { color: var(--text); }
-        .hero { background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(240,245,251,0.94)); border: 1px solid var(--border); border-radius: 22px; padding: 30px; box-shadow: var(--shadow); }
-        @media (prefers-color-scheme: dark) {
-            body { background: radial-gradient(circle at top right, rgba(96,165,250,0.08), transparent 24%), linear-gradient(180deg, #08101d, var(--bg) 22%); }
-            .hero { background: linear-gradient(135deg, rgba(18,27,45,0.98), rgba(15,23,42,0.95)); }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Arial, sans-serif;
+            background: linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
+            color: var(--text);
         }
-        .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px; }
-        .hero h1 { margin: 0 0 8px; font-size: 34px; font-family: Cambria, Georgia, serif; }
-        .hero p { margin: 0; color: var(--muted); }
-        .grid { display: grid; gap: 16px; }
-        .meta-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 20px; }
-        .metrics { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 24px 0; }
-        .two { grid-template-columns: 1.15fr 1fr; }
-        .three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-        .actions-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-        .card, .metric-card { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 18px; overflow: hidden; box-shadow: var(--shadow); }
-        .risk-banner { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }
-        .risk-chip { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; background: var(--panel-strong); }
-        .risk-chip .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .risk-chip .v { font-size: 22px; font-weight: 800; margin-top: 6px; }
-        .metric-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .metric-card .value { font-size: 32px; font-weight: 800; margin-top: 10px; }
-        h2 { margin: 30px 0 12px; font-size: 22px; }
-        h3 { margin-top: 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
-        th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .sev, .pill { display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
-        .sev.critical { background: rgba(239,68,68,0.14); color: var(--critical); }
-        .sev.high { background: rgba(249,115,22,0.14); color: var(--high); }
-        .sev.medium { background: rgba(245,158,11,0.14); color: var(--medium); }
-        .sev.low { background: rgba(96,165,250,0.14); color: var(--low); }
-        .sev.info { background: rgba(148,163,184,0.14); color: var(--info); }
-        .meta { color: var(--muted); font-size: 13px; }
-        .narrative { white-space: pre-wrap; line-height: 1.6; }
-        .summary-prose { margin: 0; font-size: 1.02rem; line-height: 1.8; color: var(--text); }
-        .legend { color: var(--muted); font-size: 13px; margin-top: 8px; }
-        .appendix-note { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
-        .action-timeline { position: relative; padding-top: 8px; }
-        .action-timeline::before { content: ""; position: absolute; left: 18px; right: 18px; top: 24px; height: 2px; background: linear-gradient(90deg, var(--critical), var(--medium), var(--good)); opacity: 0.35; }
-        .timeline-card { position: relative; padding-top: 28px; }
-        .timeline-card::before { content: ""; position: absolute; top: 16px; left: 18px; width: 12px; height: 12px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 6px var(--accent-soft); }
-        .findings-toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
-        .findings-toolbar input, .findings-toolbar select { padding: 8px 10px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
-        .findings-toolbar input { flex: 1; min-width: 220px; }
-        .findings-pages { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
-        .findings-pages button { padding: 5px 11px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font-size: 13px; }
-        .findings-pages button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-        details.finding > summary { list-style: none; cursor: pointer; padding: 14px 18px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+        .wrap {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 28px;
+        }
+        .report-shell {
+            display: grid;
+            gap: 18px;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 22px;
+            box-shadow: var(--shadow);
+        }
+        .brand-header {
+            display: grid;
+            gap: 18px;
+        }
+        .brand-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding-bottom: 16px;
+            border-bottom: 4px solid var(--navy);
+        }
+        .brand-logo {
+            display: flex;
+            align-items: center;
+            min-height: 52px;
+        }
+        .brand-logo svg {
+            width: 210px;
+            height: auto;
+            display: block;
+        }
+        .brand-tagline {
+            color: var(--navy);
+            font-size: 0.95rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .title-block h1 {
+            margin: 0;
+            font-size: 2.35rem;
+            line-height: 1.05;
+            color: var(--navy);
+            font-family: Cambria, Georgia, serif;
+        }
+        .title-block p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: 0.98rem;
+        }
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+        .meta-item {
+            display: grid;
+            gap: 4px;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface-soft);
+        }
+        .meta-label {
+            font-size: 0.76rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            font-weight: 700;
+        }
+        .meta-value {
+            color: var(--text);
+            font-size: 0.98rem;
+            line-height: 1.35;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: minmax(260px, 320px) 1fr;
+            gap: 16px;
+        }
+        .section-heading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 0 14px;
+            color: var(--navy);
+            font-size: 1.1rem;
+            font-weight: 800;
+        }
+        .risk-card {
+            display: grid;
+            gap: 16px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface-soft);
+        }
+        .risk-card .risk-label {
+            color: var(--muted);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+        .risk-card .risk-value {
+            font-size: 2.4rem;
+            line-height: 1;
+            font-weight: 900;
+            color: var(--critical);
+        }
+        .risk-card .risk-note {
+            color: var(--muted);
+            font-size: 0.94rem;
+            line-height: 1.55;
+        }
+        .risk-scale {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+        }
+        .risk-scale span {
+            display: block;
+            height: 10px;
+            border-radius: 999px;
+        }
+        .risk-scale span:nth-child(1) { background: #23a26d; }
+        .risk-scale span:nth-child(2) { background: #f4c43d; }
+        .risk-scale span:nth-child(3) { background: #f28b36; }
+        .risk-scale span:nth-child(4) { background: #d92d20; }
+        .summary-text {
+            display: grid;
+            gap: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface);
+        }
+        .summary-prose {
+            margin: 0;
+            color: var(--text);
+            font-size: 1rem;
+            line-height: 1.72;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .metric-card {
+            display: grid;
+            gap: 10px;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface);
+        }
+        .metric-card .label {
+            color: var(--muted);
+            font-size: 0.78rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+        .metric-card .value {
+            color: var(--navy);
+            font-size: 2rem;
+            line-height: 1;
+            font-weight: 900;
+        }
+        .metric-card.critical .value { color: var(--critical); }
+        .metric-card.high .value { color: var(--high); }
+        .metric-card.good .value { color: var(--good); }
+        .metric-card.info .value { color: var(--teal); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+        th {
+            color: var(--muted);
+            font-size: 0.76rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 800;
+            background: #f7fafd;
+        }
+        .sev, .pill {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.74rem;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+        .sev.critical { background: rgba(217,45,32,0.1); color: var(--critical); }
+        .sev.high { background: rgba(249,115,22,0.1); color: var(--high); }
+        .sev.medium { background: rgba(234,179,8,0.14); color: #9a6700; }
+        .sev.low { background: rgba(37,99,235,0.1); color: var(--low); }
+        .sev.info { background: rgba(100,116,139,0.12); color: var(--info); }
+        .pill.good { background: rgba(15,159,110,0.12); color: var(--good); }
+        .pill.warn { background: rgba(249,115,22,0.12); color: var(--high); }
+        .pill.bad { background: rgba(217,45,32,0.1); color: var(--critical); }
+        .pill.muted { background: rgba(100,116,139,0.12); color: var(--info); }
+        .coverage-grid {
+            display: grid;
+            grid-template-columns: minmax(260px, 1fr) 1fr;
+            gap: 16px;
+        }
+        .coverage-note {
+            color: var(--muted);
+            font-size: 0.96rem;
+            line-height: 1.65;
+            margin: 0;
+        }
+        .appendix-links {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .appendix-link {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            background: var(--surface-soft);
+        }
+        .appendix-link strong {
+            display: block;
+            color: var(--navy);
+            margin-bottom: 6px;
+        }
+        .appendix-link p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .toc, .findings-toolbar, .findings-pages { display: none; }
+        .legend, .appendix-note {
+            color: var(--muted);
+            font-size: 0.88rem;
+            line-height: 1.5;
+        }
+        .standards-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin: 8px 0 10px;
+        }
+        .std-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .owasp-tag { background: rgba(217,45,32,0.1); color: var(--critical); border: 1px solid rgba(217,45,32,0.18); }
+        .mitre-tag { background: rgba(249,115,22,0.12); color: var(--high); border: 1px solid rgba(249,115,22,0.18); }
+        .cis-tag { background: rgba(10,125,177,0.12); color: var(--teal); border: 1px solid rgba(10,125,177,0.18); }
+        .nist-tag { background: rgba(15,159,110,0.12); color: var(--good); border: 1px solid rgba(15,159,110,0.18); }
+        details.finding > summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 14px 18px;
+            border-radius: 12px;
+            background: var(--surface-soft);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
         details.finding > summary::-webkit-details-marker { display: none; }
         details.finding > summary .sum-chevron { margin-left: auto; transition: transform 0.2s; }
         details.finding[open] > summary .sum-chevron { transform: rotate(180deg); }
-        .finding-body { padding: 14px 18px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
-        .sum-title { font-weight: 600; font-size: 0.93rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .standards-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 10px; }
-        .std-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-decoration: none; }
-        .owasp-tag { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25); }
-        .mitre-tag { background: rgba(245,158,11,0.12); color: #fcd34d; border: 1px solid rgba(245,158,11,0.25); }
-        .cis-tag { background: rgba(70,183,255,0.12); color: #93c5fd; border: 1px solid rgba(70,183,255,0.25); }
-        .nist-tag { background: rgba(34,197,94,0.12); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
-        td, th { word-break: break-word; overflow-wrap: anywhere; max-width: 480px; }
-        .url-cell { word-break: break-all; font-size: 0.82em; }
-        .disc-card ul { max-height: 280px; overflow-y: auto; columns: 2; column-gap: 18px; padding-left: 18px; }
-        @media (max-width: 980px) { .two { grid-template-columns: 1fr; } }
-        @media print { .toc, .findings-toolbar, .findings-pages { display: none !important; } }
+        .finding-body {
+            padding: 14px 18px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-top: none;
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }
+        .sum-title {
+            font-weight: 600;
+            font-size: 0.93rem;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @media (max-width: 980px) {
+            .summary-grid,
+            .coverage-grid,
+            .metrics,
+            .appendix-links {
+                grid-template-columns: 1fr;
+            }
+            .brand-bar {
+                grid-template-columns: 1fr;
+                align-items: start;
+            }
+            .brand-tagline {
+                white-space: normal;
+            }
+        }
+        @media print {
+            body { background: #fff; }
+            .wrap { padding: 0; }
+            .card { box-shadow: none; }
+        }
     </style>
 </head>
 <body>
 <div class="wrap">
-    <nav class="toc">
-        <a href="#executive-summary">Executive Summary</a>
-        <a href="#coverage-limitations">Coverage</a>
-        <a href="#immediate-actions">Actions</a>
-        <a href="#risk-snapshot">Risk Snapshot</a>
-        <a href="#findings-index">Findings</a>
-        <a href="#compliance-crosswalk">Crosswalk</a>
-        <a href="#appendix">Appendix</a>
-    </nav>
+    <div class="report-shell">
+        <section class="card brand-header">
+            <div class="brand-bar">
+                <div class="brand-logo" aria-label="{{REPORT_ORGANIZATION}}">
+                    {{REPORT_LOGO_DARK}}
+                </div>
+                <div class="brand-tagline">{{REPORT_TAGLINE}}</div>
+            </div>
+            <div class="title-block">
+                <h1>{{REPORT_TITLE}}</h1>
+                <p>{{REPORT_SUBTITLE}}</p>
+            </div>
+            <div class="meta-grid">
+                <div class="meta-item"><span class="meta-label">Target</span><span class="meta-value">{{TARGET_URL}}</span></div>
+                <div class="meta-item"><span class="meta-label">Scan Date</span><span class="meta-value">{{SCAN_DATE}}</span></div>
+                <div class="meta-item"><span class="meta-label">Assessment Profile</span><span class="meta-value">{{ASSESSMENT_PROFILE_LABEL}}</span></div>
+                <div class="meta-item"><span class="meta-label">Prepared By</span><span class="meta-value">{{PREPARED_BY}}</span></div>
+            </div>
+        </section>
 
-    <section class="hero">
-        <div class="eyebrow">Official Security Assessment</div>
-        <h1>OmniScan Comprehensive Assessment Report</h1>
-        <p>{{TARGET_URL}}</p>
-        <div class="grid meta-grid">
-            <div class="card"><div class="meta">Scan Started</div><div>{{SCAN_DATE}}</div></div>
-            <div class="card"><div class="meta">Mode</div><div>{{SCAN_MODE}}</div></div>
-            <div class="card"><div class="meta">Requested Profile</div><div>{{REQUESTED_PROFILE}}</div></div>
-            <div class="card"><div class="meta">Effective Profile</div><div>{{EFFECTIVE_PROFILE}}</div></div>
-            <div class="card"><div class="meta">Duration</div><div>{{SCAN_DURATION_SECONDS}}s</div></div>
-        </div>
-        <div class="risk-banner">
-            <div class="risk-chip"><div class="k">Overall Risk</div><div class="v">{{RISK_POSTURE}}</div></div>
-            <div class="risk-chip"><div class="k">Data Confidence</div><div class="v">{{DATA_CONFIDENCE}}</div></div>
-            <div class="risk-chip"><div class="k">Critical + High</div><div class="v">{{CRITICAL_HIGH_COUNT}}</div></div>
-            <div class="risk-chip"><div class="k">Coverage Completeness</div><div class="v">{{COVERAGE_COMPLETENESS}}%</div></div>
-        </div>
-    </section>
+        <section class="card">
+            <h2 class="section-heading">Executive Summary</h2>
+            <div class="summary-grid">
+                <div class="risk-card">
+                    <div class="risk-label">Overall Risk Rating</div>
+                    <div class="risk-value">{{RISK_POSTURE}}</div>
+                    <div class="risk-note">Coverage confidence is currently {{DATA_CONFIDENCE}} with {{CRITICAL_HIGH_COUNT}} critical or high-priority issue(s) requiring follow-up.</div>
+                    <div class="risk-scale"><span></span><span></span><span></span><span></span></div>
+                </div>
+                <div class="summary-text">
+                    {{EXEC_SUMMARY_LIST}}
+                </div>
+            </div>
+        </section>
 
-    <section class="grid metrics">{{METRIC_CARDS}}</section>
+        <section class="metrics">{{METRIC_CARDS}}</section>
 
-    <h2 id="executive-summary">Executive Summary</h2>
-    <div class="card"><p class="summary-prose">{{EXEC_SUMMARY_LIST}}</p></div>
-
-    <h2 id="coverage-limitations">Coverage and Limitations</h2>
-    <div class="grid two">
-        <div class="card">
-            <h3>Coverage Summary</h3>
+        <section class="card">
+            <h2 class="section-heading">Prioritized Findings</h2>
             <table>
-                <tr><th>Total Tool Runs</th><td>{{TOTAL_TOOLS}}</td></tr>
-                <tr><th>Completed</th><td>{{COMPLETED_TOOLS}}</td></tr>
-                <tr><th>Failed</th><td>{{FAILED_TOOLS}}</td></tr>
-                <tr><th>Timed Out</th><td>{{TIMEOUT_TOOLS}}</td></tr>
-                <tr><th>Missing/Skipped</th><td>{{MISSING_TOOLS}}</td></tr>
-                <tr><th>Coverage Completeness</th><td>{{COVERAGE_COMPLETENESS}}%</td></tr>
+                <thead>
+                    <tr><th>Severity</th><th>Issue</th><th>Affected Area</th><th>Business Impact</th><th>Recommendation</th></tr>
+                </thead>
+                <tbody>{{PRIORITY_FINDING_ROWS}}</tbody>
             </table>
-        </div>
-        <div class="card">
-            <h3>Limitations Statement</h3>
-            <p class="narrative">This report aggregates automated and analyst-driven evidence. Areas with failed, timed-out, or skipped tools may contain unseen risk. Treat low finding counts as tentative when coverage completeness is below 85%.</p>
-        </div>
-    </div>
+        </section>
 
-    <h2 id="immediate-actions">Action Timeline</h2>
-    <div class="grid actions-grid action-timeline">
-        <div class="card timeline-card"><h3>Next 24 Hours</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_24H_ROWS}}</tbody></table></div>
-        <div class="card timeline-card"><h3>Next 7 Days</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_7D_ROWS}}</tbody></table></div>
-        <div class="card timeline-card"><h3>Strategic Follow-up</h3><table><thead><tr><th>Finding ID</th><th>Action</th><th>Owner</th></tr></thead><tbody>{{ACTIONS_30D_ROWS}}</tbody></table></div>
-    </div>
+        <section class="card">
+            <h2 class="section-heading">Coverage &amp; Limitations</h2>
+            <div class="coverage-grid">
+                <div>
+                    <table>
+                        <tr><th>Total Tool Runs</th><td>{{TOTAL_TOOLS}}</td></tr>
+                        <tr><th>Completed</th><td>{{COMPLETED_TOOLS}}</td></tr>
+                        <tr><th>Failed</th><td>{{FAILED_TOOLS}}</td></tr>
+                        <tr><th>Timed Out</th><td>{{TIMEOUT_TOOLS}}</td></tr>
+                        <tr><th>Missing / Skipped</th><td>{{MISSING_TOOLS}}</td></tr>
+                        <tr><th>Coverage Completeness</th><td>{{COVERAGE_COMPLETENESS}}%</td></tr>
+                    </table>
+                </div>
+                <div>
+                    <p class="coverage-note">This report consolidates automated findings and any analyst notes available at the time of assessment. Low finding volume does not guarantee low risk when tools failed, timed out, or were intentionally skipped for scope control.</p>
+                    <p class="coverage-note">Review the appendix for raw evidence, tool telemetry, and detailed findings before using this document as a final remediation closeout record.</p>
+                </div>
+            </div>
+        </section>
 
-    <h2 id="risk-snapshot">Risk Snapshot</h2>
-    <div class="card">
-        <h3>Top 5 Risks</h3>
-        <table>
-            <thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Exploitability</th><th>Affected Area</th><th>Status</th></tr></thead>
-            <tbody>{{TOP_RISK_ROWS}}</tbody>
-        </table>
-    </div>
+        <section class="card">
+            <h2 class="section-heading">Appendix Preview</h2>
+            <div class="appendix-links">
+                <div class="appendix-link"><strong>Detailed Findings</strong><p>Full analyst and automated issue cards with evidence, references, and remediation detail.</p></div>
+                <div class="appendix-link"><strong>Technical Evidence</strong><p>Fingerprint, telemetry, discovery artifacts, and verification records used to support the assessment.</p></div>
+                <div class="appendix-link"><strong>Raw Outputs</strong><p>HTML, Markdown, JSON, SARIF, CSV, and tool output references for downstream workflows.</p></div>
+            </div>
+        </section>
 
-    <h2>Target and Coverage Overview</h2>
-    <div class="grid two">
-        <div class="card">
-            <h3>Fingerprint</h3>
+        <section class="card">
+            <h2>Target and Coverage Overview</h2>
+            <div class="coverage-grid">
+                <div>
+                    <table>
+                        <tr><th>Mode</th><td>{{SCAN_MODE}}</td></tr>
+                        <tr><th>Requested Profile</th><td>{{REQUESTED_PROFILE}}</td></tr>
+                        <tr><th>Effective Profile</th><td>{{EFFECTIVE_PROFILE}}</td></tr>
+                        <tr><th>Duration</th><td>{{SCAN_DURATION_SECONDS}}s</td></tr>
+                        <tr><th>Title</th><td>{{FINGERPRINT_TITLE}}</td></tr>
+                        <tr><th>Status Code</th><td>{{FINGERPRINT_STATUS_CODE}}</td></tr>
+                        <tr><th>Web Server</th><td>{{FINGERPRINT_WEBSERVER}}</td></tr>
+                        <tr><th>Technologies</th><td>{{FINGERPRINT_TECHS}}</td></tr>
+                        <tr><th>WhatWeb Plugins</th><td>{{FINGERPRINT_WHATWEB}}</td></tr>
+                    </table>
+                </div>
+                <div>
+                    <table>
+                        <tr><th>Subdomains</th><td>{{DISCOVERY_SUBDOMAINS}}</td></tr>
+                        <tr><th>Parameters</th><td>{{DISCOVERY_PARAMETERS}}</td></tr>
+                        <tr><th>gau URLs</th><td>{{DISCOVERY_GAU}}</td></tr>
+                        <tr><th>Katana URLs</th><td>{{DISCOVERY_KATANA}}</td></tr>
+                        <tr><th>ffuf Hits</th><td>{{DISCOVERY_FFUF}}</td></tr>
+                        <tr><th>Feroxbuster Hits</th><td>{{DISCOVERY_FEROX}}</td></tr>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="card" id="appendix">
+            <h2>Appendix: Tool Telemetry</h2>
+            <p class="appendix-note">Detailed command telemetry and raw discovery artifacts are included for traceability and manual validation.</p>
             <table>
-                <tr><th>Title</th><td>{{FINGERPRINT_TITLE}}</td></tr>
-                <tr><th>Status Code</th><td>{{FINGERPRINT_STATUS_CODE}}</td></tr>
-                <tr><th>Web Server</th><td>{{FINGERPRINT_WEBSERVER}}</td></tr>
-                <tr><th>Technologies</th><td>{{FINGERPRINT_TECHS}}</td></tr>
-                <tr><th>WhatWeb Plugins</th><td>{{FINGERPRINT_WHATWEB}}</td></tr>
+                <thead><tr><th>Tool</th><th>Phase</th><th>Status</th><th>Seconds</th><th>Command</th><th>Outputs</th><th>Notes</th></tr></thead>
+                <tbody>{{TOOLS_ROWS}}</tbody>
             </table>
-        </div>
-        <div class="card">
-            <h3>Discovery and Coverage Summary</h3>
+        </section>
+
+        <section class="card">
+            <h2>Appendix: Discovery Artifacts</h2>
+            <div class="appendix-note">{{DISCOVERY_BLOCKS}}</div>
+        </section>
+
+        <section class="card">
+            <h2>Guided Manual Test Cases</h2>
             <table>
-                <tr><th>Coverage Completeness</th><td>{{COVERAGE_COMPLETENESS}}%</td></tr>
-                <tr><th>Total Tool Runs</th><td>{{TOTAL_TOOLS}}</td></tr>
-                <tr><th>Subdomains</th><td>{{DISCOVERY_SUBDOMAINS}}</td></tr>
-                <tr><th>Parameters</th><td>{{DISCOVERY_PARAMETERS}}</td></tr>
-                <tr><th>gau URLs</th><td>{{DISCOVERY_GAU}}</td></tr>
-                <tr><th>Katana URLs</th><td>{{DISCOVERY_KATANA}}</td></tr>
-                <tr><th>ffuf Hits</th><td>{{DISCOVERY_FFUF}}</td></tr>
-                <tr><th>Feroxbuster Hits</th><td>{{DISCOVERY_FEROX}}</td></tr>
+                <thead><tr><th>Category</th><th>Case</th><th>Status</th><th>Verification</th><th>Owner</th><th>Notes</th></tr></thead>
+                <tbody>{{CASE_ROWS}}</tbody>
             </table>
-        </div>
+        </section>
+
+        <section class="card">
+            <h2>Operator Notes</h2>
+            {{NOTES_HTML}}
+        </section>
+
+        <section class="card">
+            <h2>Verification Runs</h2>
+            {{VERIFICATION_HTML}}
+        </section>
+
+        <section class="card">
+            <h2 id="findings-index">Findings Index</h2>
+            <div class="findings-toolbar">
+                <input id="findingsSearch" type="search" placeholder="Search findings by title, tool, CVE...">
+                <select id="findingsSevFilter">
+                    <option value="">All severities</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                    <option value="info">Info</option>
+                </select>
+                <select id="findingsExploitabilityFilter">
+                    <option value="">All exploitability</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+                <select id="findingsStatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="new">New</option>
+                    <option value="known">Known</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="fixed">Fixed</option>
+                    <option value="verified">Verified</option>
+                    <option value="false_positive">False positive</option>
+                </select>
+                <span class="findings-count" id="findingsCount"></span>
+            </div>
+            <table>
+                <thead><tr><th>#</th><th>Severity</th><th>Exploitability</th><th>Confidence</th><th>Title</th><th>Asset</th><th>Tool</th><th>CVE</th><th>Owner</th><th>Status</th></tr></thead>
+                <tbody id="findingsTableBody">{{FINDING_ROWS}}</tbody>
+            </table>
+            <div class="findings-pages" id="findingsIndexPages"></div>
+        </section>
+
+        <section class="card">
+            <h2>Detailed Findings</h2>
+            <div class="legend">Standards legend: OWASP = application risk categories, MITRE ATT&amp;CK = adversary behavior, CIS Controls and NIST CSF = control and governance alignment.</div>
+            <div id="findingsDetailContainer">{{FINDING_CARDS}}</div>
+            <div class="findings-pages" id="findingsDetailPages"></div>
+        </section>
+
+        <section class="card">
+            <h2 id="compliance-crosswalk">Compliance Crosswalk</h2>
+            <table>
+                <thead><tr><th>Framework</th><th>Control / Technique ID</th><th>Related Finding IDs</th><th>Control Status</th></tr></thead>
+                <tbody>{{COMPLIANCE_ROWS}}</tbody>
+            </table>
+        </section>
     </div>
-
-    <h2 id="appendix">Appendix: Tool Telemetry</h2>
-    <p class="appendix-note">Detailed command telemetry and raw discovery artifacts are provided for analyst traceability.</p>
-    <div class="card"><table><thead><tr><th>Tool</th><th>Phase</th><th>Status</th><th>Seconds</th><th>Command</th><th>Outputs</th><th>Notes</th></tr></thead><tbody>{{TOOLS_ROWS}}</tbody></table></div>
-
-    <h2>Appendix: Discovery Artifacts</h2>
-    <div class="grid three">{{DISCOVERY_BLOCKS}}</div>
-
-    <h2>Guided Manual Test Cases</h2>
-    <div class="card"><table><thead><tr><th>Category</th><th>Case</th><th>Status</th><th>Verification</th><th>Owner</th><th>Notes</th></tr></thead><tbody>{{CASE_ROWS}}</tbody></table></div>
-
-    <h2>Operator Notes</h2>
-    <div class="card">{{NOTES_HTML}}</div>
-
-    <h2>Verification Runs</h2>
-    <div class="card">{{VERIFICATION_HTML}}</div>
-
-    <h2 id="findings-index">Findings Index</h2>
-    <div class="card">
-        <div class="findings-toolbar">
-            <input id="findingsSearch" type="search" placeholder="Search findings by title, tool, CVE...">
-            <select id="findingsSevFilter">
-                <option value="">All severities</option>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-                <option value="info">Info</option>
-            </select>
-            <select id="findingsExploitabilityFilter">
-                <option value="">All exploitability</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-            </select>
-            <select id="findingsStatusFilter">
-                <option value="">All statuses</option>
-                <option value="new">New</option>
-                <option value="known">Known</option>
-                <option value="in_progress">In progress</option>
-                <option value="fixed">Fixed</option>
-                <option value="verified">Verified</option>
-                <option value="false_positive">False positive</option>
-            </select>
-            <span class="findings-count" id="findingsCount"></span>
-        </div>
-        <table>
-            <thead>
-                <tr><th>#</th><th>Severity</th><th>Exploitability</th><th>Confidence</th><th>Title</th><th>Asset</th><th>Tool</th><th>CVE</th><th>Owner</th><th>Status</th></tr>
-            </thead>
-            <tbody id="findingsTableBody">{{FINDING_ROWS}}</tbody>
-        </table>
-        <div class="findings-pages" id="findingsIndexPages"></div>
-    </div>
-
-    <h2>Detailed Findings</h2>
-    <div class="card legend">Standards legend: OWASP = application risk categories, MITRE ATT&CK = adversary behavior, CIS Controls and NIST CSF = control and governance alignment.</div>
-    <div id="findingsDetailContainer">{{FINDING_CARDS}}</div>
-    <div class="findings-pages" id="findingsDetailPages"></div>
-
-    <h2 id="compliance-crosswalk">Compliance Crosswalk</h2>
-    <div class="card"><table><thead><tr><th>Framework</th><th>Control / Technique ID</th><th>Related Finding IDs</th><th>Control Status</th></tr></thead><tbody>{{COMPLIANCE_ROWS}}</tbody></table></div>
-
-    <span id="findingsDetailSection"></span>
 </div>
+<span id="findingsDetailSection"></span>
 <script>
 (function() {
     var PAGE_SIZE = 100;

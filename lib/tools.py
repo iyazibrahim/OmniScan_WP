@@ -1,4 +1,4 @@
-"""Tool execution wrappers and orchestration for OmniScan."""
+"""Tool execution wrappers and orchestration for DP Security Platform."""
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ipaddress
@@ -45,6 +45,37 @@ WORDLIST_CANDIDATES = [
     "/usr/share/dirbuster/wordlists/directory-list-2.3-small.txt",
 ]
 
+PORTABLE_CORE_TOOLS = {
+    "httpx",
+    "whatweb",
+    "nuclei",
+    "sslyze",
+    "subfinder",
+    "corsy",
+    "gau",
+    "katana",
+    "ffuf",
+    "feroxbuster",
+    "arjun",
+    "dalfox",
+    "wapiti",
+}
+
+DEEP_SCAN_ONLY_TOOLS = {
+    "wpscan",
+    "cmsmap",
+    "nikto",
+    "sqlmap",
+    "commix",
+    "joomscan",
+    "droopescan",
+}
+
+TOOLSET_PROFILES = {
+    "portable_core": PORTABLE_CORE_TOOLS,
+    "deep_scan": PORTABLE_CORE_TOOLS | DEEP_SCAN_ONLY_TOOLS,
+}
+
 
 def is_tool_installed(name: str) -> bool:
     """Check if a CLI tool is available on PATH."""
@@ -54,6 +85,10 @@ def is_tool_installed(name: str) -> bool:
 def get_installed_tools() -> dict[str, bool]:
     """Return dict of tool_name -> is_installed."""
     return {t["name"]: is_tool_installed(t["name"]) for t in TOOLS}
+
+
+def get_allowed_tools_for_profile(profile_name: str) -> set[str]:
+    return set(TOOLSET_PROFILES.get(str(profile_name or "").strip().lower(), TOOLSET_PROFILES["portable_core"]))
 
 
 def show_tool_status():
@@ -973,7 +1008,8 @@ def run_feroxbuster(url: str, config: dict, scan_dir: Path, cancel_check=None) -
         return _result_template("feroxbuster", "Feroxbuster", "active", [], "skipped", "No compatible content-discovery wordlist found.")
     output_file = scan_dir / "feroxbuster.json"
     cmd = ["feroxbuster", "-u", url, "-w", wordlist, "--json", "-o", str(output_file), "-q"]
-    result = _run_tool(cmd, "feroxbuster", "Feroxbuster", "active", scan_dir, output_files=[output_file], timeout=1200, cancel_check=cancel_check)
+    timeout = int(config.get("feroxbuster_timeout_seconds", 600) or 600)
+    result = _run_tool(cmd, "feroxbuster", "Feroxbuster", "active", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
     if result["status"].startswith("completed"):
         ui.ok("Feroxbuster complete.")
     return result
@@ -1058,6 +1094,8 @@ def run_all_tools(
     max_parallel_heavy_tools = max(1, int(config.get("max_parallel_heavy_tools", 2)))
     automation_scheduler = bool(config.get("automation_scheduler", True))
     strict_tool_coverage = bool(config.get("strict_tool_coverage", False))
+    toolset_profile = str(config.get("toolset_profile", "portable_core")).strip().lower() or "portable_core"
+    allowed_tools = get_allowed_tools_for_profile(toolset_profile)
     fast_profile_tools = set(config.get("fast_profile_tools", ["httpx", "whatweb", "corsy", "gau", "sslyze", "subfinder"]))
     deferred_passive_tools = set(config.get("deferred_passive_tools", ["katana"]))
     deferred_profile_tools = set(config.get("deferred_profile_tools", ["wpscan"]))
@@ -1160,6 +1198,15 @@ def run_all_tools(
         tool_meta = _tool_meta(tool_name)
         return _result_template(tool_name, tool_meta.get("label", tool_name), phase, [], "skipped", reason)
 
+    def _profile_skip(tool_name: str, phase: str) -> dict | None:
+        if tool_name in allowed_tools:
+            return None
+        return _skip_tool_result(
+            tool_name,
+            phase,
+            f"Skipped by toolset profile: {toolset_profile} keeps {tool_name} disabled for lighter container runs.",
+        )
+
     def _budget_skip(tool_name: str, phase: str) -> dict | None:
         if strict_tool_coverage:
             return None
@@ -1183,6 +1230,11 @@ def run_all_tools(
             completed_count += 1
             _emit_tool_finished(total_tools, tool_name, phase, cancel_result)
             return cancel_result
+        profile_skip = _profile_skip(tool_name, phase)
+        if profile_skip is not None:
+            completed_count += 1
+            _emit_tool_finished(total_tools, tool_name, phase, profile_skip)
+            return profile_skip
         skip_result = _budget_skip(tool_name, phase)
         if skip_result is not None:
             completed_count += 1
@@ -1216,6 +1268,12 @@ def run_all_tools(
                     index, (tool_name, phase, runner) = pending.pop(0)
                     if should_cancel and should_cancel():
                         break
+                    profile_skip = _profile_skip(tool_name, phase)
+                    if profile_skip is not None:
+                        results[index] = profile_skip
+                        completed_count += 1
+                        _emit_tool_finished(total_tools, tool_name, phase, profile_skip)
+                        continue
                     skip_result = _budget_skip(tool_name, phase)
                     if skip_result is not None:
                         results[index] = skip_result
@@ -1471,7 +1529,7 @@ def run_all_tools(
         for tool_name, phase, _runner in (static_plan + dynamic_plan)
     ]
     missing_tools = [item["label"] for item in planned_tools if not item["installed"]]
-    availability_message = f"Planned {total_tools} tools; {len(planned_tools) - len(missing_tools)} available, {len(missing_tools)} missing from PATH."
+    availability_message = f"Planned {total_tools} tools under {toolset_profile}; {len(planned_tools) - len(missing_tools)} available, {len(missing_tools)} missing from PATH."
     if missing_tools:
         availability_message += f" Missing: {', '.join(missing_tools[:5])}{'...' if len(missing_tools) > 5 else ''}."
     _emit(

@@ -1,1 +1,1 @@
-# OmniScan - Library Package
+# DP Security Platform - Library Package

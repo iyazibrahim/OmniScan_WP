@@ -1,15 +1,15 @@
-# OmniScan
+# DP Security Platform
 
-Universal Security Pipeline for web applications, CMS platforms, and APIs.
+Docker-first security assessment platform for web applications, CMS platforms, and APIs.
 
-OmniScan orchestrates recon and vulnerability tools into one workflow, normalizes findings, maps them to remediation guidance, and serves results in an interactive dashboard and portable report formats.
+DP Security Platform, operated under Digital Penang, orchestrates recon and vulnerability tools into one workflow, normalizes findings, maps them to remediation guidance, and serves results in an interactive dashboard and portable report formats.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Key Features](#key-features)
 - [Quick Start (Docker)](#quick-start-docker)
-- [Quick Start (Native)](#quick-start-native)
+- [Quick Start (Native Fallback)](#quick-start-native-fallback)
 - [Authentication and Security Model](#authentication-and-security-model)
 - [Usage](#usage)
 - [Scan Profiles and Modes](#scan-profiles-and-modes)
@@ -23,7 +23,7 @@ OmniScan orchestrates recon and vulnerability tools into one workflow, normalize
 
 ## Overview
 
-Security assessments usually require many disconnected tools with different install methods and output formats. OmniScan provides a single control plane that:
+Security assessments usually require many disconnected tools with different install methods and output formats. DP Security Platform provides a single control plane that:
 
 - Selects a profile-aware toolchain.
 - Runs passive and active phases.
@@ -39,14 +39,14 @@ Security assessments usually require many disconnected tools with different inst
 - Report management in UI: open, download artifacts, rename, and delete.
 - Configurable report profiles (executive/technical/full) and optional manual-assessment appendix.
 - Built-in remediation database mapping findings to fix guidance.
-- Native and Docker workflows.
+- Docker-first deployment with native install as an optional developer fallback.
 - First-run setup auth flow with no hardcoded default credentials.
 
 ## Quick Start (Docker)
 
 Recommended for Linux VPS/NUC deployments.
 
-The container image keeps full OmniScan tool coverage while pruning build-only packages during build to reduce runtime image size.
+The container image uses a slim Debian runtime with a curated scanner toolset so it stays portable across smaller VPS instances.
 
 ### Prerequisites
 
@@ -56,8 +56,8 @@ The container image keeps full OmniScan tool coverage while pruning build-only p
 ### Run
 
 ```bash
-git clone <repository_url> omniscan
-cd omniscan
+git clone <repository_url> dp-security-platform
+cd dp-security-platform
 docker compose build
 docker compose up -d
 ```
@@ -68,7 +68,7 @@ Open:
 http://<your-server-ip>:5000
 ```
 
-On first launch, OmniScan redirects to `/setup` for one-time admin creation.
+On first launch, DP Security Platform redirects to `/setup` for one-time admin creation.
 
 ### Persistent Data
 
@@ -76,7 +76,7 @@ On first launch, OmniScan redirects to `/setup` for one-time admin creation.
 - `./reports` for generated reports.
 - `./logs` for runtime/container logs.
 
-## Quick Start (Native)
+## Quick Start (Native Fallback)
 
 ### Prerequisites
 
@@ -85,8 +85,8 @@ On first launch, OmniScan redirects to `/setup` for one-time admin creation.
 ### Linux/macOS
 
 ```bash
-git clone <repository_url> omniscan
-cd omniscan
+git clone <repository_url> dp-security-platform
+cd dp-security-platform
 chmod +x omniscan.sh
 ./omniscan.sh --install
 ./omniscan.sh app
@@ -95,8 +95,8 @@ chmod +x omniscan.sh
 ### Windows (PowerShell)
 
 ```powershell
-git clone <repository_url> omniscan
-cd omniscan
+git clone <repository_url> dp-security-platform
+cd dp-security-platform
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -112,7 +112,7 @@ http://localhost:5000
 
 ## Authentication and Security Model
 
-OmniScan is GitHub-safe by default and avoids shipping static credentials.
+DP Security Platform is GitHub-safe by default and avoids shipping static credentials.
 
 - No fixed default email/password in source.
 - First run requires one-time setup at `/setup`.
@@ -182,16 +182,26 @@ Use dashboard to:
 - `active`: active tools only, aggressive scanning and testing.
 - `full`: passive + active combined for maximum coverage (longer runtime).
 
-### Recommended Coverage Policy (All Tools + Graceful Reports)
+### Toolset Profiles
 
-To prioritize full tool coverage while keeping scans bounded around 45-60 minutes:
+| Toolset | Purpose | Default Behavior |
+| --- | --- | --- |
+| `portable_core` | Slim Docker-friendly coverage for smaller VPS deployments | Enabled by default |
+| `deep_scan` | Optional heavier tooling for CMS- and injection-heavy follow-up testing | Opt-in |
 
-- `strict_tool_coverage: true`
-- `adaptive_tool_selection: false`
-- `automation_scheduler: false`
-- `scan_hard_timeout_seconds: 3600`
+### Recommended Docker Defaults
 
-When this policy is enabled, OmniScan attempts to run the complete tool set and still includes output from completed/partial tool runs in generated reports.
+The default Docker profile is tuned for predictable completion and lower storage/runtime overhead:
+
+- `toolset_profile: portable_core`
+- `strict_tool_coverage: false`
+- `adaptive_tool_selection: true`
+- `automation_scheduler: true`
+- `max_parallel_tools: 2`
+- `max_parallel_heavy_tools: 1`
+- `scan_hard_timeout_seconds: 2700`
+
+With this policy enabled, DP Security Platform adapts execution to the target surface and still records completed, partial, skipped, timeout, and no-output tool outcomes in generated reports.
 
 ## Architecture
 
@@ -204,13 +214,13 @@ High-level phases:
 5. Remediation enrichment.
 6. Report generation and dashboard indexing.
 
-Representative passive tooling:
+Representative portable-core passive tooling:
 
-- httpx, WhatWeb, SSLyze, Corsy, Subfinder (when applicable).
+- httpx, WhatWeb, SSLyze, Corsy, Subfinder, gau, and Katana when applicable.
 
-Representative active tooling:
+Representative portable-core active tooling:
 
-- Nuclei, SQLMap, Dalfox, Wapiti, Commix, Nikto/ZAP fallback, and CMS-specific scanners.
+- Nuclei, ffuf, Feroxbuster, Arjun, Dalfox, and Wapiti, with deeper CMS or injection tooling reserved for `deep_scan`.
 
 ## Reports
 
@@ -272,7 +282,7 @@ docker compose down
 docker compose up -d --build
 
 # Run one-off CLI scan in container
-docker compose run --rm omniscan scanner --target https://example.com --mode full --profile auto --ci
+docker compose run --rm dp-security-platform scanner --target https://example.com --mode full --profile auto --ci
 ```
 
 Optional startup behavior:

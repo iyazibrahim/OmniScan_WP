@@ -1,5 +1,5 @@
 #!/bin/bash
-# omniscan.sh - Auto-launch script for OmniScan
+# omniscan.sh - Auto-launch script for DP Security Platform
 # Safely manages the virtual environment to prevent "externally-managed-environment" errors.
 
 # Ensure we are in the script's directory
@@ -42,7 +42,7 @@ fi
 # Route the execution
 if [ "$1" == "app" ]; then
     shift # Remove 'app' from args so downstream doesn't misinterpret
-    echo "[+] Starting OmniScan Web Dashboard on http://0.0.0.0:5000 ..."
+    echo "[+] Starting DP Security Platform on http://0.0.0.0:5000 ..."
     python app.py "$@"
 else
     # By default, pass all arguments straight to the CLI scanner wrapper
