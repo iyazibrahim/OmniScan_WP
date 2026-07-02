@@ -679,6 +679,7 @@ def _dashboard_insights_payload() -> dict:
 
     critical_open = [r for r in open_rows if r.get("severity") == "critical"]
     critical_new = [r for r in critical_open if r.get("age_days", 0) <= 7]
+    new_findings_7d = [r for r in open_rows if int(r.get("age_days", 0)) <= 7]
     sla_breached = [r for r in open_rows if int(r.get("age_days", 0)) > _sla_days(str(r.get("severity", "medium")))]
     critical_sla_breached = [r for r in sla_breached if r.get("severity") == "critical"]
 
@@ -801,6 +802,9 @@ def _dashboard_insights_payload() -> dict:
             "mttr_days": mttr_days,
             "exposure_pct": exposure_pct,
             "open_findings": open_count,
+            "tracked_assets": len(assets),
+            "internet_facing_assets": len(internet_assets),
+            "new_findings_7d": len(new_findings_7d),
         },
         "attention_now": attention_now,
         "attack_surface": attack_surface,

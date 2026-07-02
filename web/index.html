@@ -134,12 +134,12 @@
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
                                 </div>
-                                <span class="stat-kicker">Immediate action</span>
+                                <span class="stat-kicker">Findings backlog</span>
                             </div>
                             <div class="stat-info">
-                                <span class="stat-value" id="statCriticalOpen">0</span>
-                                <span class="stat-label">Critical Open</span>
-                                <span class="stat-meta">Open critical items and breached SLA count.</span>
+                                <span class="stat-value" id="statOpenFindings">0</span>
+                                <span class="stat-label">Open Findings</span>
+                                <span class="stat-meta">Unresolved issues currently awaiting validation or remediation.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="red">
@@ -147,12 +147,12 @@
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
                                 </div>
-                                <span class="stat-kicker">Exposure concentration</span>
+                                <span class="stat-kicker">Priority assets</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statHighRiskAssets">0</span>
                                 <span class="stat-label">High-Risk Assets</span>
-                                <span class="stat-meta">Assets carrying the highest combined finding density.</span>
+                                <span class="stat-meta">Assets currently carrying the highest combined risk concentration.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="orange">
@@ -160,12 +160,12 @@
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
                                 </div>
-                                <span class="stat-kicker">Surface coverage</span>
+                                <span class="stat-kicker">Public exposure</span>
                             </div>
                             <div class="stat-info">
-                                <span class="stat-value" id="statExposure">0%</span>
-                                <span class="stat-label">Exposure</span>
-                                <span class="stat-meta">Internet-facing exposure level derived from tracked findings.</span>
+                                <span class="stat-value" id="statPublicAssets">0</span>
+                                <span class="stat-label">Internet-Facing Assets</span>
+                                <span class="stat-meta" id="statPublicAssetsMeta">Tracked assets currently exposed to the public internet.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="cyan">
@@ -173,12 +173,12 @@
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
                                 </div>
-                                <span class="stat-kicker">Remediation cadence</span>
+                                <span class="stat-kicker">Recent activity</span>
                             </div>
                             <div class="stat-info">
-                                <span class="stat-value" id="statMttr">0d</span>
-                                <span class="stat-label">MTTR</span>
-                                <span class="stat-meta">Average time to remediate findings with closure history.</span>
+                                <span class="stat-value" id="statNewFindings">0</span>
+                                <span class="stat-label">New This Week</span>
+                                <span class="stat-meta">Findings first seen or still newly active within the last 7 days.</span>
                             </div>
                         </div>
                     </div>
@@ -769,9 +769,9 @@
                                 <p class="subtitle">Switch between scanner policy, tokens, and performance presets.</p>
                             </div>
                             <div class="settings-tabs">
-                                <button class="tab-btn active" data-tab="tab-scanconfig">Scan Config</button>
-                                <button class="tab-btn" data-tab="tab-tokens">API Tokens</button>
-                                <button class="tab-btn" data-tab="tab-performance">Performance</button>
+                                <button type="button" class="tab-btn active" data-tab="tab-scanconfig">Scan Config</button>
+                                <button type="button" class="tab-btn" data-tab="tab-tokens">API Tokens</button>
+                                <button type="button" class="tab-btn" data-tab="tab-performance">Performance</button>
                             </div>
                         </aside>
 
@@ -879,17 +879,17 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Policy Intent</h3>
-                                        <p class="subtitle">Keep scanner execution reliable on smaller Docker deployments and future VPS migrations.</p>
+                                        <p class="subtitle">Run a deeper adaptive baseline on the VPS while keeping execution bounded and repeatable.</p>
                                     </div>
                                 </div>
                                 <div class="settings-note-list">
                                     <div class="settings-note-item">
-                                        <strong>Portable by default</strong>
-                                        <p>Primary runtime favors reproducibility and smaller storage footprint over maximum tool breadth.</p>
+                                        <strong>Adaptive by default</strong>
+                                        <p>The scanner now favors stronger VPS throughput while still skipping low-signal branches that do not improve evidence quality.</p>
                                     </div>
                                     <div class="settings-note-item">
                                         <strong>Bounded execution</strong>
-                                        <p>Adaptive gating, reduced parallelism, and hard timeouts help prevent unresponsive scan sessions.</p>
+                                        <p>Parallelism, per-tool limits, and scan budgets are tuned for a 2 vCPU / 2 GB VPS without letting jobs hang indefinitely.</p>
                                     </div>
                                     <div class="settings-note-item">
                                         <strong>Formal reporting</strong>

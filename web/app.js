@@ -56,6 +56,7 @@ const App = {
     init() {
         this.setupNavigation();
         this.setupMobileMenu();
+        this.setupTabs();
         this.checkServer();
         this.navigateTo("dashboard");
     },
@@ -129,12 +130,29 @@ const App = {
     },
 
     setupTabs() {
-        document.querySelectorAll(".tab-btn").forEach((button) => {
-            button.addEventListener("click", () => {
-                document.querySelectorAll(".tab-btn").forEach((item) => item.classList.remove("active"));
-                document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.remove("active"));
+        document.querySelectorAll(".settings-tabs").forEach((group) => {
+            if (group.dataset.bound === "true") {
+                return;
+            }
+            group.dataset.bound = "true";
+
+            group.addEventListener("click", (event) => {
+                const button = event.target.closest(".tab-btn[data-tab]");
+                if (!button) {
+                    return;
+                }
+
+                const workspace = group.closest(".settings-workspace-grid");
+                const panels = workspace ? workspace.querySelectorAll(".tab-panel") : document.querySelectorAll(".tab-panel");
+                const targetPanel = document.getElementById(button.dataset.tab);
+                if (!targetPanel) {
+                    return;
+                }
+
+                group.querySelectorAll(".tab-btn").forEach((item) => item.classList.remove("active"));
+                panels.forEach((panel) => panel.classList.remove("active"));
                 button.classList.add("active");
-                document.getElementById(button.dataset.tab).classList.add("active");
+                targetPanel.classList.add("active");
             });
         });
     },
@@ -180,10 +198,19 @@ const App = {
 
         const ov = insights?.overview || {};
         document.getElementById("statRiskScore").textContent = `${Number(ov.risk_score || 0)}`;
-        document.getElementById("statCriticalOpen").textContent = `${Number(ov.critical_open || 0)} | SLA ${Number(ov.critical_sla_breached || 0)}`;
+        document.getElementById("statOpenFindings").textContent = `${Number(ov.open_findings || 0)}`;
         document.getElementById("statHighRiskAssets").textContent = `${Number(ov.high_risk_assets || 0)}`;
-        document.getElementById("statMttr").textContent = ov.mttr_days != null ? `${ov.mttr_days}d` : "N/A";
-        document.getElementById("statExposure").textContent = `${Number(ov.exposure_pct || 0)}%`;
+        document.getElementById("statPublicAssets").textContent = `${Number(ov.internet_facing_assets || 0)}`;
+        document.getElementById("statNewFindings").textContent = `${Number(ov.new_findings_7d || 0)}`;
+        const publicAssetsMeta = document.getElementById("statPublicAssetsMeta");
+        if (publicAssetsMeta) {
+            const publicCount = Number(ov.internet_facing_assets || 0);
+            const trackedCount = Number(ov.tracked_assets || 0);
+            const exposurePct = Number(ov.exposure_pct || 0);
+            publicAssetsMeta.textContent = trackedCount > 0
+                ? `${publicCount} of ${trackedCount} tracked assets are public-facing (${exposurePct}%).`
+                : "Tracked assets currently exposed to the public internet.";
+        }
 
         const recentTargets = document.getElementById("dashTargetList");
         if (Array.isArray(targets) && targets.length > 0) {
@@ -2107,16 +2134,57 @@ const App = {
 
     setupPerformanceTab() {
         const profiles = {
-            best: {
-                label: "Best Performance",
+            vps2c2g: {
+                label: "VPS Optimized",
                 icon: "⚡",
-                desc: "Max throughput. For servers with stable, fast connections.",
-                settings: { nuclei_rate_limit: 150, wpscan_max_threads: 5, nikto_pause_seconds: 0, whatweb_max_threads: 25, httpx_rate_limit: 150, parallel_scans: true, max_parallel_tools: 4, max_parallel_heavy_tools: 3 },
+                desc: "Recommended for 2 vCPU / 2 GB RAM VPS nodes. Deeper coverage with adaptive limits still enabled.",
+                settings: {
+                    toolset_profile: "deep_scan",
+                    adaptive_tool_selection: true,
+                    adaptive_parallelism: true,
+                    automation_scheduler: true,
+                    adaptive_skip_wpscan_low_confidence: false,
+                    nuclei_rate_limit: 35,
+                    nuclei_timeout_seconds: 3300,
+                    nuclei_auto_scan_concurrency: 6,
+                    nuclei_auto_scan_bulk_size: 8,
+                    nuclei_request_timeout: 18,
+                    wpscan_max_threads: 2,
+                    nikto_pause_seconds: 0,
+                    nikto_maxtime_seconds: 900,
+                    nikto_timeout_seconds: 1080,
+                    nikto_maxtime_wordpress_seconds: 960,
+                    nikto_timeout_wordpress_seconds: 1080,
+                    whatweb_max_threads: 10,
+                    httpx_rate_limit: 40,
+                    ffuf_threads: 45,
+                    ffuf_maxtime_seconds: 540,
+                    ffuf_timeout_seconds: 960,
+                    feroxbuster_timeout_seconds: 900,
+                    adaptive_sqlmap_min_params: 2,
+                    adaptive_sqlmap_min_urls: 6,
+                    adaptive_wapiti_min_html: 1,
+                    adaptive_commix_min_params: 1,
+                    run_wapiti_api: true,
+                    scan_time_budget_passive_seconds: 3000,
+                    scan_time_budget_active_seconds: 3300,
+                    scan_time_budget_full_seconds: 4200,
+                    scan_hard_timeout_seconds: 4200,
+                    deadline_skip_grace_seconds: 240,
+                    parallelism_boost_min_urls: 80,
+                    max_parallel_tools: 3,
+                    max_parallel_heavy_tools: 2,
+                    max_parallel_tools_api: 3,
+                    max_parallel_heavy_tools_api: 2,
+                    max_parallel_tools_cap: 4,
+                    max_parallel_heavy_tools_cap: 2,
+                    timeout_per_tool_seconds: 900,
+                },
             },
             stable: {
                 label: "Stable",
                 icon: "⚖️",
-                desc: "Balanced speed and reliability. Safe for consumer routers.",
+                desc: "Balanced speed and reliability. Safe for smaller office links and general web scans.",
                 settings: { nuclei_rate_limit: 20, wpscan_max_threads: 1, nikto_pause_seconds: 1, whatweb_max_threads: 5, httpx_rate_limit: 10, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2 },
             },
             light: {
@@ -2128,25 +2196,25 @@ const App = {
             wordpress: {
                 label: "WordPress Deep",
                 icon: "🔍",
-                desc: "Thorough WPScan enumeration + Nuclei WordPress templates. Best for WP targets.",
+                desc: "Thorough WPScan enumeration plus WordPress-specific detection depth.",
                 settings: { nuclei_rate_limit: 25, wpscan_max_threads: 2, nikto_pause_seconds: 1, whatweb_max_threads: 5, httpx_rate_limit: 15, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2, nuclei_severity: "critical,high,medium,low" },
             },
             api: {
                 label: "API / Web App",
                 icon: "🌐",
-                desc: "Skip WordPress-specific tools. Focus on HTTPX, Nuclei, and web tech detection.",
+                desc: "API-first posture with stronger HTTP, content, and validation coverage.",
                 settings: { nuclei_rate_limit: 30, wpscan_max_threads: 0, nikto_pause_seconds: 2, whatweb_max_threads: 10, httpx_rate_limit: 30, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 2 },
             },
             quick: {
                 label: "Quick Recon",
                 icon: "🚀",
-                desc: "Passive-only, fast results. Good for an initial overview before a deep scan.",
+                desc: "Passive-first baseline for a fast initial overview before deep validation.",
                 settings: { nuclei_rate_limit: 15, wpscan_max_threads: 1, nikto_pause_seconds: 2, whatweb_max_threads: 5, httpx_rate_limit: 20, parallel_scans: true, max_parallel_tools: 3, max_parallel_heavy_tools: 1 },
             },
             aggressive: {
                 label: "Aggressive Full",
                 icon: "⚠️",
-                desc: "Maximum coverage for authorized pentests. Very noisy — do not use on production without permission.",
+                desc: "Maximum coverage for authorized pentests. Very noisy - do not use on production without permission.",
                 settings: { nuclei_rate_limit: 200, wpscan_max_threads: 5, nikto_pause_seconds: 0, whatweb_max_threads: 30, httpx_rate_limit: 200, parallel_scans: true, max_parallel_tools: 4, max_parallel_heavy_tools: 3 },
             },
         };
@@ -2155,8 +2223,8 @@ const App = {
         const container = document.getElementById("profileCards");
         if (container) {
             container.innerHTML = Object.entries(profiles).map(([key, p]) => `
-                <button class="profile-card ${key === "stable" ? "selected" : ""}" data-profile="${key}">
-                    <div class="profile-icon">${p.icon}</div>
+                <button class="profile-card ${key === "vps2c2g" ? "selected" : ""}" data-profile="${key}">
+                    <div class="profile-icon">${p.label.split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase()}</div>
                     <h4>${p.label}</h4>
                     <p>${p.desc}</p>
                 </button>
