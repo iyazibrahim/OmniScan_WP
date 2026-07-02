@@ -9,6 +9,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Close download dropdowns when clicking outside
     document.addEventListener("click", (e) => {
+        if (e.target.closest("#hamburgerBtn")) {
+            e.preventDefault();
+            App.toggleMobileMenu();
+            return;
+        }
+
+        if (e.target.id === "sidebarOverlay") {
+            e.preventDefault();
+            App.closeMobileMenu();
+            return;
+        }
+
         if (!e.target.closest(".dl-dropdown")) {
             document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
         }
@@ -57,10 +69,7 @@ const App = {
                 if (!view) return;
                 this.navigateTo(view);
                 if (window.innerWidth <= 1024) {
-                    const sidebar = document.getElementById("sidebar");
-                    const overlay = document.getElementById("sidebarOverlay");
-                    sidebar?.classList.remove("open");
-                    overlay?.classList.remove("open");
+                    this.closeMobileMenu();
                 }
             });
         });
@@ -96,16 +105,27 @@ const App = {
         const button = document.getElementById("hamburgerBtn");
         const sidebar = document.getElementById("sidebar");
         const overlay = document.getElementById("sidebarOverlay");
+        if (!button || !sidebar || !overlay) return;
+        button.setAttribute("aria-expanded", "false");
+    },
 
-        button.addEventListener("click", () => {
-            sidebar.classList.toggle("open");
-            overlay.classList.toggle("open");
-        });
+    toggleMobileMenu(forceState) {
+        const sidebar = document.getElementById("sidebar");
+        const overlay = document.getElementById("sidebarOverlay");
+        const button = document.getElementById("hamburgerBtn");
+        if (!sidebar || !overlay) return;
 
-        overlay.addEventListener("click", () => {
-            sidebar.classList.remove("open");
-            overlay.classList.remove("open");
-        });
+        const nextState = typeof forceState === "boolean"
+            ? forceState
+            : !sidebar.classList.contains("open");
+
+        sidebar.classList.toggle("open", nextState);
+        overlay.classList.toggle("open", nextState);
+        button?.setAttribute("aria-expanded", nextState ? "true" : "false");
+    },
+
+    closeMobileMenu() {
+        this.toggleMobileMenu(false);
     },
 
     setupTabs() {
@@ -122,6 +142,9 @@ const App = {
     async checkServer() {
         const dot = document.getElementById("serverDot");
         const text = document.getElementById("serverStatusText");
+        if (!dot || !text) return;
+
+        dot.classList.remove("online", "offline");
 
         try {
             const response = await fetch("/api/targets");
@@ -130,16 +153,20 @@ const App = {
                 text.textContent = "Server Online";
             } else {
                 dot.classList.add("offline");
-                text.textContent = "Server Error";
+                text.textContent = "API Unavailable";
             }
         } catch {
             dot.classList.add("offline");
-            text.textContent = "Server Offline";
+            text.textContent = "Backend Offline";
         }
     },
 
     async loadDashboard() {
         document.getElementById("refreshDashboard").onclick = () => this.loadDashboard();
+        const newScanBtn = document.getElementById("dashboardNewScan");
+        if (newScanBtn) {
+            newScanBtn.onclick = () => this.navigateTo("scan");
+        }
         this.setupQuickScan();
 
         const [targets, reports, tools, chartData, jobs, insights] = await Promise.all([
@@ -173,6 +200,7 @@ const App = {
         this.renderActiveScansDash(jobs);
         this.renderChart(chartData);
         this.renderDashboardInsights(insights);
+        this.renderDashboardReports(reports?.reports || []);
     },
 
     renderDashboardInsights(insights) {
@@ -204,10 +232,20 @@ const App = {
         const attackSurface = Array.isArray(insights?.attack_surface) ? insights.attack_surface : [];
         const attackNode = document.getElementById("attackSurfaceList");
         if (attackNode) {
+            const maxCount = attackSurface.reduce((max, item) => Math.max(max, Number(item.vulnerability_count || 0)), 0) || 1;
             attackNode.innerHTML = attackSurface.length
-                ? `<div class="metric-list">${attackSurface.map((item) =>
-                    `<div class="metric-item"><span>${this.esc(item.category)} <span class="metric-muted">(${item.asset_count} assets)</span></span><strong>${item.vulnerability_count}</strong></div>`
-                ).join("")}</div>`
+                ? `<div class="surface-coverage-list">${attackSurface.map((item) => {
+                    const vulnCount = Number(item.vulnerability_count || 0);
+                    const assetCount = Number(item.asset_count || 0);
+                    const widthPct = Math.max(12, Math.round((vulnCount / maxCount) * 100));
+                    return `<div class="surface-row">
+                        <div class="surface-row-head">
+                            <span class="surface-label">${this.esc(item.category || "Surface")} <span class="surface-meta">${assetCount} assets</span></span>
+                            <span class="surface-value">${this.esc(String(vulnCount))} findings</span>
+                        </div>
+                        <div class="surface-bar"><span style="width:${widthPct}%"></span></div>
+                    </div>`;
+                }).join("")}</div>`
                 : '<div class="empty-state">No attack surface data yet.</div>';
         }
 
@@ -253,6 +291,49 @@ const App = {
                 ).join("")}</div>`
                 : '<div class="empty-state">No asset risk ranking yet.</div>';
         }
+    },
+
+    renderDashboardReports(reports) {
+        const node = document.getElementById("dashRecentReportsList");
+        if (!node) return;
+
+        const reportItems = Array.isArray(reports) ? reports.slice(0, 4) : [];
+        if (!reportItems.length) {
+            node.innerHTML = '<div class="empty-state">No reports available yet.</div>';
+            return;
+        }
+
+        const sevBadge = (label, count) => {
+            if (!count) return "";
+            return `<span class="report-badge report-badge-${label}">${count} ${label}</span>`;
+        };
+
+        node.innerHTML = `<div class="report-feed">${reportItems.map((report) => {
+            const sev = report.severities || {};
+            const totalFindings = ["critical", "high", "medium", "low", "info"].reduce((sum, key) => sum + Number(sev[key] || 0), 0);
+            const profile = report.profile || "auto";
+            const lastScan = report.scan_started_at || "";
+            return `<div class="report-feed-item">
+                <div class="report-feed-top">
+                    <div>
+                        <div class="report-feed-title">${this.esc(report.target_url || report.name || "Untitled report")}</div>
+                        <div class="report-feed-meta">${this.esc(profile)} profile${lastScan ? ` · ${this.esc(this._formatReportDate(report))}` : ""}</div>
+                    </div>
+                    <strong class="surface-value">${this.esc(String(totalFindings))}</strong>
+                </div>
+                <div class="report-findings-mix">
+                    ${sevBadge("critical", Number(sev.critical || 0))}
+                    ${sevBadge("high", Number(sev.high || 0))}
+                    ${sevBadge("medium", Number(sev.medium || 0))}
+                    ${sevBadge("low", Number(sev.low || 0))}
+                    ${totalFindings === 0 ? '<span class="report-badge report-badge-clean">Clean</span>' : ""}
+                </div>
+                <div class="report-feed-actions">
+                    <a href="/api/reports/${encodeURIComponent(report.path)}" target="_blank" class="btn-ghost btn-sm">Open</a>
+                    <a href="/api/reports/${encodeURIComponent(report.path)}?dl=1" class="btn-ghost btn-sm" download>Download</a>
+                </div>
+            </div>`;
+        }).join("")}</div>`;
     },
 
     renderActiveScansDash(jobs) {
@@ -342,6 +423,7 @@ const App = {
 
     setupQuickScan() {
         const form = document.getElementById("quickScanForm");
+        if (!form) return;
         form.onsubmit = async (event) => {
             event.preventDefault();
             const target = document.getElementById("quickTarget").value.trim();
@@ -768,6 +850,7 @@ const App = {
                     <h3>No Reports Yet</h3>
                     <p>Run a scan to generate your first report.</p>
                 </div>`;
+            this.renderReportsSidebar({ all: 0, critical: 0, high: 0, medium: 0, low: 0, clean: 0 }, [], []);
             return;
         }
 
@@ -818,6 +901,7 @@ const App = {
             });
         }
 
+        this.renderReportsSidebar(counts, reports, groups);
         this._reportFilter = this._reportFilter || "all";
         this._reportSearch = this._reportSearch || "";
         this._renderFilteredReports();
@@ -1036,6 +1120,73 @@ const App = {
                         }).join("")}
                 </div>
             </div>`;
+    },
+
+    renderReportsSidebar(counts, reports, groups) {
+        const coverage = document.getElementById("reportsCoveragePanel");
+        const exportsFeed = document.getElementById("reportsExportFeed");
+        if (!coverage || !exportsFeed) return;
+
+        const groupCount = groups.length || 0;
+        const distribution = [
+            { label: "Critical", value: counts.critical || 0, className: "critical" },
+            { label: "High", value: counts.high || 0, className: "high" },
+            { label: "Medium", value: counts.medium || 0, className: "medium" },
+            { label: "Low", value: counts.low || 0, className: "low" },
+            { label: "Clean", value: counts.clean || 0, className: "clean" },
+        ];
+        const maxValue = Math.max(...distribution.map((item) => item.value), 1);
+
+        coverage.innerHTML = `
+            <div class="metric-list">
+                <div class="metric-item">
+                    <span class="metric-label">Unique Targets</span>
+                    <strong>${groupCount}</strong>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">Total Reports</span>
+                    <strong>${reports.length}</strong>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">Clean Libraries</span>
+                    <strong>${counts.clean || 0}</strong>
+                </div>
+            </div>
+            <div class="surface-coverage-list">
+                ${distribution.map((item) => `
+                    <div class="surface-row">
+                        <div class="surface-row-head">
+                            <span class="surface-label surface-${item.className}">${item.label}</span>
+                            <span class="surface-value">${item.value}</span>
+                        </div>
+                        <div class="surface-bar">
+                            <span style="width:${groupCount ? (item.value / maxValue) * 100 : 0}%"></span>
+                        </div>
+                    </div>
+                `).join("")}
+            </div>
+        `;
+
+        const recent = [...reports]
+            .sort((left, right) => (right.modified || 0) - (left.modified || 0))
+            .slice(0, 5);
+
+        exportsFeed.innerHTML = recent.length
+            ? `<div class="report-feed">
+                ${recent.map((report) => `
+                    <div class="report-feed-item">
+                        <div class="report-feed-top">
+                            <div>
+                                <div class="report-feed-title">${this.esc(report.name || report.folder || "Report Export")}</div>
+                                <div class="report-feed-meta">${this.esc(this._formatReportDate(report))}</div>
+                            </div>
+                            <span class="badge badge-neutral">${this.esc(((report.path || "").split(".").pop() || "html").toUpperCase())}</span>
+                        </div>
+                        <div class="report-findings-mix">${this._renderSeverityBadges(report.severities || {})}</div>
+                    </div>
+                `).join("")}
+            </div>`
+            : '<div class="empty-state">No report exports available yet.</div>';
     },
 
     toggleDlMenu(btn) {
@@ -1689,6 +1840,8 @@ const App = {
             `).join("");
         }
 
+        this.renderTargetOverview(Array.isArray(targets) ? targets : []);
+
         document.getElementById("addTargetForm").onsubmit = async (event) => {
             event.preventDefault();
             const url = document.getElementById("newTargetUrl").value.trim();
@@ -1721,6 +1874,74 @@ const App = {
         };
     },
 
+    renderTargetOverview(targets) {
+        const total = targets.length;
+        const webProfiles = new Set(["webapp", "wordpress", "joomla", "drupal"]);
+        const profiles = new Map();
+        let webCount = 0;
+        let recentCount = 0;
+
+        targets.forEach((target) => {
+            const profile = String(target.profile || "auto").toLowerCase();
+            profiles.set(profile, (profiles.get(profile) || 0) + 1);
+            if (webProfiles.has(profile) || profile === "auto") webCount += 1;
+            if (target.last_scanned && String(target.last_scanned).toLowerCase() !== "never") recentCount += 1;
+        });
+
+        const profileEntries = [...profiles.entries()].sort((left, right) => right[1] - left[1]);
+        const maxCount = Math.max(...profileEntries.map((entry) => entry[1]), 1);
+
+        const setText = (id, value) => {
+            const node = document.getElementById(id);
+            if (node) node.textContent = value;
+        };
+
+        setText("targetsTotalCount", String(total));
+        setText("targetsWebCount", String(webCount));
+        setText("targetsRecentCount", String(recentCount));
+        setText("targetsProfilesCount", String(profileEntries.length));
+
+        const profileMix = document.getElementById("targetsProfileMix");
+        if (profileMix) {
+            profileMix.innerHTML = profileEntries.length
+                ? `<div class="surface-coverage-list">
+                    ${profileEntries.map(([profile, count]) => `
+                        <div class="surface-row">
+                            <div class="surface-row-head">
+                                <span class="surface-label">${this.esc(profile || "auto")}</span>
+                                <span class="surface-value">${count}</span>
+                            </div>
+                            <div class="surface-bar">
+                                <span style="width:${(count / maxCount) * 100}%"></span>
+                            </div>
+                        </div>
+                    `).join("")}
+                </div>`
+                : '<div class="empty-state">No target profiles available yet.</div>';
+        }
+
+        const operationalNotes = document.getElementById("targetsOperationalNotes");
+        if (operationalNotes) {
+            const unscanned = total - recentCount;
+            operationalNotes.innerHTML = `
+                <div class="metric-list">
+                    <div class="metric-item">
+                        <span class="metric-label">Ready for Scan Center</span>
+                        <strong>${total}</strong>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Pending First Scan</span>
+                        <strong>${unscanned}</strong>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Auto or Web-Oriented</span>
+                        <strong>${webCount}</strong>
+                    </div>
+                </div>
+            `;
+        }
+    },
+
     async deleteTarget(index) {
         if (!confirm("Remove this target?")) {
             return;
@@ -1750,6 +1971,7 @@ const App = {
     async loadConfigTab() {
         const config = await this.api("/api/config");
         const container = document.getElementById("configFields");
+        this.syncSettingsSummary(config || {});
 
         if (!config || Object.keys(config).length === 0) {
             container.innerHTML = '<div class="empty-state">No configuration found</div>';
@@ -1814,6 +2036,23 @@ const App = {
                 this.toast("Connection error", "error");
             }
         };
+    },
+
+    syncSettingsSummary(config) {
+        const text = (id, value) => {
+            const node = document.getElementById(id);
+            if (node) node.textContent = value;
+        };
+
+        const automationMode = config.adaptive_tool_selection
+            ? "Adaptive"
+            : (config.automation_scheduler ? "Scheduled" : "Manual");
+
+        text("settingsProfileName", String(config.toolset_profile || "portable_core"));
+        text("settingsAutomationMode", automationMode);
+        text("settingsParallelTools", String(config.max_parallel_tools ?? 2));
+        text("settingsHardTimeout", `${config.scan_hard_timeout_seconds ?? 2700}s`);
+        text("settingsOutputFormats", "HTML, MD, JSON, SARIF, CSV");
     },
 
     async loadTokensTab() {

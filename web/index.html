@@ -11,7 +11,6 @@
 </head>
 <body>
     <div class="app-layout">
-        <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="logo">
                 <img src="assets/dp-logo-white-text.svg" alt="Digital Penang" class="brand-logo">
@@ -84,7 +83,6 @@
             </div>
         </aside>
 
-        <!-- Mobile Header -->
         <div class="mobile-header" id="mobileHeader">
             <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
                 <span></span><span></span><span></span>
@@ -93,380 +91,531 @@
         </div>
         <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-        <!-- Main Content -->
         <main class="content-area" id="contentArea">
-
-            <!-- ═══════════════════ DASHBOARD VIEW ═══════════════════ -->
             <section class="view active" id="view-dashboard">
-                <header class="view-header">
-                    <div>
-                        <h1>Dashboard</h1>
-                        <p class="view-subtitle">Security overview at a glance</p>
-                    </div>
-                    <button class="btn-ghost" id="refreshDashboard">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                        Refresh
-                    </button>
-                </header>
+                <div class="dashboard-shell">
+                    <header class="view-header dashboard-header">
+                        <div>
+                            <h1>Security Overview</h1>
+                            <p class="view-subtitle">Executive posture, priority findings, and live execution status across the monitored surface.</p>
+                        </div>
+                        <div class="dashboard-header-actions">
+                            <div class="dashboard-sync-pill">
+                                <span class="status-dot online"></span>
+                                Live portfolio view
+                            </div>
+                            <button class="btn-ghost" id="refreshDashboard">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                Refresh
+                            </button>
+                            <button class="btn-primary" id="dashboardNewScan">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                New Scan
+                            </button>
+                        </div>
+                    </header>
 
-                <div class="stats-grid" id="statsGrid">
-                    <div class="stat-card" data-accent="blue">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4z"/><path d="M9 12h6"/></svg>
+                    <div class="stats-grid executive-strip" id="statsGrid">
+                        <div class="stat-card executive-card executive-card-score" data-accent="blue">
+                            <div class="stat-card-head">
+                                <div class="stat-icon">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4z"></path><path d="M9 12h6"></path></svg>
+                                </div>
+                                <span class="stat-kicker">Portfolio posture</span>
+                            </div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="statRiskScore">0</span>
+                                <span class="stat-label">Risk Score</span>
+                                <span class="stat-meta">Composite score across recent findings and asset criticality.</span>
+                            </div>
                         </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="statRiskScore">0</span>
-                            <span class="stat-label">Risk Score</span>
+                        <div class="stat-card executive-card" data-accent="green">
+                            <div class="stat-card-head">
+                                <div class="stat-icon">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
+                                </div>
+                                <span class="stat-kicker">Immediate action</span>
+                            </div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="statCriticalOpen">0</span>
+                                <span class="stat-label">Critical Open</span>
+                                <span class="stat-meta">Open critical items and breached SLA count.</span>
+                            </div>
+                        </div>
+                        <div class="stat-card executive-card" data-accent="red">
+                            <div class="stat-card-head">
+                                <div class="stat-icon">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+                                </div>
+                                <span class="stat-kicker">Exposure concentration</span>
+                            </div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="statHighRiskAssets">0</span>
+                                <span class="stat-label">High-Risk Assets</span>
+                                <span class="stat-meta">Assets carrying the highest combined finding density.</span>
+                            </div>
+                        </div>
+                        <div class="stat-card executive-card" data-accent="orange">
+                            <div class="stat-card-head">
+                                <div class="stat-icon">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
+                                </div>
+                                <span class="stat-kicker">Surface coverage</span>
+                            </div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="statExposure">0%</span>
+                                <span class="stat-label">Exposure</span>
+                                <span class="stat-meta">Internet-facing exposure level derived from tracked findings.</span>
+                            </div>
+                        </div>
+                        <div class="stat-card executive-card" data-accent="cyan">
+                            <div class="stat-card-head">
+                                <div class="stat-icon">
+                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
+                                </div>
+                                <span class="stat-kicker">Remediation cadence</span>
+                            </div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="statMttr">0d</span>
+                                <span class="stat-label">MTTR</span>
+                                <span class="stat-meta">Average time to remediate findings with closure history.</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="stat-card" data-accent="green">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
+
+                    <div class="dashboard-command-grid">
+                        <div class="dashboard-main-column">
+                            <div class="card priority-findings-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Priority Findings</h3>
+                                        <p class="subtitle">Issues ranked for immediate analyst attention by severity, exploitability, and asset impact.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="table-scroll">
+                                        <table class="decision-table" id="attentionTable">
+                                            <thead>
+                                                <tr><th>Asset</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Exploit</th><th>SLA</th><th>Action</th></tr>
+                                            </thead>
+                                            <tbody id="attentionTableBody">
+                                                <tr><td colspan="7" class="empty-state">Loading risk priorities...</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card trend-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Risk Trend</h3>
+                                        <p class="subtitle">Severity distribution and longitudinal risk movement across recent assessment windows.</p>
+                                    </div>
+                                    <div class="chart-mode-toggle">
+                                        <button class="btn-ghost btn-xs active" id="chartModeStacked" onclick="App.setChartMode('stacked')">Severity Mix</button>
+                                        <button class="btn-ghost btn-xs" id="chartModeNorm" onclick="App.setChartMode('normalized')">Risk + Volume</button>
+                                    </div>
+                                </div>
+                                <div class="card-body chart-container">
+                                    <canvas id="monthlyChart"></canvas>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-mini-grid">
+                                <div class="card dashboard-mini-panel">
+                                    <div class="card-header dashboard-card-header">
+                                        <div>
+                                            <h3>Tracked Assets</h3>
+                                            <p class="subtitle">Recently reviewed portfolio entries.</p>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <ul class="target-mini-list" id="dashTargetList">
+                                            <li class="empty-state">Loading...</li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div class="card dashboard-mini-panel">
+                                    <div class="card-header dashboard-card-header">
+                                        <div>
+                                            <h3>Aging &amp; SLA</h3>
+                                            <p class="subtitle">Open findings by age band and compliance state.</p>
+                                        </div>
+                                    </div>
+                                    <div class="card-body" id="agingSlaList">
+                                        <div class="empty-state">Loading SLA metrics...</div>
+                                    </div>
+                                </div>
+
+                                <div class="card dashboard-mini-panel">
+                                    <div class="card-header dashboard-card-header">
+                                        <div>
+                                            <h3>Top Vulnerable Assets</h3>
+                                            <p class="subtitle">Highest risk concentration by tracked asset.</p>
+                                        </div>
+                                    </div>
+                                    <div class="card-body" id="topAssetsList">
+                                        <div class="empty-state">Loading asset risk ranking...</div>
+                                    </div>
+                                </div>
+
+                                <div class="card dashboard-mini-panel">
+                                    <div class="card-header dashboard-card-header">
+                                        <div>
+                                            <h3>Vulnerability Breakdown</h3>
+                                            <p class="subtitle">CVSS bands, exploit presence, and top CWE volume.</p>
+                                        </div>
+                                    </div>
+                                    <div class="card-body" id="vulnBreakdownList">
+                                        <div class="empty-state">Loading vulnerability breakdown...</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="statCriticalOpen">0</span>
-                            <span class="stat-label">Critical Open</span>
-                        </div>
-                    </div>
-                    <div class="stat-card" data-accent="red">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="statHighRiskAssets">0</span>
-                            <span class="stat-label">High-Risk Assets</span>
-                        </div>
-                    </div>
-                    <div class="stat-card" data-accent="cyan">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="statMttr">0d</span>
-                            <span class="stat-label">MTTR</span>
-                        </div>
-                    </div>
-                    <div class="stat-card" data-accent="orange">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
-                        </div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="statExposure">0%</span>
-                            <span class="stat-label">Exposure</span>
-                        </div>
+
+                        <aside class="dashboard-rail">
+                            <div class="card dashboard-rail-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <h3>Active Scans</h3>
+                                    <span class="badge badge-neutral" id="dashActiveScansBadge">0 running</span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashActiveScansList" class="active-scans-list">
+                                        <div class="empty-state">No scans in session.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card dashboard-rail-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Coverage by Surface</h3>
+                                        <p class="subtitle">Tracked surface mix and vulnerability density.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="attackSurfaceList">
+                                    <div class="empty-state">Loading attack surface...</div>
+                                </div>
+                            </div>
+
+                            <div class="card dashboard-rail-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Recent Reports</h3>
+                                        <p class="subtitle">Latest generated artifacts and posture snapshots.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="dashRecentReportsList">
+                                    <div class="empty-state">Loading reports...</div>
+                                </div>
+                            </div>
+                        </aside>
                     </div>
                 </div>
+            </section>
 
-                <div class="dashboard-grid">
-                    <div class="card widget-chart">
-                        <div class="card-header">
-                            <div>
-                                <h3>Vulnerability Trend</h3>
-                                <p class="subtitle">Risk and vulnerability volume over time</p>
-                            </div>
-                            <div class="chart-mode-toggle">
-                                <button class="btn-ghost btn-xs active" id="chartModeStacked" onclick="App.setChartMode('stacked')">Severity Mix</button>
-                                <button class="btn-ghost btn-xs" id="chartModeNorm" onclick="App.setChartMode('normalized')">Risk + Volume</button>
+            <section class="view" id="view-scan">
+                <div class="workspace-shell">
+                    <header class="workspace-page-header">
+                        <div>
+                            <p class="workspace-section-label">Scan Center</p>
+                            <h1>Scan Center</h1>
+                            <p class="view-subtitle workspace-subtitle">Create and manage security scans with bounded execution and live telemetry.</p>
+                        </div>
+                        <div class="workspace-page-actions">
+                            <div class="workspace-status-pill">
+                                <span class="status-dot online"></span>
+                                <span>Portable Core Default</span>
                             </div>
                         </div>
-                        <div class="card-body chart-container">
-                            <canvas id="monthlyChart"></canvas>
+                    </header>
+
+                    <div class="workspace-signal-strip compact-strip">
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Execution Model</span>
+                            <strong>Adaptive</strong>
+                            <p>Skip or defer tools when the target lacks useful inputs.</p>
+                        </div>
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Parallelism</span>
+                            <strong>2 Tools</strong>
+                            <p>Heavy tools are capped independently to avoid saturation.</p>
+                        </div>
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Hard Timeout</span>
+                            <strong>45 Minutes</strong>
+                            <p>Scans end predictably instead of hanging on sparse targets.</p>
                         </div>
                     </div>
 
-                    <div class="card widget-attention">
-                        <div class="card-header">
-                            <h3>What Needs Attention Now</h3>
-                            <p class="subtitle">Prioritized by exploitability, CVSS, and asset risk</p>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-scroll">
-                                <table class="decision-table" id="attentionTable">
-                                    <thead>
-                                        <tr><th>Asset</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Exploit</th><th>SLA</th><th>Action</th></tr>
-                                    </thead>
-                                    <tbody id="attentionTableBody">
-                                        <tr><td colspan="7" class="empty-state">Loading risk priorities...</td></tr>
-                                    </tbody>
-                                </table>
+                    <div class="scan-page-grid">
+                        <div class="scan-page-main">
+                            <div class="card scan-config-card">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Create New Scan</h3>
+                                        <p class="subtitle">Define the target, profile, and scan mode for this assessment run.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <form id="scanForm">
+                                        <div class="form-group">
+                                            <label for="scanTarget">Target URL</label>
+                                            <div class="input-with-dropdown">
+                                                <input type="text" id="scanTarget" placeholder="https://example.com" required>
+                                                <select id="scanTargetSelect" class="target-dropdown">
+                                                    <option value="">-- or pick saved target --</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group">
+                                                <label for="scanMode">Scan Mode</label>
+                                                <select id="scanMode">
+                                                    <option value="passive">Passive (Recon only)</option>
+                                                    <option value="active">Active (Aggressive testing only)</option>
+                                                    <option value="full">Full (Passive + Active, max coverage)</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="scanProfile">Profile</label>
+                                                <select id="scanProfile">
+                                                    <option value="auto">Auto Detect</option>
+                                                    <option value="wordpress">WordPress</option>
+                                                    <option value="joomla">Joomla</option>
+                                                    <option value="drupal">Drupal</option>
+                                                    <option value="webapp">Web App</option>
+                                                    <option value="api">Custom API</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="scan-estimate-hint" id="scanEstimateHint">Estimated runtime: loading...</div>
+                                        <button type="submit" class="btn-primary btn-lg" id="scanSubmitBtn">
+                                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                            <span>Launch Scan</span>
+                                        </button>
+                                    </form>
+                                    <div id="scanFormStatus" class="scan-status-msg hidden"></div>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="card widget-quick-scan">
-                        <div class="card-header">
-                            <h3>Quick Scan</h3>
-                            <p class="subtitle">Launch a fast scan against a target</p>
-                        </div>
-                        <div class="card-body">
-                            <form id="quickScanForm" class="quick-scan-form">
-                                <div class="input-row">
-                                    <input type="text" id="quickTarget" placeholder="https://example.com" required>
-                                    <select id="quickMode">
-                                        <option value="passive">Passive</option>
-                                        <option value="active">Active</option>
-                                        <option value="full">Full</option>
-                                    </select>
-                                    <select id="quickProfile">
-                                        <option value="auto">Auto Detect</option>
-                                        <option value="wordpress">WordPress</option>
-                                        <option value="joomla">Joomla</option>
-                                        <option value="drupal">Drupal</option>
-                                        <option value="webapp">Web App</option>
-                                        <option value="api">Custom API</option>
-                                    </select>
-                                    <button type="submit" class="btn-primary btn-icon" id="quickScanBtn">
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        <div class="scan-page-rail">
+                            <div class="card scan-progress-card" id="scanProgressCard">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Live Scan Monitor</h3>
+                                        <p class="subtitle" id="scanProgressSubtitle">Start a scan to see tool progress, timing, and completion state.</p>
+                                    </div>
+                                    <button class="btn-ghost btn-danger btn-sm" id="scanCancelBtn" style="display:none" onclick="App.cancelScan()">
+                                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                        Cancel
                                     </button>
                                 </div>
-                                <div id="quickScanStatus" class="scan-status-msg hidden"></div>
-                            </form>
-                        </div>
-                    </div>
-
-                    <div class="card widget-recent-targets">
-                        <div class="card-header">
-                            <h3>Recent Targets</h3>
-                        </div>
-                        <div class="card-body">
-                            <ul class="target-mini-list" id="dashTargetList">
-                                <li class="empty-state">Loading...</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <div class="card widget-active-scans">
-                        <div class="card-header">
-                            <h3>Active Scans</h3>
-                            <span class="badge badge-neutral" id="dashActiveScansBadge">0 running</span>
-                        </div>
-                        <div class="card-body">
-                            <div id="dashActiveScansList" class="active-scans-list">
-                                <div class="empty-state">No scans in session.</div>
+                                <div class="card-body">
+                                    <div class="scan-progress-main">
+                                        <div class="scan-donut" id="scanDonut" style="--progress: 0;">
+                                            <div class="scan-donut-center">
+                                                <strong id="scanProgressPercent">0%</strong>
+                                                <span>Complete</span>
+                                            </div>
+                                        </div>
+                                        <div class="scan-progress-meta">
+                                            <div class="scan-progress-row"><span>Status</span><strong id="scanRunState">Idle</strong></div>
+                                            <div class="scan-progress-row"><span>Current Tool</span><strong id="scanCurrentTool">-</strong></div>
+                                            <div class="scan-progress-row" id="scanToolEtaRow" style="display:none"><span>Tool ETA</span><strong id="scanToolEta">-</strong></div>
+                                            <div class="scan-progress-row"><span>Progress</span><strong id="scanToolProgress">0 / 0 tools</strong></div>
+                                            <div class="scan-progress-row"><span>Elapsed</span><strong id="scanElapsed">~0s</strong></div>
+                                            <div class="scan-progress-row"><span>ETA</span><strong id="scanEta">-</strong></div>
+                                        </div>
+                                    </div>
+                                    <div class="scan-progress-bar-wrap">
+                                        <div class="scan-progress-bar"><div id="scanProgressBarFill"></div></div>
+                                    </div>
+                                    <div class="scan-activity-log" id="scanActivityLog">
+                                        <div class="empty-state">No scan running.</div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
 
-                    <div class="card widget-breakdown">
-                        <div class="card-header">
-                            <h3>Attack Surface</h3>
-                            <p class="subtitle">Vulnerability density by asset category</p>
-                        </div>
-                        <div class="card-body" id="attackSurfaceList">
-                            <div class="empty-state">Loading attack surface...</div>
-                        </div>
-                    </div>
+                            <div class="card scan-guardrails-card">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Execution Guardrails</h3>
+                                        <p class="subtitle">Production defaults designed for smaller VPS footprints and predictable completion.</p>
+                                    </div>
+                                </div>
+                                <div class="guardrail-grid">
+                                    <div class="guardrail-item">
+                                        <span class="guardrail-label">Adaptive Selection</span>
+                                        <strong>Enabled</strong>
+                                    </div>
+                                    <div class="guardrail-item">
+                                        <span class="guardrail-label">Strict Coverage</span>
+                                        <strong>Off</strong>
+                                    </div>
+                                    <div class="guardrail-item">
+                                        <span class="guardrail-label">Heavy Tool Cap</span>
+                                        <strong>1 at a time</strong>
+                                    </div>
+                                    <div class="guardrail-item">
+                                        <span class="guardrail-label">No-Hang Behavior</span>
+                                        <strong>Auto-Skip &amp; Continue</strong>
+                                    </div>
+                                </div>
+                            </div>
 
-                    <div class="card widget-breakdown">
-                        <div class="card-header">
-                            <h3>Vulnerability Breakdown</h3>
-                            <p class="subtitle">CVSS bands, exploit availability, and top CWE</p>
-                        </div>
-                        <div class="card-body" id="vulnBreakdownList">
-                            <div class="empty-state">Loading vulnerability breakdown...</div>
-                        </div>
-                    </div>
-
-                    <div class="card widget-breakdown">
-                        <div class="card-header">
-                            <h3>Aging & SLA</h3>
-                            <p class="subtitle">Unresolved findings by age and compliance state</p>
-                        </div>
-                        <div class="card-body" id="agingSlaList">
-                            <div class="empty-state">Loading SLA metrics...</div>
-                        </div>
-                    </div>
-
-                    <div class="card widget-breakdown">
-                        <div class="card-header">
-                            <h3>Top Vulnerable Assets</h3>
-                            <p class="subtitle">Heat ranking by asset risk score and critical count</p>
-                        </div>
-                        <div class="card-body" id="topAssetsList">
-                            <div class="empty-state">Loading asset risk ranking...</div>
+                            <div class="card">
+                                <div class="card-header">
+                                    <div>
+                                        <h3>Scanner Inventory</h3>
+                                        <p class="subtitle">Security tools available in the current runtime image.</p>
+                                    </div>
+                                    <button type="button" class="btn-ghost btn-sm" id="toggleToolsPanelBtn" aria-expanded="false">
+                                        Show Tools
+                                    </button>
+                                </div>
+                                <div class="card-body tools-panel collapsed" id="toolsPanelBody">
+                                    <ul class="tools-list" id="toolsList">
+                                        <li class="empty-state">Loading tools status...</li>
+                                    </ul>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- ═══════════════════ SCAN VIEW ═══════════════════ -->
-            <section class="view" id="view-scan">
-                <header class="view-header">
-                    <div>
-                        <h1>Scan</h1>
-                        <p class="view-subtitle">Configure and launch security scans</p>
-                    </div>
-                </header>
-
-                <div class="scan-layout">
-                    <div class="card scan-config-card">
-                        <div class="card-header">
-                            <h3>Scan Configuration</h3>
-                        </div>
-                        <div class="card-body">
-                            <form id="scanForm">
-                                <div class="form-group">
-                                    <label for="scanTarget">Target URL</label>
-                                    <div class="input-with-dropdown">
-                                        <input type="text" id="scanTarget" placeholder="https://example.com" required>
-                                        <select id="scanTargetSelect" class="target-dropdown">
-                                            <option value="">— or pick saved target —</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="scanMode">Scan Mode</label>
-                                        <select id="scanMode">
-                                            <option value="passive">Passive (Recon only)</option>
-                                            <option value="active">Active (Aggressive testing only)</option>
-                                            <option value="full">Full (Passive + Active, max coverage)</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="scanProfile">Profile</label>
-                                        <select id="scanProfile">
-                                            <option value="auto">Auto Detect</option>
-                                            <option value="wordpress">WordPress</option>
-                                            <option value="joomla">Joomla</option>
-                                            <option value="drupal">Drupal</option>
-                                            <option value="webapp">Web App</option>
-                                            <option value="api">Custom API</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="scan-estimate-hint" id="scanEstimateHint">Estimated runtime: loading...</div>
-                                <button type="submit" class="btn-primary btn-lg" id="scanSubmitBtn">
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                                    <span>Initiate Scan</span>
-                                </button>
-                            </form>
-                            <div id="scanFormStatus" class="scan-status-msg hidden"></div>
-                        </div>
-                    </div>
-
-                    <div class="card scan-progress-card" id="scanProgressCard">
-                        <div class="card-header">
-                            <div>
-                                <h3>Live Scan Progress</h3>
-                                <p class="subtitle" id="scanProgressSubtitle">Start a scan to see real-time tool activity and completion.</p>
-                            </div>
-                            <button class="btn-ghost btn-danger btn-sm" id="scanCancelBtn" style="display:none" onclick="App.cancelScan()">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                Cancel
-                            </button>
-                        </div>
-                        <div class="card-body">
-                            <div class="scan-progress-main">
-                                <div class="scan-donut" id="scanDonut" style="--progress: 0;">
-                                    <div class="scan-donut-center">
-                                        <strong id="scanProgressPercent">0%</strong>
-                                        <span>Complete</span>
-                                    </div>
-                                </div>
-                                <div class="scan-progress-meta">
-                                    <div class="scan-progress-row"><span>Status</span><strong id="scanRunState">Idle</strong></div>
-                                    <div class="scan-progress-row"><span>Current Tool</span><strong id="scanCurrentTool">-</strong></div>
-                                    <div class="scan-progress-row" id="scanToolEtaRow" style="display:none"><span>Tool ETA</span><strong id="scanToolEta">-</strong></div>
-                                    <div class="scan-progress-row"><span>Progress</span><strong id="scanToolProgress">0 / 0 tools</strong></div>
-                                    <div class="scan-progress-row"><span>Elapsed</span><strong id="scanElapsed">~0s</strong></div>
-                                    <div class="scan-progress-row"><span>ETA</span><strong id="scanEta">-</strong></div>
-                                </div>
-                            </div>
-                            <div class="scan-progress-bar-wrap">
-                                <div class="scan-progress-bar"><div id="scanProgressBarFill"></div></div>
-                            </div>
-                            <div class="scan-activity-log" id="scanActivityLog">
-                                <div class="empty-state">No scan running.</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <div>
-                                <h3>Tools Available</h3>
-                                <p class="subtitle">Security tools detected on this system</p>
-                            </div>
-                            <button type="button" class="btn-ghost btn-sm" id="toggleToolsPanelBtn" aria-expanded="false">
-                                Show Tools
-                            </button>
-                        </div>
-                        <div class="card-body tools-panel collapsed" id="toolsPanelBody">
-                            <ul class="tools-list" id="toolsList">
-                                <li class="empty-state">Loading tools status...</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ═══════════════════ REPORTS VIEW ═══════════════════ -->
             <section class="view" id="view-reports">
-                <header class="view-header">
-                    <div>
-                        <h1>Reports</h1>
-                        <p class="view-subtitle">Browse past scan results by website and latest security posture</p>
-                    </div>
-                    <button class="btn-ghost" id="refreshReports">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                        Refresh
-                    </button>
-                </header>
-                <div id="reportsToolbar" class="reports-toolbar" style="display:none">
-                    <div class="reports-filter-tabs" id="reportsFilterTabs">
-                        <button class="filter-tab active" data-sev="all">All</button>
-                        <button class="filter-tab" data-sev="critical">&#128308; Critical</button>
-                        <button class="filter-tab" data-sev="high">&#128992; High</button>
-                        <button class="filter-tab" data-sev="medium">&#128993; Medium</button>
-                        <button class="filter-tab" data-sev="low">&#128994; Low</button>
-                        <button class="filter-tab" data-sev="clean">&#9989; Clean</button>
-                    </div>
-                    <input type="search" class="reports-search" id="reportsSearch" placeholder="Search target, history, or report name&#8230;">
-                </div>
-                <div class="reports-container" id="reportsList">
-                    <div class="empty-state-big">
-                        <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        <p>Loading reports...</p>
+                <div class="workspace-shell">
+                    <header class="workspace-page-header">
+                        <div>
+                            <p class="workspace-section-label">Reports</p>
+                            <h1>Reports &amp; Evidence</h1>
+                            <p class="view-subtitle workspace-subtitle">Browse, review, and export historical security assessment reports.</p>
+                        </div>
+                        <div class="workspace-page-actions">
+                            <button class="btn-ghost" id="refreshReports">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </header>
+
+                    <div class="reports-page-grid">
+                        <div class="reports-main-column">
+                            <div id="reportsToolbar" class="card reports-toolbar-card" style="display:none">
+                                <div class="reports-filter-tabs" id="reportsFilterTabs">
+                                    <button class="filter-tab active" data-sev="all">All</button>
+                                    <button class="filter-tab" data-sev="critical">&#128308; Critical</button>
+                                    <button class="filter-tab" data-sev="high">&#128992; High</button>
+                                    <button class="filter-tab" data-sev="medium">&#128993; Medium</button>
+                                    <button class="filter-tab" data-sev="low">&#128994; Low</button>
+                                    <button class="filter-tab" data-sev="clean">&#9989; Clean</button>
+                                </div>
+                                <input type="search" class="reports-search" id="reportsSearch" placeholder="Search target, history, or report name...">
+                            </div>
+
+                            <div class="reports-container" id="reportsList">
+                                <div class="empty-state-big">
+                                    <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                                    <p>Loading reports...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <aside class="reports-rail">
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Report Coverage</h3>
+                                        <p class="subtitle">Summary of the current report library and severity distribution.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="reportsCoveragePanel">
+                                    <div class="empty-state">Loading report metrics...</div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Recent Exports</h3>
+                                        <p class="subtitle">Latest generated report artifacts across supported formats.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="reportsExportFeed">
+                                    <div class="empty-state">Loading exports...</div>
+                                </div>
+                            </div>
+                        </aside>
                     </div>
                 </div>
             </section>
 
             <section class="view" id="view-assessments">
-                <header class="view-header">
-                    <div>
-                        <h1>Security Playbook</h1>
-                        <p class="view-subtitle">Step-by-step analyst workflow with guided test cases</p>
-                    </div>
-                    <button class="btn-ghost" id="refreshAssessments">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                        Refresh
-                    </button>
-                </header>
-
-                <div class="assessment-shell">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Target Playbook</h3>
-                            <p class="subtitle">Load or continue a guided playbook for a saved or custom target</p>
+                <div class="workspace-shell">
+                    <header class="workspace-page-header">
+                        <div>
+                            <p class="workspace-section-label">Playbook</p>
+                            <h1>Security Playbook</h1>
+                            <p class="view-subtitle workspace-subtitle">Structured analyst workflow for guided testing, evidence capture, and retest tracking.</p>
                         </div>
-                        <div class="card-body">
-                            <form id="assessmentTargetForm">
-                                <div class="input-row assessment-target-row">
-                                    <input type="text" id="assessmentTargetInput" placeholder="https://example.com" required>
-                                    <select id="assessmentTargetSelect" class="target-dropdown">
-                                        <option value="">Pick saved target</option>
-                                    </select>
-                                    <button type="submit" class="btn-primary">
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
-                                        Load Playbook
-                                    </button>
-                                    <button type="button" class="btn-ghost" id="saveAssessmentBtn">
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                                        Save Playbook
-                                    </button>
+                        <div class="workspace-page-actions">
+                            <button class="btn-ghost" id="refreshAssessments">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </header>
+
+                    <div class="playbook-launch-grid">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Target Playbook</h3>
+                                <p class="subtitle">Load or continue a guided playbook for a saved or custom target</p>
+                            </div>
+                            <div class="card-body">
+                                <form id="assessmentTargetForm">
+                                    <div class="input-row assessment-target-row">
+                                        <input type="text" id="assessmentTargetInput" placeholder="https://example.com" required>
+                                        <select id="assessmentTargetSelect" class="target-dropdown">
+                                            <option value="">Pick saved target</option>
+                                        </select>
+                                        <button type="submit" class="btn-primary">
+                                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+                                            Load Playbook
+                                        </button>
+                                        <button type="button" class="btn-ghost" id="saveAssessmentBtn">
+                                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                            Save Playbook
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="card playbook-guidance-card">
+                            <div class="card-header">
+                                <h3>Workflow Standard</h3>
+                                <p class="subtitle">Keep analyst notes, verification evidence, and remediation tracking in one structured view.</p>
+                            </div>
+                            <div class="metric-list">
+                                <div class="metric-item">
+                                    <span class="metric-label">Assessment Focus</span>
+                                    <strong>Findings, evidence, and retests</strong>
                                 </div>
-                            </form>
+                                <div class="metric-item">
+                                    <span class="metric-label">Operator Outcome</span>
+                                    <strong>Reusable and auditable test narrative</strong>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Recommended Use</span>
+                                    <strong>High-value targets and manual validation</strong>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -480,155 +629,281 @@
                 </div>
             </section>
 
-            <!-- ═══════════════════ TARGETS VIEW ═══════════════════ -->
             <section class="view" id="view-targets">
-                <header class="view-header">
-                    <div>
-                        <h1>Targets</h1>
-                        <p class="view-subtitle">Manage your scan targets</p>
-                    </div>
-                </header>
+                <div class="workspace-shell">
+                    <header class="workspace-page-header">
+                        <div>
+                            <p class="workspace-section-label">Targets</p>
+                            <h1>Targets &amp; Coverage</h1>
+                            <p class="view-subtitle workspace-subtitle">Manage saved scan targets, profile assignments, and scanning readiness.</p>
+                        </div>
+                    </header>
 
-                <div class="card">
-                    <div class="card-header">
-                        <h3>Add New Target</h3>
+                    <div class="workspace-signal-strip compact-strip">
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Total Targets</span>
+                            <strong id="targetsTotalCount">0</strong>
+                            <p>Stored records available for automated scanning.</p>
+                        </div>
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Web Profiles</span>
+                            <strong id="targetsWebCount">0</strong>
+                            <p>Targets assigned to website-oriented assessment profiles.</p>
+                        </div>
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Recently Scanned</span>
+                            <strong id="targetsRecentCount">0</strong>
+                            <p>Targets with a recorded recent scan timestamp.</p>
+                        </div>
+                        <div class="workspace-signal-card">
+                            <span class="signal-label">Profile Mix</span>
+                            <strong id="targetsProfilesCount">0</strong>
+                            <p>Unique target profiles currently represented.</p>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <form id="addTargetForm" class="add-target-form">
-                            <div class="input-row">
-                                <input type="text" id="newTargetUrl" placeholder="https://example.com" required>
-                                <input type="text" id="newTargetLabel" placeholder="Site Label" required>
-                                <select id="newTargetProfile" required style="max-width: 150px;">
-                                    <option value="auto">Auto Detect</option>
-                                    <option value="wordpress">WordPress</option>
-                                    <option value="joomla">Joomla</option>
-                                    <option value="drupal">Drupal</option>
-                                    <option value="webapp">Web App</option>
-                                    <option value="api">Custom API</option>
-                                </select>
-                                <button type="submit" class="btn-primary btn-icon">
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                </button>
+
+                    <div class="targets-page-grid">
+                        <div class="targets-main-column">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h3>Add New Target</h3>
+                                    <p class="subtitle">Register a URL, label, and preferred assessment profile.</p>
+                                </div>
+                                <div class="card-body">
+                                    <form id="addTargetForm" class="add-target-form">
+                                        <div class="input-row">
+                                            <input type="text" id="newTargetUrl" placeholder="https://example.com" required>
+                                            <input type="text" id="newTargetLabel" placeholder="Site Label" required>
+                                            <select id="newTargetProfile" required style="max-width: 150px;">
+                                                <option value="auto">Auto Detect</option>
+                                                <option value="wordpress">WordPress</option>
+                                                <option value="joomla">Joomla</option>
+                                                <option value="drupal">Drupal</option>
+                                                <option value="webapp">Web App</option>
+                                                <option value="api">Custom API</option>
+                                            </select>
+                                            <button type="submit" class="btn-primary btn-icon">
+                                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
-                        </form>
-                    </div>
-                </div>
 
-                <div class="card" style="margin-top: 24px;">
-                    <div class="card-header">
-                        <h3>Saved Targets</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="targets-table-wrap" id="targetsTableWrap">
-                            <table class="data-table" id="targetsTable">
-                                <thead>
-                                    <tr>
-                                        <th>#</th>
-                                        <th>Label</th>
-                                        <th>URL</th>
-                                        <th>Profile</th>
-                                        <th>Last Scanned</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="targetsBody">
-                                    <tr><td colspan="6" class="empty-state">Loading...</td></tr>
-                                </tbody>
-                            </table>
+                            <div class="card workspace-stack-space">
+                                <div class="card-header">
+                                    <h3>Saved Targets</h3>
+                                    <p class="subtitle">Operational target inventory used by Scan Center and Playbook.</p>
+                                </div>
+                                <div class="card-body">
+                                    <div class="targets-table-wrap" id="targetsTableWrap">
+                                        <table class="data-table" id="targetsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th>#</th>
+                                                    <th>Label</th>
+                                                    <th>URL</th>
+                                                    <th>Profile</th>
+                                                    <th>Last Scanned</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="targetsBody">
+                                                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+
+                        <aside class="targets-rail">
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Profile Distribution</h3>
+                                        <p class="subtitle">Current target allocation by detected or assigned profile.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="targetsProfileMix">
+                                    <div class="empty-state">Loading profile distribution...</div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Operational Notes</h3>
+                                        <p class="subtitle">Current target hygiene guidance for the scanning library.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="targetsOperationalNotes">
+                                    <div class="empty-state">Loading target guidance...</div>
+                                </div>
+                            </div>
+                        </aside>
                     </div>
                 </div>
             </section>
 
-            <!-- ═══════════════════ SETTINGS VIEW ═══════════════════ -->
             <section class="view" id="view-settings">
-                <header class="view-header">
-                    <div>
-                        <h1>Settings</h1>
-                        <p class="view-subtitle">Configure scanner behavior</p>
-                    </div>
-                </header>
+                <div class="workspace-shell">
+                    <header class="workspace-page-header">
+                        <div>
+                            <p class="workspace-section-label">Settings</p>
+                            <h1>Platform Settings</h1>
+                            <p class="view-subtitle workspace-subtitle">Configure scan behavior, integrations, and runtime defaults for the platform.</p>
+                        </div>
+                        <div class="workspace-page-actions">
+                            <div class="workspace-status-pill">
+                                <span class="status-dot online"></span>
+                                <span>Adaptive Policy Active</span>
+                            </div>
+                        </div>
+                    </header>
 
-                <div class="settings-tabs">
-                    <button class="tab-btn active" data-tab="tab-scanconfig">Scan Config</button>
-                    <button class="tab-btn" data-tab="tab-tokens">API Tokens</button>
-                    <button class="tab-btn" data-tab="tab-performance">Performance</button>
-                </div>
+                    <div class="settings-workspace-grid">
+                        <aside class="card settings-nav-card">
+                            <div class="card-header">
+                                <h3>Configuration Areas</h3>
+                                <p class="subtitle">Switch between scanner policy, tokens, and performance presets.</p>
+                            </div>
+                            <div class="settings-tabs">
+                                <button class="tab-btn active" data-tab="tab-scanconfig">Scan Config</button>
+                                <button class="tab-btn" data-tab="tab-tokens">API Tokens</button>
+                                <button class="tab-btn" data-tab="tab-performance">Performance</button>
+                            </div>
+                        </aside>
 
-                <!-- Scan Config Tab -->
-                <div class="tab-panel active" id="tab-scanconfig">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Scan Configuration</h3>
-                            <p class="subtitle">Edit scan-config.json values</p>
-                        </div>
-                        <div class="card-body">
-                            <form id="configForm">
-                                <div class="config-grid" id="configFields">
-                                    <div class="empty-state">Loading configuration...</div>
+                        <div class="settings-content-column">
+                            <div class="tab-panel active" id="tab-scanconfig">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h3>Scan Configuration</h3>
+                                        <p class="subtitle">Edit `scan-config.json` values used for default bounded scanning behavior.</p>
+                                    </div>
+                                    <div class="card-body">
+                                        <form id="configForm">
+                                            <div class="config-grid" id="configFields">
+                                                <div class="empty-state">Loading configuration...</div>
+                                            </div>
+                                            <div class="form-actions">
+                                                <button type="submit" class="btn-primary">
+                                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                                    Save Configuration
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
                                 </div>
-                                <div class="form-actions">
-                                    <button type="submit" class="btn-primary">
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                                        Save Configuration
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
+                            </div>
 
-                <!-- API Tokens Tab -->
-                <div class="tab-panel" id="tab-tokens">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>API Tokens</h3>
-                            <p class="subtitle">Configure third-party API keys</p>
-                        </div>
-                        <div class="card-body">
-                            <form id="tokensForm">
-                                <div class="form-group">
-                                    <label for="tokenWpscan">WPScan API Token</label>
-                                    <input type="text" id="tokenWpscan" placeholder="Enter WPScan API token">
-                                    <small class="form-hint">Get yours at <a href="https://wpscan.com/api" target="_blank">wpscan.com/api</a></small>
+                            <div class="tab-panel" id="tab-tokens">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h3>API Tokens</h3>
+                                        <p class="subtitle">Configure third-party API keys required by optional scanner integrations.</p>
+                                    </div>
+                                    <div class="card-body">
+                                        <form id="tokensForm">
+                                            <div class="form-group">
+                                                <label for="tokenWpscan">WPScan API Token</label>
+                                                <input type="text" id="tokenWpscan" placeholder="Enter WPScan API token">
+                                                <small class="form-hint">Get yours at <a href="https://wpscan.com/api" target="_blank">wpscan.com/api</a></small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="tokenZap">OWASP ZAP API Key</label>
+                                                <input type="text" id="tokenZap" placeholder="Enter ZAP API key">
+                                            </div>
+                                            <div class="form-actions">
+                                                <button type="submit" class="btn-primary">
+                                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                                                    Save Tokens
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
                                 </div>
-                                <div class="form-group">
-                                    <label for="tokenZap">OWASP ZAP API Key</label>
-                                    <input type="text" id="tokenZap" placeholder="Enter ZAP API key">
-                                </div>
-                                <div class="form-actions">
-                                    <button type="submit" class="btn-primary">
-                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                        Save Tokens
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
+                            </div>
 
-                <!-- Performance Tab -->
-                <div class="tab-panel" id="tab-performance">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Performance Profile</h3>
-                            <p class="subtitle">Choose a network performance preset</p>
+                            <div class="tab-panel" id="tab-performance">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h3>Performance Profile</h3>
+                                        <p class="subtitle">Choose a network performance preset aligned with the target environment.</p>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="profile-cards" id="profileCards"></div>
+                                        <button class="btn-primary" id="applyProfileBtn" style="margin-top: 20px;">
+                                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                            Apply Profile
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="card-body">
-                            <div class="profile-cards" id="profileCards"></div>
-                            <button class="btn-primary" id="applyProfileBtn" style="margin-top: 20px;">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                Apply Profile
-                            </button>
-                        </div>
+
+                        <aside class="settings-rail">
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Active Scan Profile Summary</h3>
+                                        <p class="subtitle">Current bounded-scan posture used as the default platform baseline.</p>
+                                    </div>
+                                </div>
+                                <div class="metric-list">
+                                    <div class="metric-item">
+                                        <span class="metric-label">Toolset Profile</span>
+                                        <strong id="settingsProfileName">portable_core</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span class="metric-label">Automation Mode</span>
+                                        <strong id="settingsAutomationMode">Adaptive</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span class="metric-label">Max Parallel Tools</span>
+                                        <strong id="settingsParallelTools">2</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span class="metric-label">Hard Timeout</span>
+                                        <strong id="settingsHardTimeout">2700s</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span class="metric-label">Default Formats</span>
+                                        <strong id="settingsOutputFormats">HTML, MD, JSON, SARIF, CSV</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Policy Intent</h3>
+                                        <p class="subtitle">Keep scanner execution reliable on smaller Docker deployments and future VPS migrations.</p>
+                                    </div>
+                                </div>
+                                <div class="settings-note-list">
+                                    <div class="settings-note-item">
+                                        <strong>Portable by default</strong>
+                                        <p>Primary runtime favors reproducibility and smaller storage footprint over maximum tool breadth.</p>
+                                    </div>
+                                    <div class="settings-note-item">
+                                        <strong>Bounded execution</strong>
+                                        <p>Adaptive gating, reduced parallelism, and hard timeouts help prevent unresponsive scan sessions.</p>
+                                    </div>
+                                    <div class="settings-note-item">
+                                        <strong>Formal reporting</strong>
+                                        <p>Every completed scan is designed to generate clean HTML, Markdown, JSON, CSV, and SARIF outputs.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </aside>
                     </div>
                 </div>
             </section>
-
         </main>
     </div>
 
-    <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="app.js"></script>

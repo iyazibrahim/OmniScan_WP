@@ -8,16 +8,16 @@ ARG KATANA_VERSION=v1.1.2
 ARG GAU_VERSION=v2.2.4
 ARG NUCLEI_VERSION=v3.3.8
 
-ENV CGO_ENABLED=0 \
-    GOBIN=/go/bin
+ENV GOBIN=/go/bin
 
-RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@${HTTPX_VERSION} && \
-    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@${SUBFINDER_VERSION} && \
-    go install -v github.com/ffuf/ffuf/v2@${FFUF_VERSION} && \
-    go install -v github.com/hahwul/dalfox/v2@${DALFOX_VERSION} && \
-    go install -v github.com/projectdiscovery/katana/cmd/katana@${KATANA_VERSION} && \
-    go install -v github.com/lc/gau/v2/cmd/gau@${GAU_VERSION} && \
-    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/projectdiscovery/httpx/cmd/httpx@${HTTPX_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@${SUBFINDER_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/ffuf/ffuf/v2@${FFUF_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/hahwul/dalfox/v2@${DALFOX_VERSION}
+# Katana's Linux build pulls in go-tree-sitter, which does not build with CGO disabled.
+RUN CGO_ENABLED=1 go install -v github.com/projectdiscovery/katana/cmd/katana@${KATANA_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/lc/gau/v2/cmd/gau@${GAU_VERSION}
+RUN CGO_ENABLED=0 go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@${NUCLEI_VERSION}
 
 FROM rust:1.89-bookworm AS rustbuilder
 

@@ -13,6 +13,11 @@ logs/
 .nuclei/
 .wpscan/
 .zap/
+.tmp/
+.tmp-*.log
+
+# Local UI preview artifacts
+web/__dashboard_preview_temp.*
 
 # Python
 __pycache__/
