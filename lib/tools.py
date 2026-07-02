@@ -168,11 +168,56 @@ def _result_template(
         "output_files": [],
         "primary_output": "",
         "note": note,
+        "coverage_applicable": True,
+        "coverage_reason": "",
+        "coverage_bucket": "",
     }
 
 
 def _missing_tool_result(tool_name: str, tool_label: str, phase: str) -> dict:
     return _result_template(tool_name, tool_label, phase, [], "missing", "Tool not found on PATH.")
+
+
+def _annotate_coverage(result: dict) -> dict:
+    status = str(result.get("status", "") or "").strip().lower()
+    note = str(result.get("note", "") or "").strip()
+
+    if status in {"completed", "completed_no_output", "completed_partial"}:
+        coverage_bucket = "completed"
+        coverage_applicable = True
+        if status == "completed_no_output":
+            coverage_reason = note or "Completed successfully but did not return actionable output for this target."
+        elif status == "completed_partial":
+            coverage_reason = note or "Completed with partial evidence; review telemetry before dismissing the result."
+        else:
+            coverage_reason = note or "Completed successfully."
+    elif status == "missing":
+        coverage_bucket = "unavailable"
+        coverage_applicable = True
+        coverage_reason = note or "Required tool was unavailable on PATH."
+    elif status == "timeout":
+        coverage_bucket = "timeout"
+        coverage_applicable = True
+        coverage_reason = note or "Timed out before completing this applicable coverage check."
+    elif status == "skipped":
+        coverage_bucket = "not_applicable"
+        coverage_applicable = False
+        coverage_reason = note or "Skipped as intentionally non-applicable for the current profile or planner decision."
+    elif status == "cancelled":
+        coverage_bucket = "failed"
+        coverage_applicable = True
+        coverage_reason = note or "Cancelled before this applicable coverage check could complete."
+    else:
+        coverage_bucket = "failed"
+        coverage_applicable = True
+        coverage_reason = note or "Failed before this applicable coverage check could complete."
+
+    result["coverage_applicable"] = coverage_applicable
+    result["coverage_reason"] = coverage_reason
+    result["coverage_bucket"] = coverage_bucket
+    if status in {"completed_no_output", "completed_partial"} and not note:
+        result["note"] = coverage_reason
+    return result
 
 
 def _write_text(path: Path, content: str):
@@ -319,6 +364,14 @@ def _run_tool(
         elif returncode not in ok_codes and has_output:
             status = "completed_partial"
 
+        note = ""
+        if status == "completed_no_output":
+            note = "Completed successfully but did not return actionable output for this target."
+        elif status == "completed_partial":
+            note = stderr.strip()[:400] if stderr else "Completed with partial evidence; review captured output."
+        elif returncode not in ok_codes and stderr:
+            note = stderr.strip()[:400]
+
         result.update(
             {
                 "status": status,
@@ -328,14 +381,12 @@ def _run_tool(
                 "stderr_log": str(stderr_log),
                 "output_files": outputs,
                 "primary_output": outputs[0] if outputs else "",
-                "note": "",
+                "note": note,
             }
         )
-        if returncode not in ok_codes and stderr:
-            result["note"] = stderr.strip()[:400]
-        return result
+        return _annotate_coverage(result)
     except FileNotFoundError:
-        return _missing_tool_result(tool_name, tool_label, phase)
+        return _annotate_coverage(_missing_tool_result(tool_name, tool_label, phase))
     except subprocess.TimeoutExpired:
         duration = time.perf_counter() - start
         _write_text(stderr_log, f"{tool_label} timed out after {timeout} seconds.")
@@ -361,7 +412,7 @@ def _run_tool(
                 ),
             }
         )
-        return result
+        return _annotate_coverage(result)
     except Exception as exc:
         duration = time.perf_counter() - start
         _write_text(stderr_log, str(exc))
@@ -374,7 +425,7 @@ def _run_tool(
                 "note": str(exc)[:400],
             }
         )
-        return result
+        return _annotate_coverage(result)
 
 
 def _resolve_wordlist(config: dict) -> str | None:
@@ -1066,8 +1117,8 @@ def _run_registered_tool(
     tool_meta = next((t for t in TOOLS if t["name"] == tool_name), {"label": tool_name})
     if not installed.get(tool_name):
         ui.warn(f"Skipping {tool_name} (not installed or missing from PATH).")
-        return _missing_tool_result(tool_name, tool_meta["label"], phase)
-    return runner()
+        return _annotate_coverage(_missing_tool_result(tool_name, tool_meta["label"], phase))
+    return _annotate_coverage(runner())
 
 
 def run_all_tools(
@@ -1196,7 +1247,7 @@ def run_all_tools(
 
     def _skip_tool_result(tool_name: str, phase: str, reason: str) -> dict:
         tool_meta = _tool_meta(tool_name)
-        return _result_template(tool_name, tool_meta.get("label", tool_name), phase, [], "skipped", reason)
+        return _annotate_coverage(_result_template(tool_name, tool_meta.get("label", tool_name), phase, [], "skipped", reason))
 
     def _profile_skip(tool_name: str, phase: str) -> dict | None:
         if tool_name in allowed_tools:
@@ -1227,6 +1278,7 @@ def run_all_tools(
         if should_cancel and should_cancel():
             cancel_result = _skip_tool_result(tool_name, phase, "Execution interrupted by timeout/cancellation before this tool started.")
             cancel_result["status"] = "cancelled"
+            cancel_result = _annotate_coverage(cancel_result)
             completed_count += 1
             _emit_tool_finished(total_tools, tool_name, phase, cancel_result)
             return cancel_result

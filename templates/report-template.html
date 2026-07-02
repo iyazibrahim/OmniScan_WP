@@ -211,6 +211,7 @@
         table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }
         th, td {
             text-align: left;
@@ -348,9 +349,93 @@
             }
         }
         @media print {
-            body { background: #fff; }
-            .wrap { padding: 0; }
-            .card { box-shadow: none; }
+            @page {
+                size: A4;
+                margin: 11mm;
+            }
+            html, body {
+                width: 210mm;
+            }
+            body {
+                background: #fff;
+                color: #111827;
+                font-size: 10pt;
+            }
+            .wrap {
+                max-width: none;
+                width: auto;
+                padding: 0;
+                margin: 0;
+            }
+            .report-shell {
+                gap: 10px;
+            }
+            .card,
+            .brand-header,
+            .risk-card,
+            .summary-text,
+            .metric-card,
+            .appendix-link,
+            details.finding {
+                box-shadow: none;
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+            }
+            .card,
+            .metric-card {
+                border-radius: 10px;
+                padding: 12px;
+            }
+            .brand-bar {
+                padding-bottom: 10px;
+            }
+            .title-block h1 {
+                font-size: 22pt;
+            }
+            .title-block p,
+            .brand-tagline,
+            .summary-prose,
+            .coverage-note,
+            .appendix-note,
+            th,
+            td,
+            li,
+            p {
+                font-size: 8.8pt;
+                line-height: 1.4;
+            }
+            .meta-grid,
+            .summary-grid,
+            .coverage-grid,
+            .metrics,
+            .appendix-links {
+                gap: 8px;
+            }
+            h2, h3 {
+                break-after: avoid-page;
+                page-break-after: avoid;
+            }
+            thead {
+                display: table-header-group;
+            }
+            tr {
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+            }
+            th, td {
+                padding: 6px 8px;
+            }
+            pre, code {
+                white-space: pre-wrap;
+                word-break: break-word;
+                overflow: visible;
+                font-size: 8pt;
+            }
+            .findings-toolbar,
+            .findings-pages,
+            .toc {
+                display: none !important;
+            }
         }
     </style>
 </head>
@@ -408,17 +493,13 @@
             <div class="coverage-grid">
                 <div>
                     <table>
-                        <tr><th>Total Tool Runs</th><td>{{TOTAL_TOOLS}}</td></tr>
-                        <tr><th>Completed</th><td>{{COMPLETED_TOOLS}}</td></tr>
-                        <tr><th>Failed</th><td>{{FAILED_TOOLS}}</td></tr>
-                        <tr><th>Timed Out</th><td>{{TIMEOUT_TOOLS}}</td></tr>
-                        <tr><th>Missing / Skipped</th><td>{{MISSING_TOOLS}}</td></tr>
-                        <tr><th>Coverage Completeness</th><td>{{COVERAGE_COMPLETENESS}}%</td></tr>
+                        {{COVERAGE_SUMMARY_ROWS}}
                     </table>
                 </div>
                 <div>
-                    <p class="coverage-note">This report consolidates automated findings and any analyst notes available at the time of assessment. Low finding volume does not guarantee low risk when tools failed, timed out, or were intentionally skipped for scope control.</p>
-                    <p class="coverage-note">Review the appendix for raw evidence, tool telemetry, and detailed findings before using this document as a final remediation closeout record.</p>
+                    <p class="coverage-note">{{COVERAGE_NARRATIVE_PRIMARY}}</p>
+                    <p class="coverage-note">{{COVERAGE_NARRATIVE_SECONDARY}}</p>
+                    <p class="coverage-note">{{COVERAGE_NARRATIVE_TERTIARY}}</p>
                 </div>
             </div>
         </section>
@@ -475,23 +556,7 @@
             <div class="appendix-note">{{DISCOVERY_BLOCKS}}</div>
         </section>
 
-        <section class="card">
-            <h2>Guided Manual Test Cases</h2>
-            <table>
-                <thead><tr><th>Category</th><th>Case</th><th>Status</th><th>Verification</th><th>Owner</th><th>Notes</th></tr></thead>
-                <tbody>{{CASE_ROWS}}</tbody>
-            </table>
-        </section>
-
-        <section class="card">
-            <h2>Operator Notes</h2>
-            {{NOTES_HTML}}
-        </section>
-
-        <section class="card">
-            <h2>Verification Runs</h2>
-            {{VERIFICATION_HTML}}
-        </section>
+        {{MANUAL_ASSESSMENT_SECTIONS}}
 
         <section class="card">
             <h2 id="findings-index">Findings Index</h2>

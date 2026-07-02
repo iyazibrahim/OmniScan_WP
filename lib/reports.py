@@ -24,6 +24,7 @@ from lib.standards import SARIF_LEVEL_MAP
 
 MALAYSIA_TZ = timezone(timedelta(hours=8))
 REPORT_INDEX_FILE = REPORTS_DIR / "report-index.json"
+COMPLETED_TOOL_STATUSES = {"completed", "completed_no_output", "completed_partial"}
 
 
 def _as_malaysia_time(value: datetime) -> datetime:
@@ -112,14 +113,126 @@ def _assessment_summary(assessment: dict | None) -> dict:
     return assessment.get("summary", {}) if isinstance(assessment.get("summary"), dict) else {}
 
 
+def _coverage_confidence(stakeholder_completion_pct: int) -> str:
+    if stakeholder_completion_pct >= 90:
+        return "high"
+    if stakeholder_completion_pct >= 75:
+        return "medium"
+    return "low"
+
+
+def _normalize_tool_run_for_coverage(run: dict) -> dict:
+    normalized = dict(run or {})
+    status = str(normalized.get("status", "") or "").strip().lower()
+    note = str(normalized.get("note", "") or "").strip()
+
+    if status in COMPLETED_TOOL_STATUSES:
+        coverage_bucket = "completed"
+        coverage_applicable = True
+        if status == "completed_no_output":
+            coverage_reason = note or "Completed successfully but did not return actionable output for this target."
+        elif status == "completed_partial":
+            coverage_reason = note or "Completed with partial evidence; review telemetry before dismissing the result."
+        else:
+            coverage_reason = note or "Completed successfully."
+    elif status == "missing":
+        coverage_bucket = "unavailable"
+        coverage_applicable = True
+        coverage_reason = note or "Required tool was unavailable on PATH."
+    elif status == "timeout":
+        coverage_bucket = "timeout"
+        coverage_applicable = True
+        coverage_reason = note or "Timed out before completing this applicable coverage check."
+    elif status == "skipped":
+        coverage_bucket = "not_applicable"
+        coverage_applicable = False
+        coverage_reason = note or "Skipped as intentionally non-applicable for the current profile or planner decision."
+    elif status == "cancelled":
+        coverage_bucket = "failed"
+        coverage_applicable = True
+        coverage_reason = note or "Cancelled before this applicable coverage check could complete."
+    else:
+        coverage_bucket = "failed"
+        coverage_applicable = True
+        coverage_reason = note or "Failed before this applicable coverage check could complete."
+
+    normalized["coverage_applicable"] = coverage_applicable
+    normalized["coverage_reason"] = coverage_reason
+    normalized["coverage_bucket"] = coverage_bucket
+    return normalized
+
+
+def _normalize_tool_runs_for_coverage(tool_runs: list[dict]) -> list[dict]:
+    return [_normalize_tool_run_for_coverage(run) for run in tool_runs if isinstance(run, dict)]
+
+
+def _format_report_datetime_myt(value: str | datetime) -> str:
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            dt = datetime.fromisoformat(str(value))
+    except Exception:
+        return str(value or "")
+    malaysia_time = _as_malaysia_time(dt)
+    return malaysia_time.strftime("%Y-%m-%d %H:%M:%S") + " MYT"
+
+
+def _coverage_table_rows_html(coverage: dict) -> str:
+    rows = [
+        ("Total Tool Runs", coverage.get("total_tools", 0)),
+        ("Applicable Tool Runs", coverage.get("applicable_tools", 0)),
+        ("Completed", coverage.get("completed_tools", 0)),
+        ("Failed", coverage.get("failed_tools", 0)),
+        ("Timed Out", coverage.get("timeout_tools", 0)),
+        ("Unavailable / Missing", coverage.get("missing_tools", 0)),
+        ("Skipped as Not Applicable", coverage.get("skipped_not_applicable_tools", 0)),
+        ("Raw Execution Coverage", f"{coverage.get('raw_completion_pct', 0)}%"),
+        ("Coverage Completeness", f"{coverage.get('stakeholder_completion_pct', coverage.get('completion_pct', 0))}%"),
+        ("Stakeholder Target", f"{coverage.get('stakeholder_target_pct', 90)}%"),
+    ]
+    return "".join(
+        f"<tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>"
+        for label, value in rows
+    )
+
+
+def _coverage_narrative_lines(coverage: dict, include_manual_assessment: bool) -> list[str]:
+    visible_pct = int(coverage.get("stakeholder_completion_pct", coverage.get("completion_pct", 0)) or 0)
+    raw_pct = int(coverage.get("raw_completion_pct", visible_pct) or 0)
+    completed = int(coverage.get("completed_tools", 0) or 0)
+    applicable = int(coverage.get("applicable_tools", 0) or 0)
+    skipped = int(coverage.get("skipped_not_applicable_tools", 0) or 0)
+    total = int(coverage.get("total_tools", 0) or 0)
+
+    scope_phrase = "automated findings and analyst context" if include_manual_assessment else "automated findings"
+    first = (
+        f"This report consolidates {scope_phrase}. Visible coverage completeness is {visible_pct}% "
+        f"({completed} completed of {applicable} applicable tool runs)."
+    )
+    if skipped:
+        second = (
+            f"The visible coverage score excludes {skipped} intentionally non-applicable skip(s). "
+            f"Raw execution coverage remains {raw_pct}% across {total} planned tool runs for auditability."
+        )
+    else:
+        second = f"Raw execution coverage remains {raw_pct}% across {total} planned tool runs for auditability."
+    third = "Review the appendix for raw evidence, tool telemetry, and detailed findings before using this document as a final remediation closeout record."
+    return [first, second, third]
+
+
 def _build_executive_summary(payload: dict) -> list[str]:
     findings = payload.get("findings", [])
     severity_counts = payload.get("summary", {}).get("severity_counts", {})
     overview = payload.get("overview", {})
-    tool_summary = overview.get("tool_summary", {})
+    coverage = overview.get("coverage_summary", {})
     assessment_summary = _assessment_summary(payload.get("assessment"))
     case_status = assessment_summary.get("case_status", {})
     verification_status = assessment_summary.get("verification_status", {})
+    include_manual_assessment = bool(payload.get("include_manual_assessment", True))
+    report_profile = str(payload.get("report_profile", "technical")).strip().lower()
+    if report_profile == "executive":
+        include_manual_assessment = False
 
     lines = []
     if severity_counts.get("critical", 0) or severity_counts.get("high", 0):
@@ -131,18 +244,21 @@ def _build_executive_summary(payload: dict) -> list[str]:
     else:
         lines.append("No automated findings were parsed from the available tool outputs. Review coverage and tool failures before assuming the target is clean.")
 
-    failed = tool_summary.get("failed", 0) + tool_summary.get("timeout", 0) + tool_summary.get("missing", 0)
+    failed = int(coverage.get("failed_tools", 0) or 0) + int(coverage.get("timeout_tools", 0) or 0) + int(coverage.get("missing_tools", 0) or 0)
     if failed:
-        lines.append(f"Tool coverage was incomplete: {failed} tool run(s) failed, timed out, or were unavailable.")
-    partial = tool_summary.get("partial", 0)
+        lines.append(f"Applicable tool coverage was incomplete: {failed} tool run(s) failed, timed out, or were unavailable.")
+    skipped = int(coverage.get("skipped_not_applicable_tools", 0) or 0)
+    if skipped:
+        lines.append(f"Visible coverage completeness excludes {skipped} intentionally non-applicable tool run(s); raw execution telemetry remains available for audit.")
+    partial = int(coverage.get("partial_tools", 0) or 0)
     if partial:
         lines.append(f"{partial} tool run(s) produced partial evidence before exiting or timing out; review telemetry before dismissing those findings.")
 
-    if case_status:
+    if include_manual_assessment and case_status:
         total_cases = sum(case_status.values())
         not_started = case_status.get("not_started", 0)
         lines.append(f"Guided manual assessment coverage: {total_cases - not_started}/{total_cases} case(s) have at least some analyst activity.")
-    if verification_status:
+    if include_manual_assessment and verification_status:
         confirmed = verification_status.get("confirmed", 0) + verification_status.get("reproduced", 0)
         fixed = verification_status.get("fixed", 0)
         lines.append(f"Verification workflow currently records {confirmed} confirmed/reproduced case(s) and {fixed} fixed case(s).")
@@ -204,34 +320,47 @@ def _priority_finding_entries(findings: list[dict], target_url: str) -> list[dic
 
 
 def _coverage_summary(tool_runs: list[dict]) -> dict:
-    total = len(tool_runs)
+    normalized_runs = _normalize_tool_runs_for_coverage(tool_runs)
+    total = len(normalized_runs)
+    applicable = 0
     completed = 0
     failed = 0
     timeout = 0
     missing = 0
+    skipped_not_applicable = 0
     partial = 0
-    for run in tool_runs:
-        status = str(run.get("status", "")).lower()
-        if status in {"completed", "completed_no_output", "completed_partial"}:
+    for run in normalized_runs:
+        bucket = str(run.get("coverage_bucket", "")).lower()
+        if bool(run.get("coverage_applicable", True)):
+            applicable += 1
+        if bucket == "completed":
             completed += 1
-        if status == "completed_partial":
-            partial += 1
-        elif status == "failed":
+        elif bucket == "failed":
             failed += 1
-        elif status == "timeout":
+        elif bucket == "timeout":
             timeout += 1
-        elif status in {"missing", "skipped"}:
+        elif bucket == "unavailable":
             missing += 1
-    completion_pct = int((completed / total) * 100) if total else 0
-    confidence = "high" if completion_pct >= 85 else ("medium" if completion_pct >= 60 else "low")
+        elif bucket == "not_applicable":
+            skipped_not_applicable += 1
+        if str(run.get("status", "")).lower() == "completed_partial":
+            partial += 1
+    raw_completion_pct = int((completed / total) * 100) if total else 0
+    stakeholder_completion_pct = round((completed / applicable) * 100) if applicable else (100 if total else 0)
+    confidence = _coverage_confidence(stakeholder_completion_pct)
     return {
         "total_tools": total,
+        "applicable_tools": applicable,
         "completed_tools": completed,
         "failed_tools": failed,
         "timeout_tools": timeout,
         "missing_tools": missing,
+        "skipped_not_applicable_tools": skipped_not_applicable,
         "partial_tools": partial,
-        "completion_pct": completion_pct,
+        "raw_completion_pct": raw_completion_pct,
+        "stakeholder_completion_pct": stakeholder_completion_pct,
+        "stakeholder_target_pct": 90,
+        "completion_pct": stakeholder_completion_pct,
         "confidence": confidence,
     }
 
@@ -250,6 +379,7 @@ def build_report_payload(
     duration = datetime.now(timezone.utc) - (start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc))
     duration_seconds = int(duration.total_seconds())
     overview = dict(scan_overview or {})
+    overview["tool_runs"] = _normalize_tool_runs_for_coverage(overview.get("tool_runs", []))
     payload = {
         "report_version": 3,
         "target_url": target_url,
@@ -267,10 +397,10 @@ def build_report_payload(
         "include_manual_assessment": bool(include_manual_assessment),
         "findings": findings,
     }
+    payload["overview"]["coverage_summary"] = _coverage_summary(payload["overview"].get("tool_runs", []))
     payload["summary"]["executive_summary"] = _build_executive_summary(payload)
     payload["summary"]["priority_findings"] = _priority_finding_entries(findings, target_url)
     payload["summary"]["overall_risk"] = _overall_risk_from_summary(payload["summary"])
-    payload["overview"]["coverage_summary"] = _coverage_summary(payload["overview"].get("tool_runs", []))
     return payload
 
 
@@ -280,7 +410,7 @@ def _render_metric_cards(summary: dict, assessment_summary: dict, overview: dict
     metrics = [
         ("Critical", severity_counts.get("critical", 0), "critical"),
         ("High", severity_counts.get("high", 0), "high"),
-        ("Coverage", f"{coverage.get('completion_pct', 0)}%", "good"),
+        ("Coverage", f"{coverage.get('stakeholder_completion_pct', coverage.get('completion_pct', 0))}%", "good"),
         ("Confidence", str(coverage.get("confidence", "low")).title(), "info"),
     ]
     return "".join(
@@ -688,7 +818,8 @@ def generate_html_report(payload: dict) -> str:
     overview = payload.get("overview", {})
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
-    tool_runs = overview.get("tool_runs", [])
+    tool_runs = _normalize_tool_runs_for_coverage(overview.get("tool_runs", []))
+    overview["tool_runs"] = tool_runs
     include_manual_assessment = bool(payload.get("include_manual_assessment", True))
     report_profile = str(payload.get("report_profile", "technical")).strip().lower()
     if report_profile == "executive":
@@ -711,7 +842,7 @@ def generate_html_report(payload: dict) -> str:
             f"<td>{run.get('duration_seconds', 0)}</td>"
             f"<td><code>{command}</code></td>"
             f"<td>{output_html}</td>"
-            f"<td>{html.escape(run.get('note', '') or '-')}</td>"
+            f"<td>{html.escape(str(run.get('note') or run.get('coverage_reason') or '-'))}</td>"
             "</tr>"
         )
 
@@ -796,6 +927,7 @@ def generate_html_report(payload: dict) -> str:
     case_rows = []
     notes_html = ""
     verification_html = ""
+    manual_sections_html = ""
     if include_manual_assessment:
         for category, data in assessment_summary.get("category_coverage", {}).items():
             category_rows.append(
@@ -833,24 +965,55 @@ def generate_html_report(payload: dict) -> str:
                 f"<p>{html.escape(run.get('notes', '') or '')}</p>"
                 "</div>"
             )
+        manual_sections_html = f"""
+        <section class="card">
+            <h2>Guided Manual Test Cases</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Case</th>
+                        <th>Status</th>
+                        <th>Verification</th>
+                        <th>Owner</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>"}
+                </tbody>
+            </table>
+        </section>
 
-    scan_date = _as_malaysia_time(datetime.fromisoformat(payload["scan_started_at"])).strftime("%Y-%m-%d %H:%M:%S %Z")
+        <section class="card">
+            <h2>Operator Notes</h2>
+            {notes_html or "<p>No operator notes recorded.</p>"}
+        </section>
+
+        <section class="card">
+            <h2>Verification Runs</h2>
+            {verification_html or "<p>No verification runs recorded.</p>"}
+        </section>
+        """
+
+    scan_date = _format_report_datetime_myt(payload.get("scan_started_at", ""))
     duration_seconds = payload.get("scan_duration_seconds", 0)
     severity_counts = summary.get("severity_counts", {})
     overall_risk = summary.get("overall_risk", _overall_risk(summary))
-    total_tools, completed_tools, failed_tools, timeout_tools, missing_tools = _coverage_metrics(tool_runs)
-    coverage_pct = int((completed_tools / total_tools) * 100) if total_tools else 0
-    confidence_level = "high" if coverage_pct >= 85 else ("medium" if coverage_pct >= 60 else "low")
-    overview["coverage_summary"] = overview.get("coverage_summary") or {
-        "total_tools": total_tools,
-        "completed_tools": completed_tools,
-        "failed_tools": failed_tools,
-        "timeout_tools": timeout_tools,
-        "missing_tools": missing_tools,
-        "partial_tools": sum(1 for run in tool_runs if str(run.get("status", "")).lower() == "completed_partial"),
-        "completion_pct": coverage_pct,
-        "confidence": confidence_level,
-    }
+    coverage_summary = _coverage_summary(tool_runs)
+    overview["coverage_summary"] = coverage_summary
+    total_tools = int(coverage_summary.get("total_tools", 0) or 0)
+    applicable_tools = int(coverage_summary.get("applicable_tools", 0) or 0)
+    completed_tools = int(coverage_summary.get("completed_tools", 0) or 0)
+    failed_tools = int(coverage_summary.get("failed_tools", 0) or 0)
+    timeout_tools = int(coverage_summary.get("timeout_tools", 0) or 0)
+    missing_tools = int(coverage_summary.get("missing_tools", 0) or 0)
+    skipped_not_applicable_tools = int(coverage_summary.get("skipped_not_applicable_tools", 0) or 0)
+    raw_coverage_pct = int(coverage_summary.get("raw_completion_pct", 0) or 0)
+    coverage_pct = int(coverage_summary.get("stakeholder_completion_pct", coverage_summary.get("completion_pct", 0)) or 0)
+    confidence_level = str(coverage_summary.get("confidence", "low"))
+    coverage_rows_html = _coverage_table_rows_html(coverage_summary)
+    coverage_narrative = _coverage_narrative_lines(coverage_summary, include_manual_assessment)
 
     findings_sorted = sorted(
         findings,
@@ -911,7 +1074,7 @@ def generate_html_report(payload: dict) -> str:
             "REPORT_LOGO_LIGHT": get_logo_svg("white"),
             "REPORT_LOGO_DARK": get_logo_svg("dark"),
             "TARGET_URL": html.escape(payload.get("target_url", "")),
-            "SCAN_DATE": scan_date,
+            "SCAN_DATE": html.escape(scan_date),
             "SCAN_MODE": html.escape(payload.get("scan_mode", "")),
             "REQUESTED_PROFILE": html.escape(overview.get("requested_profile", "")),
             "EFFECTIVE_PROFILE": html.escape(overview.get("effective_profile", "")),
@@ -930,6 +1093,10 @@ def generate_html_report(payload: dict) -> str:
             "FAILED_TOOLS": str(failed_tools),
             "TIMEOUT_TOOLS": str(timeout_tools),
             "MISSING_TOOLS": str(missing_tools),
+            "COVERAGE_SUMMARY_ROWS": coverage_rows_html,
+            "COVERAGE_NARRATIVE_PRIMARY": html.escape(coverage_narrative[0]),
+            "COVERAGE_NARRATIVE_SECONDARY": html.escape(coverage_narrative[1]),
+            "COVERAGE_NARRATIVE_TERTIARY": html.escape(coverage_narrative[2]),
             "ACTIONS_24H_ROWS": "".join(actions_24h) or "<tr><td colspan='3'>No urgent actions identified.</td></tr>",
             "ACTIONS_7D_ROWS": "".join(actions_7d) or "<tr><td colspan='3'>No medium-priority actions identified.</td></tr>",
             "ACTIONS_30D_ROWS": "".join(actions_30d) or "<tr><td colspan='3'>No deferred actions identified.</td></tr>",
@@ -951,6 +1118,7 @@ def generate_html_report(payload: dict) -> str:
             "CASE_ROWS": "".join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>",
             "NOTES_HTML": notes_html or "<p>No operator notes recorded.</p>",
             "VERIFICATION_HTML": verification_html or "<p>No verification runs recorded.</p>",
+            "MANUAL_ASSESSMENT_SECTIONS": manual_sections_html,
             "FINDING_ROWS": "".join(finding_rows) or "<tr><td colspan='10'>No findings were parsed from the available outputs.</td></tr>",
             "FINDING_CARDS": "".join(finding_cards) or "<div class='card'>No findings available.</div>",
             "COMPLIANCE_ROWS": "".join(compliance_rows) or "<tr><td colspan='4'>No standards mapping data available.</td></tr>",
@@ -1005,7 +1173,7 @@ def generate_html_report(payload: dict) -> str:
         .metric-card.total .value {{ color: var(--accent); }}
         h2 {{ margin: 30px 0 12px; font-size: 22px; }}
         h3 {{ margin-top: 0; }}
-        table {{ width: 100%; border-collapse: collapse; }}
+        table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
         th, td {{ text-align: left; padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }}
         th {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }}
         .sev, .pill {{ display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; }}
@@ -1046,6 +1214,21 @@ def generate_html_report(payload: dict) -> str:
         .appendix-note {{ color: var(--muted); font-size: 13px; margin-bottom: 10px; }}
         @media (max-width: 980px) {{ .two {{ grid-template-columns: 1fr; }} }}
         @media print {{
+            @page {{ size: A4; margin: 11mm; }}
+            html, body {{ width: 210mm; }}
+            body {{ background: #fff; color: #111827; font-size: 10pt; }}
+            .wrap {{ max-width: none; width: auto; margin: 0; padding: 0; }}
+            .grid {{ gap: 10px; }}
+            .card, .metric-card, .hero, .risk-chip, details.finding {{ box-shadow: none; break-inside: avoid-page; page-break-inside: avoid; }}
+            .card, .metric-card {{ padding: 12px; border-radius: 10px; }}
+            .hero {{ padding: 18px; border-radius: 12px; }}
+            h1 {{ font-size: 22pt; }}
+            h2, h3 {{ break-after: avoid-page; page-break-after: avoid; }}
+            th, td, p, li, .meta, .appendix-note, .legend {{ font-size: 8.8pt; line-height: 1.4; }}
+            th, td {{ padding: 6px 8px; }}
+            thead {{ display: table-header-group; }}
+            tr {{ break-inside: avoid-page; page-break-inside: avoid; }}
+            pre, code {{ white-space: pre-wrap; word-break: break-word; overflow: visible; font-size: 8pt; }}
             .toc, .findings-toolbar, .findings-pages {{ display: none !important; }}
             details.finding > summary .sum-chevron {{ display: none; }}
         }}
@@ -1107,7 +1290,7 @@ def generate_html_report(payload: dict) -> str:
             <h1>{REPORT_TITLE}</h1>
             <p>{html.escape(payload.get('target_url', ''))}</p>
             <div class="grid meta-grid">
-                <div class="card"><div class="meta">Scan Started</div><div>{scan_date}</div></div>
+                <div class="card"><div class="meta">Scan Started</div><div>{html.escape(scan_date)}</div></div>
                 <div class="card"><div class="meta">Mode</div><div>{html.escape(payload.get('scan_mode', ''))}</div></div>
                 <div class="card"><div class="meta">Requested Profile</div><div>{html.escape(overview.get('requested_profile', ''))}</div></div>
                 <div class="card"><div class="meta">Effective Profile</div><div>{html.escape(overview.get('effective_profile', ''))}</div></div>
@@ -1137,17 +1320,14 @@ def generate_html_report(payload: dict) -> str:
             <div class="card">
                 <h3>Coverage Summary</h3>
                 <table>
-                    <tr><th>Total Tool Runs</th><td>{total_tools}</td></tr>
-                    <tr><th>Completed</th><td>{completed_tools}</td></tr>
-                    <tr><th>Failed</th><td>{failed_tools}</td></tr>
-                    <tr><th>Timed Out</th><td>{timeout_tools}</td></tr>
-                    <tr><th>Missing/Skipped</th><td>{missing_tools}</td></tr>
-                    <tr><th>Coverage Completeness</th><td>{coverage_pct}%</td></tr>
+                    {coverage_rows_html}
                 </table>
             </div>
             <div class="card">
                 <h3>Limitations Statement</h3>
-                <p class="narrative">This report aggregates automated and analyst-driven evidence. Areas with failed, timed-out, or skipped tools may contain unseen risk. Treat low finding counts as tentative when coverage completeness is below 85%.</p>
+                <p class="narrative">{html.escape(coverage_narrative[0])}</p>
+                <p class="narrative">{html.escape(coverage_narrative[1])}</p>
+                <p class="narrative">{html.escape(coverage_narrative[2])}</p>
             </div>
         </div>
 
@@ -1214,10 +1394,6 @@ def generate_html_report(payload: dict) -> str:
             </div>
         </div>
 
-        {assessment_narrative_html}
-        {manual_analytics_html}
-        {category_coverage_html}
-
         <h2 id="appendix">Appendix: Tool Telemetry</h2>
         <p class="appendix-note">Detailed command telemetry and raw discovery artifacts are provided for analyst traceability.</p>
         <div class="card">
@@ -1244,34 +1420,7 @@ def generate_html_report(payload: dict) -> str:
             {''.join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>"}
         </div>
 
-        <h2>Guided Manual Test Cases</h2>
-        <div class="card">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Category</th>
-                        <th>Case</th>
-                        <th>Status</th>
-                        <th>Verification</th>
-                        <th>Owner</th>
-                        <th>Notes</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-
-        <h2>Operator Notes</h2>
-        <div class="card">
-            {notes_html or "<p>No operator notes recorded.</p>"}
-        </div>
-
-        <h2>Verification Runs</h2>
-        <div class="card">
-            {verification_html or "<p>No verification runs recorded.</p>"}
-        </div>
+        {manual_sections_html}
 
         <h2 id="findings-index">Findings Index</h2>
         <div class="card">
@@ -1482,7 +1631,8 @@ def generate_markdown_report(payload: dict) -> str:
     overview = payload.get("overview", {})
     fingerprint = overview.get("fingerprint", {})
     discovery = overview.get("discovery", {})
-    tool_runs = overview.get("tool_runs", [])
+    tool_runs = _normalize_tool_runs_for_coverage(overview.get("tool_runs", []))
+    overview["tool_runs"] = tool_runs
     include_manual_assessment = bool(payload.get("include_manual_assessment", True))
     report_profile = str(payload.get("report_profile", "technical")).strip().lower()
     if report_profile == "executive":
@@ -1490,12 +1640,14 @@ def generate_markdown_report(payload: dict) -> str:
     assessment = payload.get("assessment", {}) if include_manual_assessment else {}
     workbook = assessment.get("workbook", {}) if isinstance(assessment, dict) else {}
     assessment_summary = _assessment_summary(assessment)
+    coverage_summary = _coverage_summary(tool_runs)
+    overview["coverage_summary"] = coverage_summary
 
     lines = [
         f"# {PRODUCT_NAME} {REPORT_TITLE}",
         "",
         f"- Target: {payload.get('target_url', '')}",
-        f"- Scan started: {payload.get('scan_started_at', '')}",
+        f"- Scan started: {_format_report_datetime_myt(payload.get('scan_started_at', ''))}",
         f"- Mode: {payload.get('scan_mode', '')}",
         f"- Requested profile: {overview.get('requested_profile', '')}",
         f"- Effective profile: {overview.get('effective_profile', '')}",
@@ -1528,9 +1680,13 @@ def generate_markdown_report(payload: dict) -> str:
             "",
             "## Coverage and Limitations",
             "",
-            f"- Coverage completeness: {overview.get('coverage_summary', {}).get('completion_pct', 0)}%",
-            f"- Confidence: {overview.get('coverage_summary', {}).get('confidence', 'low')}",
-            f"- Tool runs: {overview.get('coverage_summary', {}).get('completed_tools', 0)} completed / {overview.get('coverage_summary', {}).get('total_tools', 0)} total",
+            f"- Coverage completeness: {coverage_summary.get('stakeholder_completion_pct', coverage_summary.get('completion_pct', 0))}%",
+            f"- Confidence: {coverage_summary.get('confidence', 'low')}",
+            f"- Applicable tool runs: {coverage_summary.get('completed_tools', 0)} completed / {coverage_summary.get('applicable_tools', 0)} applicable",
+            f"- Raw execution coverage: {coverage_summary.get('raw_completion_pct', 0)}% across {coverage_summary.get('total_tools', 0)} planned tool runs",
+            f"- Skipped as not applicable: {coverage_summary.get('skipped_not_applicable_tools', 0)}",
+            f"- Stakeholder target: {coverage_summary.get('stakeholder_target_pct', 90)}%",
+            "- Visible coverage excludes intentionally non-applicable profile skips; raw telemetry remains available for audit.",
             "",
             "## Severity Summary",
             "",

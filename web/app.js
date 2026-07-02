@@ -965,13 +965,32 @@ const App = {
     },
 
     _formatReportDate(report) {
+        const formatMyt = (value) => {
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return null;
+            }
+            const parts = new Intl.DateTimeFormat("sv-SE", {
+                timeZone: "Asia/Kuala_Lumpur",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            }).formatToParts(parsed);
+            const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+            return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second} MYT`;
+        };
+
         if (report.scan_started_at) {
-            const parsed = new Date(report.scan_started_at);
-            if (!Number.isNaN(parsed.getTime())) {
-                return parsed.toLocaleString();
+            const formatted = formatMyt(report.scan_started_at);
+            if (formatted) {
+                return formatted;
             }
         }
-        return new Date((report.modified || 0) * 1000).toLocaleString();
+        return formatMyt((report.modified || 0) * 1000) || new Date((report.modified || 0) * 1000).toLocaleString();
     },
 
     toggleReportHistory(groupId) {
