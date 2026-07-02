@@ -67,7 +67,11 @@ COPY requirements.txt /tmp/requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt && \
     /opt/venv/bin/pip install --no-cache-dir sslyze gunicorn arjun
 
-RUN gem install --no-document wpscan
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    gem install --no-document wpscan && \
+    apt-get purge -y --auto-remove build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/urbanadventurer/WhatWeb.git /opt/tools/whatweb && \
     printf '#!/usr/bin/env bash\nexec ruby /opt/tools/whatweb/whatweb "$@"\n' >/usr/local/bin/whatweb && \
