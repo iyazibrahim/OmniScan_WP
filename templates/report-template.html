@@ -325,6 +325,35 @@
             border-bottom-left-radius: 12px;
             border-bottom-right-radius: 12px;
         }
+        .finding-details-grid {
+            display: grid;
+            gap: 10px;
+            margin: 14px 0;
+        }
+        .detail-row {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: rgba(18, 27, 43, 0.6);
+            overflow: hidden;
+        }
+        .detail-label {
+            padding: 10px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--muted);
+            border-bottom: 1px solid var(--border);
+        }
+        .detail-value pre {
+            margin: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            color: var(--text);
+            padding: 12px;
+            white-space: pre-wrap;
+        }
         .sum-title {
             font-weight: 600;
             font-size: 0.93rem;

@@ -2,6 +2,7 @@
 
 import json
 import re
+from urllib.parse import parse_qsl, urlparse
 from pathlib import Path
 
 from lib import ui
@@ -81,6 +82,127 @@ def _normalize_severity(severity: str | None, default: str = "info") -> str:
     return default
 
 
+def _stringify(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _query_parameter_from_url(url: str) -> str:
+    parsed = urlparse(str(url or ""))
+    for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key:
+            return key
+    return ""
+
+
+def _compact_evidence(finding: dict) -> str:
+    lines: list[str] = []
+    for label, key in [
+        ("asset", "asset"),
+        ("url", "url"),
+        ("endpoint", "endpoint"),
+        ("path", "path"),
+        ("method", "method"),
+        ("parameter", "parameter"),
+        ("component", "component"),
+        ("version", "component_version"),
+        ("payload", "payload"),
+        ("matched", "matched_evidence"),
+        ("request", "request_excerpt"),
+        ("response", "response_excerpt"),
+        ("verify", "reproduction"),
+        ("protect", "protection_target"),
+        ("fix_target", "fix_target"),
+    ]:
+        value = str(finding.get(key, "") or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    if not lines and finding.get("description"):
+        lines.append(str(finding["description"]).strip())
+    return "\n".join(lines)[:2000]
+
+
+def _confidence_rank(value: str) -> int:
+    return {
+        "confirmed": 5,
+        "reproduced": 4,
+        "detected": 3,
+        "weak_signal": 2,
+        "informational": 1,
+    }.get(str(value or "").strip().lower(), 0)
+
+
+def _derive_confidence_status(finding: dict) -> tuple[str, str]:
+    proof_count = 0
+    for key in ("matched_evidence", "payload", "request_excerpt", "response_excerpt"):
+        if str(finding.get(key, "") or "").strip():
+            proof_count += 1
+    if str(finding.get("url", "") or "").strip() or str(finding.get("path", "") or "").strip():
+        proof_count += 1
+    if str(finding.get("component", "") or "").strip() and str(finding.get("component_version", "") or "").strip():
+        proof_count += 1
+
+    kind = str(finding.get("evidence_kind", "") or "").strip().lower()
+    if kind in {"injection", "command_injection", "xss"}:
+        if proof_count >= 4:
+            return "confirmed", "reproduced"
+        if proof_count >= 2:
+            return "detected", "reproduced"
+        return "weak_signal", "detected"
+    if kind == "content":
+        if proof_count >= 3 and str(finding.get("parameter", "") or "").strip():
+            return "detected", "detected"
+        return "weak_signal", "detected"
+    if kind in {"component", "version", "tls", "headers", "cors", "exposure", "content"}:
+        if proof_count >= 2:
+            return "detected", "detected"
+        return "weak_signal", "detected"
+    if str(finding.get("severity", "")).lower() == "info":
+        return "informational", "informational"
+    if proof_count >= 2:
+        return "detected", "detected"
+    return "weak_signal", "detected"
+
+
+def _finalize_finding(finding: dict) -> dict:
+    normalized = dict(finding)
+    normalized["parameter"] = (
+        str(normalized.get("parameter") or "").strip()
+        or _query_parameter_from_url(str(normalized.get("url") or normalized.get("endpoint") or ""))
+    )
+
+    location_present = any(str(normalized.get(key) or "").strip() for key in ("url", "endpoint", "path", "asset", "component"))
+    proof_present = any(str(normalized.get(key) or "").strip() for key in ("matched_evidence", "payload", "component_version", "request_excerpt", "response_excerpt"))
+    action_present = any(str(normalized.get(key) or "").strip() for key in ("reproduction", "protection_target", "fix_target"))
+
+    confidence, verification = _derive_confidence_status(normalized)
+    explicit_confidence = str(normalized.get("confidence") or "").strip().lower()
+    if _confidence_rank(explicit_confidence) > _confidence_rank(confidence):
+        confidence = explicit_confidence
+    explicit_verification = str(normalized.get("verification_status") or "").strip().lower()
+    if explicit_verification:
+        verification = explicit_verification
+
+    if not location_present or not proof_present or not action_present:
+        if _confidence_rank(confidence) > _confidence_rank("weak_signal"):
+            confidence = "weak_signal"
+        if not str(normalized.get("protection_target") or "").strip():
+            normalized["protection_target"] = "Tool output did not include exact exploit coordinates. Review the raw evidence before remediation."
+
+    normalized["confidence"] = confidence
+    normalized["verification_status"] = verification
+    normalized["evidence"] = _compact_evidence(normalized)
+    return normalized
+
+
 def _make_finding(
     title: str,
     severity: str,
@@ -89,8 +211,9 @@ def _make_finding(
     cve: str = "",
     evidence: str = "",
     references: list[str] | None = None,
+    **extra,
 ) -> dict:
-    return {
+    finding = {
         "id": "",
         "title": title,
         "severity": _normalize_severity(severity),
@@ -102,6 +225,10 @@ def _make_finding(
         "fix_steps": [],
         "references": references or [],
     }
+    finding.update(extra)
+    if finding.get("evidence"):
+        finding.setdefault("matched_evidence", str(finding.get("evidence", "")))
+    return _finalize_finding(finding)
 
 
 def _dedupe_findings(findings: list[dict]) -> list[dict]:
@@ -171,8 +298,15 @@ def parse_nuclei(results_file: Path) -> list[dict]:
                 tool="Nuclei",
                 description=desc,
                 cve=cve,
-                evidence="\n".join(evidence_parts)[:2000],
                 references=refs,
+                asset=item.get("host") or item.get("matched-at") or "",
+                url=item.get("matched-at") or item.get("host") or "",
+                matched_evidence=", ".join(str(x) for x in extracted[:8]) if isinstance(extracted, list) and extracted else "",
+                reproduction=item.get("curl-command") or "",
+                protection_target=f"Nuclei template {item.get('template-id')}" if item.get("template-id") else "Matched public-facing endpoint",
+                fix_target=item.get("matched-at") or item.get("host") or "",
+                evidence_kind="exposure",
+                request_excerpt=item.get("curl-command") or "",
             )
         )
     return findings
@@ -201,12 +335,16 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                     tool="WPScan",
                     description=f"WordPress core vulnerability on version {version_info.get('number', 'unknown')}.",
                     cve=cve,
-                    evidence=(
-                        f"component: wordpress-core\n"
-                        f"detected_version: {version_info.get('number', 'unknown')}\n"
-                        f"location: {data.get('target_url', '') or 'site root'}"
-                    ),
                     references=refs_data.get("url", []) if isinstance(refs_data, dict) else [],
+                    asset=data.get("target_url", "") or "site root",
+                    url=data.get("target_url", ""),
+                    component="wordpress-core",
+                    component_version=version_info.get("number", "unknown"),
+                    matched_evidence=f"Detected WordPress core version {version_info.get('number', 'unknown')}",
+                    reproduction=f"Check the installed WordPress core version on {data.get('target_url', '') or 'the site root'}",
+                    protection_target="WordPress core installation and exposed application routes",
+                    fix_target="WordPress core upgrade path",
+                    evidence_kind="component",
                 )
             )
 
@@ -229,12 +367,17 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                         tool="WPScan",
                         description=f"Plugin vulnerability in {plugin_name}.",
                         cve=cve,
-                        evidence=(
-                            f"component: plugin/{plugin_name}\n"
-                            f"detected_version: {plugin_data.get('version', {}).get('number', 'unknown')}\n"
-                            f"likely_path: /wp-content/plugins/{plugin_name}/"
-                        ),
                         references=refs_data.get("url", []) if isinstance(refs_data, dict) else [],
+                        asset=data.get("target_url", "") or f"plugin/{plugin_name}",
+                        url=data.get("target_url", ""),
+                        component=f"plugin/{plugin_name}",
+                        component_version=plugin_data.get("version", {}).get("number", "unknown"),
+                        path=f"/wp-content/plugins/{plugin_name}/",
+                        matched_evidence=f"Detected plugin version {plugin_data.get('version', {}).get('number', 'unknown')}",
+                        reproduction=f"Visit /wp-content/plugins/{plugin_name}/ or confirm the installed plugin version in WordPress admin.",
+                        protection_target=f"Plugin {plugin_name} and any routes it exposes",
+                        fix_target=f"/wp-content/plugins/{plugin_name}/",
+                        evidence_kind="component",
                     )
                 )
 
@@ -247,11 +390,16 @@ def parse_wpscan(results_file: Path) -> list[dict]:
                     severity=vuln.get("severity") or "high",
                     tool="WPScan",
                     description="Theme vulnerability detected by WPScan.",
-                    evidence=(
-                        f"component: theme/{theme.get('slug', 'unknown')}\n"
-                        f"detected_version: {theme.get('version', {}).get('number', 'unknown')}\n"
-                        f"likely_path: /wp-content/themes/{theme.get('slug', 'unknown')}/"
-                    ),
+                    asset=data.get("target_url", "") or f"theme/{theme.get('slug', 'unknown')}",
+                    url=data.get("target_url", ""),
+                    component=f"theme/{theme.get('slug', 'unknown')}",
+                    component_version=theme.get("version", {}).get("number", "unknown"),
+                    path=f"/wp-content/themes/{theme.get('slug', 'unknown')}/",
+                    matched_evidence=f"Detected theme version {theme.get('version', {}).get('number', 'unknown')}",
+                    reproduction=f"Check the installed theme version for {theme.get('slug', 'unknown')} in WordPress admin.",
+                    protection_target=f"Theme {theme.get('slug', 'unknown')} templates and asset handlers",
+                    fix_target=f"/wp-content/themes/{theme.get('slug', 'unknown')}/",
+                    evidence_kind="component",
                 )
             )
     return findings
@@ -287,8 +435,15 @@ def parse_nikto(results_file: Path) -> list[dict]:
                     severity="medium",
                     tool="Nikto",
                     description=msg,
-                    evidence="\n".join(evidence_parts)[:1200],
                     references=refs,
+                    url=uri,
+                    path=uri,
+                    method=method,
+                    matched_evidence=msg,
+                    reproduction=f"Replay {method} {uri}" if uri else f"Review the Nikto result for message: {msg}",
+                    protection_target=uri or "Affected web route or server configuration",
+                    fix_target=uri or "Web server or application route handling",
+                    evidence_kind="headers" if "header" in msg.lower() else "exposure",
                 )
             )
     return findings
@@ -314,8 +469,13 @@ def parse_sslyze(results_file: Path) -> list[dict]:
                         severity="high",
                         tool="SSLyze",
                         description=f"Server accepts {label} connections which are deprecated.",
-                        evidence=f"{len(accepted)} accepted cipher suite(s).",
                         references=["https://ssl-config.mozilla.org/", "https://www.ssllabs.com/ssltest/"],
+                        asset=server.get("server_location", {}).get("hostname", ""),
+                        matched_evidence=f"{len(accepted)} accepted cipher suite(s).",
+                        reproduction=f"Review {label} support with SSLyze or testssl against {server.get('server_location', {}).get('hostname', 'the server')}.",
+                        protection_target="TLS protocol configuration on the public web server",
+                        fix_target="Web server TLS settings",
+                        evidence_kind="tls",
                     )
                 )
 
@@ -332,7 +492,12 @@ def parse_sslyze(results_file: Path) -> list[dict]:
                             severity="high",
                             tool="SSLyze",
                             description="The SSL certificate could not be validated.",
-                            evidence=str(validation.get("openssl_error_string", "")),
+                            asset=server.get("server_location", {}).get("hostname", ""),
+                            matched_evidence=str(validation.get("openssl_error_string", "")),
+                            reproduction=f"Inspect the deployed certificate chain on {server.get('server_location', {}).get('hostname', 'the server')}.",
+                            protection_target="TLS certificate chain and trust configuration",
+                            fix_target="Certificate deployment and intermediate chain configuration",
+                            evidence_kind="tls",
                         )
                     )
                     break
@@ -359,7 +524,11 @@ def parse_corsy(results_file: Path) -> list[dict]:
                     severity=severity,
                     tool="Corsy",
                     description="Potential CORS misconfiguration identified during header analysis.",
-                    evidence="\n".join(matching[:5]),
+                    matched_evidence="\n".join(matching[:5]),
+                    reproduction="Replay the affected request with a custom Origin header and inspect the Access-Control-* response headers.",
+                    protection_target="CORS response headers on the affected endpoint",
+                    fix_target="Application or reverse-proxy CORS header configuration",
+                    evidence_kind="cors",
                 )
             )
     return findings
@@ -390,7 +559,13 @@ def parse_ffuf(results_file: Path) -> list[dict]:
                 severity=severity,
                 tool="ffuf",
                 description="Directory or endpoint discovered during content enumeration.",
-                evidence=evidence,
+                url=url,
+                path=urlparse(str(url or "")).path,
+                matched_evidence=f"status: {status_code}, words: {item.get('words', '?')}, length: {item.get('length', '?')}",
+                reproduction=f"Visit {url} and verify whether the content should be public.",
+                protection_target="Exposed route, file, or directory discovered during enumeration",
+                fix_target=url,
+                evidence_kind="content",
             )
         )
     return findings
@@ -413,7 +588,13 @@ def parse_feroxbuster(results_file: Path) -> list[dict]:
                 severity="low" if status in {401, 403} else "medium",
                 tool="Feroxbuster",
                 description="Feroxbuster identified an accessible path or resource.",
-                evidence=f"url: {url}\nstatus: {status}",
+                url=url,
+                path=urlparse(str(url or "")).path,
+                matched_evidence=f"status: {status}",
+                reproduction=f"Visit {url} and verify whether the resource should be reachable.",
+                protection_target="Exposed route, file, or directory discovered during enumeration",
+                fix_target=url,
+                evidence_kind="content",
             )
         )
     return findings
@@ -440,7 +621,13 @@ def parse_joomscan(results_file: Path) -> list[dict]:
                     severity="medium",
                     tool="JoomScan",
                     description="JoomScan reported a potentially actionable exposure.",
-                    evidence=f"location: {location}\nraw: {clean}" if location else clean,
+                    url=location,
+                    path=urlparse(location).path if location else "",
+                    matched_evidence=clean,
+                    reproduction=f"Visit {location}" if location else "Review the raw JoomScan finding and confirm the exposed Joomla surface.",
+                    protection_target=location or "Affected Joomla route or component",
+                    fix_target=location or "Joomla configuration or exposed component",
+                    evidence_kind="exposure",
                 )
             )
     return findings
@@ -460,7 +647,13 @@ def parse_droopescan(results_file: Path) -> list[dict]:
                     severity="info",
                     tool="Droopescan",
                     description="Droopescan identified the Drupal version for the target.",
-                    evidence=str(item.get("version")),
+                    component="drupal-core",
+                    component_version=str(item.get("version")),
+                    matched_evidence=str(item.get("version")),
+                    reproduction="Confirm the deployed Drupal core version from the application or admin console.",
+                    protection_target="Drupal core installation",
+                    fix_target="Drupal core upgrade path",
+                    evidence_kind="version",
                 )
             )
         for interesting in item.get("interesting urls", []) if isinstance(item.get("interesting urls"), list) else []:
@@ -470,7 +663,13 @@ def parse_droopescan(results_file: Path) -> list[dict]:
                     severity="low",
                     tool="Droopescan",
                     description="Droopescan discovered a Drupal URL worth reviewing.",
-                    evidence=str(interesting),
+                    url=str(interesting),
+                    path=urlparse(str(interesting)).path,
+                    matched_evidence=str(interesting),
+                    reproduction=f"Visit {interesting} and verify whether the route should be public.",
+                    protection_target="Discovered Drupal route or resource",
+                    fix_target=str(interesting),
+                    evidence_kind="content",
                 )
             )
     return findings
@@ -493,7 +692,11 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
                 tool="CMSMap",
                 description="CMSMap output contains an explicit vulnerability reference.",
                 cve=match.upper(),
-                evidence=f"cve: {match.upper()}\nlocation: {around}" if around else match.upper(),
+                matched_evidence=around or match.upper(),
+                reproduction=f"Review the affected CMS component tied to {match.upper()} and compare it against the installed version.",
+                protection_target="Referenced CMS component or exposed surface in CMSMap output",
+                fix_target="CMS component upgrade or configuration review",
+                evidence_kind="component",
             )
         )
     if not findings and text:
@@ -506,7 +709,11 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
                         severity="medium",
                         tool="CMSMap",
                         description="CMSMap reported a potential exposure or weakness.",
-                        evidence=line.strip()[:500],
+                        matched_evidence=line.strip()[:500],
+                        reproduction="Review the CMSMap raw output and confirm the exposed route or component.",
+                        protection_target="CMS route or component mentioned in CMSMap output",
+                        fix_target="CMS configuration or component review",
+                        evidence_kind="exposure",
                     )
                 )
     return findings
@@ -515,16 +722,6 @@ def parse_cmsmap(results_file: Path) -> list[dict]:
 def parse_dalfox(results_file: Path) -> list[dict]:
     findings = []
     data = _safe_load_json(results_file)
-
-    def _string_value(value):
-        if value is None:
-            return ""
-        if isinstance(value, (dict, list)):
-            try:
-                return json.dumps(value, ensure_ascii=False)
-            except (TypeError, ValueError):
-                return str(value)
-        return str(value)
 
     # Dalfox output varies across versions; flatten likely container keys first.
     if isinstance(data, list):
@@ -551,45 +748,40 @@ def parse_dalfox(results_file: Path) -> list[dict]:
             or item.get("message")
             or "XSS Finding"
         )
-
-        location_parts = []
-        for label, key in [
-            ("url", "url"),
-            ("target", "target"),
-            ("endpoint", "endpoint"),
-            ("path", "path"),
-            ("parameter", "param"),
-            ("method", "method"),
-        ]:
-            if item.get(key):
-                location_parts.append(f"{label}: {_string_value(item.get(key))}")
-
-        for label, key in [
-            ("payload", "payload"),
-            ("poc", "poc"),
-            ("matched", "evidence"),
-            ("data", "data"),
-        ]:
-            if item.get(key):
-                location_parts.append(f"{label}: {_string_value(item.get(key))}")
-
-        if item.get("request"):
-            location_parts.append(f"request: {_string_value(item.get('request'))}")
-        if item.get("response"):
-            location_parts.append(f"response: {_string_value(item.get('response'))}")
-
-        evidence_text = "\n".join(location_parts).strip()
-        if not evidence_text:
-            # Fallback to raw record so operators still see exact detector payload.
-            evidence_text = _string_value(item)
+        target_url = (
+            item.get("url")
+            or item.get("target")
+            or item.get("endpoint")
+            or item.get("path")
+            or ""
+        )
+        parameter = item.get("param") or item.get("parameter") or _query_parameter_from_url(str(target_url))
+        payload = item.get("payload") or item.get("poc") or ""
+        matched = item.get("evidence") or item.get("data") or ""
+        request_text = _stringify(item.get("request"))
+        response_text = _stringify(item.get("response"))
+        reproduction = item.get("poc") or (str(target_url) if target_url and payload else "")
+        evidence_kind = "xss" if "xss" in str(vuln_type).lower() else "injection"
+        protection_target = f"Parameter {parameter} reflected into the response" if parameter else "Reflected or DOM-driven client-side sink"
 
         findings.append(
             _make_finding(
                 title=str(vuln_type),
                 severity="high",
                 tool="Dalfox",
-                description="Dalfox detected a reflected or DOM-based XSS condition.",
-                evidence=evidence_text[:2000],
+                description="Dalfox detected a reflected or DOM-based client-side injection condition.",
+                url=target_url,
+                path=urlparse(str(target_url or "")).path,
+                method=item.get("method") or "GET",
+                parameter=parameter,
+                payload=_stringify(payload),
+                matched_evidence=_stringify(matched),
+                request_excerpt=request_text,
+                response_excerpt=response_text,
+                reproduction=_stringify(reproduction) or f"Replay the request against {target_url}",
+                protection_target=protection_target,
+                fix_target=parameter or target_url or "Affected client-side sink",
+                evidence_kind=evidence_kind,
             )
         )
     return findings
@@ -620,8 +812,16 @@ def parse_wapiti(results_file: Path) -> list[dict]:
                     severity=severity,
                     tool="Wapiti",
                     description=entry.get("info", f"Wapiti reported {vuln_name}."),
-                    evidence="\n".join(evidence)[:1000],
                     references=entry.get("references", []) if isinstance(entry.get("references"), list) else [],
+                    path=entry.get("path", ""),
+                    url=entry.get("path", ""),
+                    method=entry.get("method", ""),
+                    parameter=entry.get("parameter", ""),
+                    matched_evidence=entry.get("info", ""),
+                    reproduction=f"Replay {entry.get('method', 'GET')} {entry.get('path', '')}" if entry.get("path") else "Review the affected request in Wapiti output.",
+                    protection_target=entry.get("parameter") or entry.get("path") or "Affected request input",
+                    fix_target=entry.get("path") or entry.get("parameter") or "Application input handling",
+                    evidence_kind="injection",
                 )
             )
     return findings
@@ -645,7 +845,13 @@ def parse_commix(results_file: Path) -> list[dict]:
                     severity="critical",
                     tool="Commix",
                     description="Commix reported a command injection condition.",
-                    evidence=f"location: {location}\nraw: {line.strip()[:460]}" if location else line.strip()[:500],
+                    url=location,
+                    path=urlparse(location).path if location else "",
+                    matched_evidence=line.strip()[:460],
+                    reproduction=f"Replay the request to {location} with a benign test payload and confirm server-side command execution is blocked." if location else "Review the raw Commix finding and confirm the affected request input.",
+                    protection_target=location or "Potential command-executing request handler",
+                    fix_target=location or "Server-side command execution sink",
+                    evidence_kind="command_injection",
                 )
             )
     return findings

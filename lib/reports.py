@@ -453,6 +453,45 @@ def _render_standards_tags(finding: dict) -> str:
     return "<div class='standards-row'>" + "".join(parts) + "</div>"
 
 
+def _structured_detail_rows(finding: dict) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for label, key in [
+        ("Affected Asset", "asset"),
+        ("Exact URL", "url"),
+        ("Endpoint", "endpoint"),
+        ("Path", "path"),
+        ("HTTP Method", "method"),
+        ("Parameter", "parameter"),
+        ("Component", "component"),
+        ("Component Version", "component_version"),
+        ("Payload", "payload"),
+        ("What Was Detected", "matched_evidence"),
+        ("Request Excerpt", "request_excerpt"),
+        ("Response Excerpt", "response_excerpt"),
+        ("Safe Verification Step", "reproduction"),
+        ("Where To Protect", "protection_target"),
+        ("Fix Target", "fix_target"),
+    ]:
+        value = str(finding.get(key, "") or "").strip()
+        if value:
+            rows.append((label, value))
+    return rows
+
+
+def _render_structured_details(finding: dict) -> str:
+    rows = _structured_detail_rows(finding)
+    if not rows:
+        return ""
+    html_rows = "".join(
+        "<div class='detail-row'>"
+        f"<div class='detail-label'>{html.escape(label)}</div>"
+        f"<div class='detail-value'><pre>{html.escape(value)}</pre></div>"
+        "</div>"
+        for label, value in rows
+    )
+    return f"<div class='finding-details-grid'>{html_rows}</div>"
+
+
 def _default_report_template_source() -> str:
     return """<!DOCTYPE html>
 <html lang="en">
@@ -559,13 +598,13 @@ def generate_sarif_report(payload: dict) -> dict:
                 {
                     "physicalLocation": {
                         "artifactLocation": {
-                            "uri": target_url,
+                            "uri": finding.get("url") or finding.get("endpoint") or finding.get("path") or target_url,
                             "uriBaseId": "%SRCROOT%",
                         }
                     },
                     "logicalLocations": [
                         {
-                            "name": target_url,
+                            "name": finding.get("asset") or finding.get("component") or finding.get("url") or target_url,
                             "kind": "url",
                         }
                     ],
@@ -576,6 +615,15 @@ def generate_sarif_report(payload: dict) -> dict:
                 "source_tool": finding.get("source_tool", ""),
                 "cve": finding.get("cve", ""),
                 "evidence": (finding.get("evidence") or "")[:500],
+                "asset": finding.get("asset", ""),
+                "url": finding.get("url", ""),
+                "path": finding.get("path", ""),
+                "method": finding.get("method", ""),
+                "parameter": finding.get("parameter", ""),
+                "component": finding.get("component", ""),
+                "verification_status": finding.get("verification_status", ""),
+                "confidence": finding.get("confidence", ""),
+                "protection_target": finding.get("protection_target", ""),
                 "owasp": owasp_ids,
                 "mitre_attack": mitre_ids,
                 "cis_controls": cis_ids,
@@ -645,7 +693,8 @@ def generate_csv_report(payload: dict) -> str:
         "mitre_attack_ids", "mitre_attack_names", "mitre_tactics",
         "cis_control_ids", "cis_control_titles",
         "nist_csf_ids", "nist_csf_functions", "nist_csf_categories",
-        "description", "evidence", "fix_summary", "references",
+        "description", "evidence", "asset", "url", "path", "method", "parameter", "component",
+        "verification_status", "confidence", "protection_target", "fix_summary", "references",
         "target_url", "scan_mode", "scan_started_at",
     ]
 
@@ -677,6 +726,15 @@ def generate_csv_report(payload: dict) -> str:
             "nist_csf_categories": "; ".join(item["category"] for item in nist),
             "description": finding.get("description", ""),
             "evidence": (finding.get("evidence") or "")[:500],
+            "asset": finding.get("asset", ""),
+            "url": finding.get("url", ""),
+            "path": finding.get("path", ""),
+            "method": finding.get("method", ""),
+            "parameter": finding.get("parameter", ""),
+            "component": finding.get("component", ""),
+            "verification_status": finding.get("verification_status", ""),
+            "confidence": finding.get("confidence", ""),
+            "protection_target": finding.get("protection_target", ""),
             "fix_summary": finding.get("fix", ""),
             "references": "; ".join(finding.get("references", [])),
             "target_url": target_url,
@@ -712,7 +770,7 @@ def generate_html_report(payload: dict) -> str:
 
     def _derive_confidence(finding: dict) -> str:
         val = str(finding.get("confidence", "")).strip().lower()
-        if val in {"confirmed", "probable", "possible"}:
+        if val in {"confirmed", "reproduced", "detected", "weak_signal", "informational", "probable", "possible"}:
             return val
         verification = str(finding.get("verification_status", "")).lower()
         if verification in {"confirmed", "reproduced"}:
@@ -736,7 +794,7 @@ def generate_html_report(payload: dict) -> str:
         return str(finding.get("owner") or finding.get("assignee") or "-")
 
     def _derive_asset(finding: dict, target_url: str) -> str:
-        return str(finding.get("asset") or finding.get("url") or finding.get("endpoint") or target_url or "-")
+        return str(finding.get("asset") or finding.get("url") or finding.get("endpoint") or finding.get("path") or finding.get("component") or target_url or "-")
 
     def _coverage_metrics(tool_runs: list[dict]) -> tuple[int, int, int, int, int]:
         total = len(tool_runs)
@@ -876,6 +934,7 @@ def generate_html_report(payload: dict) -> str:
         cve = html.escape(finding.get("cve", ""))
         refs = finding.get("references", [])
         ref_html = "".join(f"<li><a href='{html.escape(ref)}' target='_blank'>{html.escape(ref)}</a></li>" for ref in refs)
+        structured_html = _render_structured_details(finding)
         steps = finding.get("fix_steps", [])
         if steps:
             fix_html = "<ol>" + "".join(f"<li>{html.escape(str(step))}</li>" for step in steps) + "</ol>"
@@ -911,7 +970,8 @@ def generate_html_report(payload: dict) -> str:
                     <p class="meta">Asset: <span class='url-cell'>{html.escape(asset)}</span></p>
                     {_render_standards_tags(finding)}
                     <p>{description}</p>
-                    {'<pre>' + evidence + '</pre>' if evidence else ''}
+                    {structured_html}
+                    {'<div class="detail-row"><div class="detail-label">Compact Evidence</div><div class="detail-value"><pre>' + evidence + '</pre></div></div>' if evidence else ''}
                     <div class="fix-block">
                         <h4>Recommended Fix</h4>
                         {fix_html}
@@ -1258,6 +1318,10 @@ def generate_html_report(payload: dict) -> str:
         details.finding > summary .sum-chevron {{ margin-left: auto; transition: transform 0.2s; flex-shrink: 0; }}
         details.finding[open] > summary .sum-chevron {{ transform: rotate(180deg); }}
         .finding-body {{ padding: 14px 18px; background: rgba(14,22,36,0.96); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }}
+        .finding-details-grid {{ display: grid; gap: 10px; margin: 14px 0; }}
+        .detail-row {{ border: 1px solid var(--border); border-radius: 12px; background: rgba(18,27,43,0.6); overflow: hidden; }}
+        .detail-label {{ padding: 10px 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--border); }}
+        .detail-value pre {{ margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); padding: 12px; white-space: pre-wrap; }}
         details.finding.critical > summary {{ border-left: 4px solid var(--critical); }}
         details.finding.high    > summary {{ border-left: 4px solid var(--high); }}
         details.finding.medium  > summary {{ border-left: 4px solid var(--medium); }}
@@ -1773,6 +1837,19 @@ def generate_markdown_report(payload: dict) -> str:
             lines.append(f"- CVE: {finding.get('cve', '')}")
         if finding.get("description"):
             lines.append(f"- Description: {finding.get('description', '')}")
+        for label, key in [
+            ("Asset", "asset"),
+            ("URL", "url"),
+            ("Path", "path"),
+            ("Method", "method"),
+            ("Parameter", "parameter"),
+            ("Component", "component"),
+            ("Verification", "verification_status"),
+            ("Confidence", "confidence"),
+            ("Where to protect", "protection_target"),
+        ]:
+            if finding.get(key):
+                lines.append(f"- {label}: {finding.get(key, '')}")
         if finding.get("evidence"):
             lines.append(f"- Evidence: {finding.get('evidence', '')}")
         if finding.get("fix_steps"):
