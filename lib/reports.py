@@ -480,6 +480,9 @@ def _structured_detail_rows(finding: dict) -> list[tuple[str, str]]:
 
 def _render_structured_details(finding: dict) -> str:
     rows = _structured_detail_rows(finding)
+    compact_evidence = str(finding.get("evidence", "") or "").strip()
+    if compact_evidence:
+        rows.append(("Compact Evidence", compact_evidence))
     if not rows:
         return ""
     html_rows = "".join(
@@ -489,7 +492,13 @@ def _render_structured_details(finding: dict) -> str:
         "</div>"
         for label, value in rows
     )
-    return f"<div class='finding-details-grid'>{html_rows}</div>"
+    count_label = f"{len(rows)} item{'s' if len(rows) != 1 else ''}"
+    return (
+        "<details class='finding-details-panel'>"
+        f"<summary><span>Detailed Evidence</span><span class='detail-count'>{count_label}</span></summary>"
+        f"<div class='finding-details-grid'>{html_rows}</div>"
+        "</details>"
+    )
 
 
 def _default_report_template_source() -> str:
@@ -971,7 +980,6 @@ def generate_html_report(payload: dict) -> str:
                     {_render_standards_tags(finding)}
                     <p>{description}</p>
                     {structured_html}
-                    {'<div class="detail-row"><div class="detail-label">Compact Evidence</div><div class="detail-value"><pre>' + evidence + '</pre></div></div>' if evidence else ''}
                     <div class="fix-block">
                         <h4>Recommended Fix</h4>
                         {fix_html}
@@ -1319,9 +1327,14 @@ def generate_html_report(payload: dict) -> str:
         details.finding[open] > summary .sum-chevron {{ transform: rotate(180deg); }}
         .finding-body {{ padding: 14px 18px; background: rgba(14,22,36,0.96); border: 1px solid var(--border); border-top: none; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }}
         .finding-details-grid {{ display: grid; gap: 10px; margin: 14px 0; }}
-        .detail-row {{ border: 1px solid var(--border); border-radius: 12px; background: rgba(18,27,43,0.6); overflow: hidden; }}
-        .detail-label {{ padding: 10px 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--border); }}
-        .detail-value pre {{ margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); padding: 12px; white-space: pre-wrap; }}
+        .finding-details-panel {{ margin: 14px 0; border: 1px solid var(--border); border-radius: 12px; background: rgba(10,18,31,0.72); overflow: hidden; }}
+        .finding-details-panel > summary {{ list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-weight: 700; color: var(--text); background: rgba(12,21,36,0.92); }}
+        .finding-details-panel > summary::-webkit-details-marker {{ display: none; }}
+        .finding-details-panel .detail-count {{ font-size: 12px; color: var(--text-soft); font-weight: 600; }}
+        .finding-details-panel .finding-details-grid {{ margin: 0; padding: 12px; }}
+        .detail-row {{ border: 1px solid var(--border); border-radius: 12px; background: rgba(22,33,51,0.96); overflow: hidden; }}
+        .detail-label {{ padding: 10px 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #dbeafe; border-bottom: 1px solid var(--border); background: rgba(9,17,31,0.95); }}
+        .detail-value pre {{ margin: 0; border: 0; border-radius: 0; background: transparent; color: #f8fafc; padding: 12px; white-space: pre-wrap; }}
         details.finding.critical > summary {{ border-left: 4px solid var(--critical); }}
         details.finding.high    > summary {{ border-left: 4px solid var(--high); }}
         details.finding.medium  > summary {{ border-left: 4px solid var(--medium); }}
