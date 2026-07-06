@@ -355,7 +355,7 @@
                         <div>
                             <p class="workspace-section-label">Monitoring</p>
                             <h1>Operations Monitoring</h1>
-                            <p class="view-subtitle workspace-subtitle">See current health, active incidents, and recent changes across websites, hosts, and office systems.</p>
+                            <p class="view-subtitle workspace-subtitle">Track what needs attention now, then review monitor timing and configuration in inventory.</p>
                         </div>
                         <div class="workspace-page-actions">
                             <div class="workspace-status-pill" id="monitoringLastUpdatedPill">
@@ -377,103 +377,120 @@
                         </div>
                     </header>
 
-                    <div class="workspace-signal-strip compact-strip" id="monitoringOverviewCards">
-                        <div class="workspace-signal-card">
-                            <span class="signal-label">Monitored Assets</span>
-                            <strong>0</strong>
-                            <p>Loading monitoring inventory.</p>
+                    <div class="monitoring-tab-strip" id="monitoringTabStrip" role="tablist" aria-label="Monitoring views">
+                        <button type="button" class="monitoring-tab-btn active" data-monitoring-tab="overview" aria-selected="true">Overview</button>
+                        <button type="button" class="monitoring-tab-btn" data-monitoring-tab="inventory" aria-selected="false">Inventory</button>
+                    </div>
+
+                    <div class="monitoring-tab-panel active" id="monitoring-tab-overview" data-monitoring-panel="overview">
+                        <div class="workspace-signal-strip compact-strip monitoring-operator-strip" id="monitoringOverviewCards">
+                            <div class="workspace-signal-card monitoring-operator-card">
+                                <span class="signal-label">Monitored Assets</span>
+                                <strong>0</strong>
+                                <p>Loading monitoring overview.</p>
+                            </div>
+                        </div>
+
+                        <div class="monitoring-priority-grid">
+                            <div class="card monitoring-incidents-panel">
+                                <div class="card-header dashboard-card-header monitoring-card-header-tight">
+                                    <div>
+                                        <h3>Current Incidents</h3>
+                                        <p class="subtitle">Down or degraded assets needing action now.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body monitoring-scroll-panel" id="monitoringIncidents">
+                                    <div class="empty-state">Loading incidents...</div>
+                                </div>
+                            </div>
+
+                            <div class="card monitoring-events-panel">
+                                <div class="card-header dashboard-card-header monitoring-card-header-tight">
+                                    <div>
+                                        <h3>Recent Changes</h3>
+                                        <p class="subtitle">Transition-only history. This excludes successful steady-state polls.</p>
+                                    </div>
+                                </div>
+                                <div class="card-body monitoring-scroll-panel" id="monitoringEvents">
+                                    <div class="empty-state">Loading monitoring events...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card monitoring-mini-panels">
+                            <div class="card-header dashboard-card-header monitoring-card-header-tight">
+                                <div>
+                                    <h3>Operational Trends</h3>
+                                    <p class="subtitle">Mini widgets for state mix, uptime movement, and incident load.</p>
+                                </div>
+                            </div>
+                            <div class="card-body monitoring-mini-grid">
+                                <div class="monitoring-mini-panel">
+                                    <div class="monitoring-mini-head">
+                                        <strong>Status Mix</strong>
+                                        <span>Live state split</span>
+                                    </div>
+                                    <div class="monitoring-mini-chart">
+                                        <canvas id="monitoringStatusChart"></canvas>
+                                    </div>
+                                </div>
+
+                                <div class="monitoring-mini-panel">
+                                    <div class="monitoring-mini-head">
+                                        <strong>Uptime Trend</strong>
+                                        <span>Recent bucket summary</span>
+                                    </div>
+                                    <div class="monitoring-mini-chart">
+                                        <canvas id="monitoringUptimeChart"></canvas>
+                                    </div>
+                                </div>
+
+                                <div class="monitoring-mini-panel">
+                                    <div class="monitoring-mini-head">
+                                        <strong>Incident Trend</strong>
+                                        <span>Transitions and active load</span>
+                                    </div>
+                                    <div class="monitoring-mini-chart">
+                                        <canvas id="monitoringIncidentChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="monitoring-visual-grid">
-                        <div class="card monitoring-chart-panel">
-                            <div class="card-header dashboard-card-header">
+                    <div class="monitoring-tab-panel" id="monitoring-tab-inventory" data-monitoring-panel="inventory">
+                        <div class="card monitoring-inventory-panel">
+                            <div class="card-header monitoring-inventory-header">
                                 <div>
-                                    <h3>Status Distribution</h3>
-                                    <p class="subtitle">Current asset-state split across healthy, degraded, down, and unknown.</p>
+                                    <h3>Monitoring Inventory</h3>
+                                    <p class="subtitle">Full operational list with last check, configured interval, and next expected run.</p>
+                                </div>
+                                <div class="monitoring-inline-meta">
+                                    <span class="monitoring-meta-pill">Overview stays on 15s refresh</span>
+                                    <span class="monitoring-meta-pill">Inventory refreshes on open, manual refresh, and save</span>
                                 </div>
                             </div>
-                            <div class="card-body chart-container monitoring-chart-container">
-                                <canvas id="monitoringStatusChart"></canvas>
-                            </div>
-                        </div>
-
-                        <div class="card monitoring-chart-panel">
-                            <div class="card-header dashboard-card-header">
-                                <div>
-                                    <h3>Uptime Trend</h3>
-                                    <p class="subtitle">Compact uptime summary from recent monitoring buckets.</p>
+                            <div class="card-body">
+                                <div class="targets-table-wrap">
+                                    <table class="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Asset</th>
+                                                <th>Type</th>
+                                                <th>Target</th>
+                                                <th>Status</th>
+                                                <th>Uptime</th>
+                                                <th>Last Check</th>
+                                                <th>Interval</th>
+                                                <th>Next Due</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="monitoringAssetsBody">
+                                            <tr><td colspan="9" class="empty-state">Loading monitoring assets...</td></tr>
+                                        </tbody>
+                                    </table>
                                 </div>
-                            </div>
-                            <div class="card-body chart-container monitoring-chart-container">
-                                <canvas id="monitoringUptimeChart"></canvas>
-                            </div>
-                        </div>
-
-                        <div class="card monitoring-chart-panel">
-                            <div class="card-header dashboard-card-header">
-                                <div>
-                                    <h3>Incident Trend</h3>
-                                    <p class="subtitle">Transition counts and active incident load over recent buckets.</p>
-                                </div>
-                            </div>
-                            <div class="card-body chart-container monitoring-chart-container">
-                                <canvas id="monitoringIncidentChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="monitoring-detail-grid">
-                        <div class="card monitoring-incidents-panel">
-                            <div class="card-header dashboard-card-header">
-                                <div>
-                                    <h3>Current Incidents</h3>
-                                    <p class="subtitle">Assets currently down or degraded and needing attention now.</p>
-                                </div>
-                            </div>
-                            <div class="card-body" id="monitoringIncidents">
-                                <div class="empty-state">Loading incidents...</div>
-                            </div>
-                        </div>
-
-                        <div class="card monitoring-events-panel">
-                            <div class="card-header dashboard-card-header">
-                                <div>
-                                    <h3>Recent Changes</h3>
-                                    <p class="subtitle">Transition-only history. This does not log every successful poll.</p>
-                                </div>
-                            </div>
-                            <div class="card-body" id="monitoringEvents">
-                                <div class="empty-state">Loading monitoring events...</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card workspace-stack-space monitoring-inventory-panel">
-                        <div class="card-header">
-                            <h3>Monitoring Inventory</h3>
-                            <p class="subtitle">Operational list of monitors with timing clarity for last check, interval, and next due time.</p>
-                        </div>
-                        <div class="card-body">
-                            <div class="targets-table-wrap">
-                                <table class="data-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Asset</th>
-                                            <th>Type</th>
-                                            <th>Target</th>
-                                            <th>Status</th>
-                                            <th>Uptime</th>
-                                            <th>Last Check</th>
-                                            <th>Interval</th>
-                                            <th>Next Due</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="monitoringAssetsBody">
-                                        <tr><td colspan="9" class="empty-state">Loading monitoring assets...</td></tr>
-                                    </tbody>
-                                </table>
                             </div>
                         </div>
                     </div>

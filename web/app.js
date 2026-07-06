@@ -56,6 +56,7 @@ const App = {
     monitoringRefreshTimer: null,
     monitoringDrawerOpen: false,
     monitoringFormDirty: false,
+    monitoringSubView: "overview",
     monitoringCharts: {
         status: null,
         uptime: null,
@@ -107,6 +108,7 @@ const App = {
     },
 
     navigateTo(view) {
+        const previousView = this.currentView;
         if (this.modules?.[view] === false) {
             this.currentView = "dashboard";
             view = "dashboard";
@@ -128,6 +130,9 @@ const App = {
         if (view === "dashboard") {
             this.loadDashboard();
         } else if (view === "monitoring") {
+            if (previousView !== "monitoring") {
+                this.monitoringSubView = "overview";
+            }
             this.loadMonitoringView();
         } else if (view === "scan") {
             this.loadScanView();
@@ -2387,17 +2392,25 @@ const App = {
     async loadMonitoringView() {
         document.getElementById("monitoringRefreshBtn").onclick = () => this.loadMonitoringView(true);
         document.getElementById("monitoringAddBtn").onclick = () => this.openMonitoringDrawer();
+        this.bindMonitoringTabs();
+        this.bindMonitoringAssetForm();
+        this.bindMonitoringDrawer();
+        this.applyMonitoringSubView();
+
+        if (this.monitoringSubView === "inventory") {
+            await this.loadMonitoringInventory();
+            this.stopMonitoringRefresh();
+            return;
+        }
+
         const [status, events] = await Promise.all([
             this.api("/api/monitoring/status"),
             this.api("/api/monitoring/events?limit=25"),
         ]);
         this.renderMonitoringOverview(status?.overview || {}, status);
         this.renderMonitoringStatusCharts(status || {});
-        this.renderMonitoringAssets(Array.isArray(status?.assets) ? status.assets : []);
         this.renderMonitoringIncidents(Array.isArray(status?.incidents) ? status.incidents : []);
         this.renderMonitoringEvents(Array.isArray(events) ? events : []);
-        this.bindMonitoringAssetForm();
-        this.bindMonitoringDrawer();
         this.startMonitoringRefresh();
     },
 
@@ -2407,6 +2420,10 @@ const App = {
         }
         this.monitoringRefreshTimer = setInterval(() => {
             if (this.currentView !== "monitoring") {
+                this.stopMonitoringRefresh();
+                return;
+            }
+            if (this.monitoringSubView !== "overview") {
                 this.stopMonitoringRefresh();
                 return;
             }
@@ -2435,6 +2452,42 @@ const App = {
             closeBtn.dataset.bound = "true";
             closeBtn.addEventListener("click", () => this.closeMonitoringDrawer());
         }
+    },
+
+    bindMonitoringTabs() {
+        const group = document.getElementById("monitoringTabStrip");
+        if (!group || group.dataset.bound === "true") return;
+        group.dataset.bound = "true";
+        group.addEventListener("click", async (event) => {
+            const button = event.target.closest(".monitoring-tab-btn[data-monitoring-tab]");
+            if (!button) return;
+            const nextTab = button.dataset.monitoringTab;
+            if (!nextTab || nextTab === this.monitoringSubView) return;
+            this.monitoringSubView = nextTab;
+            this.applyMonitoringSubView();
+            if (nextTab === "inventory") {
+                this.stopMonitoringRefresh();
+                await this.loadMonitoringInventory();
+                return;
+            }
+            await this.loadMonitoringView(true);
+        });
+    },
+
+    applyMonitoringSubView() {
+        document.querySelectorAll(".monitoring-tab-btn[data-monitoring-tab]").forEach((button) => {
+            const active = button.dataset.monitoringTab === this.monitoringSubView;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        document.querySelectorAll(".monitoring-tab-panel[data-monitoring-panel]").forEach((panel) => {
+            panel.classList.toggle("active", panel.dataset.monitoringPanel === this.monitoringSubView);
+        });
+    },
+
+    async loadMonitoringInventory() {
+        const assets = await this.api("/api/monitoring/assets");
+        this.renderMonitoringAssets(Array.isArray(assets) ? assets : []);
     },
 
     openMonitoringDrawer(asset = null) {
@@ -2485,28 +2538,28 @@ const App = {
         const generatedAt = statusPayload?.generated_at ? this._formatTimestamp(statusPayload.generated_at) : "Unknown";
         const lastEvaluated = overview?.last_evaluated_at ? this._formatTimestamp(overview.last_evaluated_at) : "No checks yet";
         node.innerHTML = `
-            <div class="workspace-signal-card">
+            <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Monitored Assets</span>
                 <strong>${this.esc(String(overview.enabled_assets || 0))}</strong>
-                <p>Enabled checks currently active on the platform.</p>
+                <p>Enabled monitors currently scheduled.</p>
             </div>
-            <div class="workspace-signal-card">
+            <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Healthy Assets</span>
                 <strong>${this.esc(String(overview.healthy_assets || 0))}</strong>
-                <p>Assets currently reporting healthy state.</p>
+                <p>Assets currently holding a healthy state.</p>
             </div>
-            <div class="workspace-signal-card">
+            <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Active Incidents</span>
                 <strong>${this.esc(String(overview.active_incidents || 0))}</strong>
-                <p>Current degraded or down assets requiring review.</p>
+                <p>Down or degraded assets requiring action.</p>
             </div>
-            <div class="workspace-signal-card">
-                <span class="signal-label">24h Uptime</span>
+            <div class="workspace-signal-card monitoring-operator-card">
+                <span class="signal-label">Timing</span>
                 <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
-                <p>Average estimated uptime across monitored assets.</p>
+                <p>24h average uptime across monitored assets.</p>
                 <div class="monitoring-meta-line">
-                    <span class="monitoring-meta-pill">Last evaluated: ${this.esc(lastEvaluated)}</span>
-                    <span class="monitoring-meta-pill">View refreshed: ${this.esc(generatedAt)}</span>
+                    <span class="monitoring-meta-pill">Last check pass: ${this.esc(lastEvaluated)}</span>
+                    <span class="monitoring-meta-pill">UI updated: ${this.esc(generatedAt)}</span>
                 </div>
             </div>
         `;
@@ -2537,9 +2590,9 @@ const App = {
                 borderWidth: 2,
             }],
         }, {
-            cutout: "66%",
+            cutout: "72%",
             plugins: {
-                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 16 } },
+                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 10, boxWidth: 8, font: { size: 11 } } },
             },
         });
 
@@ -2556,8 +2609,8 @@ const App = {
         }, {
             plugins: { legend: { display: false } },
             scales: {
-                y: { min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
-                x: { ticks: { color: "#64748b" }, grid: { display: false } },
+                y: { min: 0, max: 100, ticks: { color: "#94a3b8", maxTicksLimit: 4 }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
+                x: { ticks: { color: "#64748b", maxTicksLimit: 4 }, grid: { display: false } },
             },
         });
 
@@ -2582,11 +2635,11 @@ const App = {
             ],
         }, {
             plugins: {
-                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 16 } },
+                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 10, boxWidth: 8, font: { size: 11 } } },
             },
             scales: {
-                y: { beginAtZero: true, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
-                x: { ticks: { color: "#64748b" }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: "#94a3b8", maxTicksLimit: 4 }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
+                x: { ticks: { color: "#64748b", maxTicksLimit: 4 }, grid: { display: false } },
             },
         });
     },
@@ -2658,6 +2711,7 @@ const App = {
                     <div class="monitoring-meta-line">
                         <span class="monitoring-meta-pill">${this.esc(item.asset_type || "")}</span>
                         <span class="monitoring-meta-pill">Changed ${this.esc(item.last_change_at ? this._formatTimestamp(item.last_change_at) : "Unknown")}</span>
+                        <span class="monitoring-meta-pill">${this.esc(item.target || "No target recorded")}</span>
                     </div>
                 </article>
             `).join("")
@@ -2718,7 +2772,11 @@ const App = {
                     this.toast("Monitoring asset saved.", "success");
                     this.resetMonitoringAssetForm();
                     this.closeMonitoringDrawer();
-                    this.loadMonitoringView();
+                    if (this.monitoringSubView === "inventory") {
+                        this.loadMonitoringInventory();
+                    } else {
+                        this.loadMonitoringView();
+                    }
                 } else {
                     this.toast(result.error || "Failed to save monitoring asset", "error");
                 }
@@ -2761,7 +2819,11 @@ const App = {
             const response = await fetch(`/api/monitoring/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
             if (response.ok) {
                 this.toast("Monitoring asset removed", "success");
-                this.loadMonitoringView();
+                if (this.monitoringSubView === "inventory") {
+                    this.loadMonitoringInventory();
+                } else {
+                    this.loadMonitoringView();
+                }
             } else {
                 this.toast("Failed to remove monitoring asset", "error");
             }
