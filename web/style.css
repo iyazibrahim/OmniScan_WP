@@ -2304,6 +2304,32 @@ input::placeholder { color: var(--text-muted); }
     gap: 16px;
 }
 
+.monitoring-visual-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr 1fr;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.monitoring-detail-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.monitoring-inventory-panel {
+    margin-top: 20px;
+}
+
+.monitoring-chart-container {
+    height: 260px;
+}
+
+.monitoring-chart-panel .card-body {
+    padding-top: 4px;
+}
+
 .monitoring-form-grid input,
 .monitoring-form-grid select {
     width: 100%;
@@ -2311,6 +2337,125 @@ input::placeholder { color: var(--text-muted); }
 
 .operations-overview-panel {
     margin-bottom: 20px;
+}
+
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 10, 20, 0.52);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition);
+    z-index: 80;
+}
+
+.drawer-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.monitoring-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(520px, 100%);
+    height: 100vh;
+    background: rgba(13, 18, 32, 0.98);
+    border-left: 1px solid var(--glass-border);
+    box-shadow: -18px 0 48px rgba(3, 7, 18, 0.4);
+    transform: translateX(100%);
+    transition: transform var(--transition);
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+}
+
+.monitoring-drawer.open {
+    transform: translateX(0);
+}
+
+.monitoring-drawer-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 24px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.monitoring-drawer-header h2 {
+    font-size: 1.4rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.monitoring-drawer-body {
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.monitoring-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.monitoring-meta-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.incident-card {
+    background: linear-gradient(180deg, rgba(21, 32, 57, 0.9), rgba(13, 20, 37, 0.98));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+}
+
+.incident-card + .incident-card {
+    margin-top: 12px;
+}
+
+.incident-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.incident-card h4 {
+    font-size: 0.96rem;
+    font-weight: 700;
+}
+
+.event-row {
+    display: grid;
+    grid-template-columns: 1.2fr auto;
+    gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.event-row:last-child {
+    border-bottom: none;
+}
+
+.event-row strong {
+    display: block;
+    font-size: 0.9rem;
+}
+
+.event-row small {
+    color: var(--text-muted);
 }
 
 .config-field { display: flex; flex-direction: column; }
@@ -2521,13 +2666,16 @@ input::placeholder { color: var(--text-muted); }
     .config-grid,
     .monitoring-stats-grid,
     .monitoring-form-grid,
-    .monitoring-settings-grid { grid-template-columns: 1fr; }
+    .monitoring-settings-grid,
+    .monitoring-visual-grid,
+    .monitoring-detail-grid { grid-template-columns: 1fr; }
     .profile-cards { grid-template-columns: 1fr; }
     .assessment-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .assessment-layout { grid-template-columns: 1fr; }
     .assessment-field-grid { grid-template-columns: 1fr; }
     .assessment-detail-grid { grid-template-columns: 1fr; }
     .content-area { padding: 32px 24px; }
+    .monitoring-drawer { width: 100%; }
 }
 
 @media (max-width: 768px) {

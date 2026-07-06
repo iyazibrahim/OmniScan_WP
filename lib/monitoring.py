@@ -24,6 +24,7 @@ MONITORING_SETTINGS_FILE = CONFIG_DIR / "monitoring-settings.json"
 MONITORING_STATE_FILE = CONFIG_DIR / "monitoring-state.json"
 MONITORING_EVENTS_FILE = CONFIG_DIR / "monitoring-events.json"
 HEARTBEAT_STATE_FILE = CONFIG_DIR / "heartbeat-state.json"
+MONITORING_ROLLUPS_FILE = CONFIG_DIR / "monitoring-rollups.json"
 
 DEFAULT_MODULES = {
     "dashboard": True,
@@ -61,6 +62,9 @@ SUPPORTED_ASSET_TYPES = {
     "wan_probe",
     "network_site",
 }
+
+ROLLUP_BUCKET_MINUTES = 5
+ROLLUP_MAX_BUCKETS = 288
 
 
 def _now_utc() -> datetime:
@@ -166,6 +170,22 @@ def save_heartbeat_state(state: dict[str, dict[str, Any]]) -> None:
     save_json(HEARTBEAT_STATE_FILE, state)
 
 
+def get_monitoring_rollups() -> dict[str, list[dict[str, Any]]]:
+    data = load_json(MONITORING_ROLLUPS_FILE)
+    if not isinstance(data, dict):
+        return {"uptime_buckets": [], "incident_buckets": []}
+    uptime = data.get("uptime_buckets")
+    incidents = data.get("incident_buckets")
+    return {
+        "uptime_buckets": uptime if isinstance(uptime, list) else [],
+        "incident_buckets": incidents if isinstance(incidents, list) else [],
+    }
+
+
+def save_monitoring_rollups(rollups: dict[str, list[dict[str, Any]]]) -> None:
+    save_json(MONITORING_ROLLUPS_FILE, rollups)
+
+
 def normalize_asset(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
     record = dict(existing or {})
     record["id"] = str(payload.get("id") or record.get("id") or uuid.uuid4().hex)
@@ -196,6 +216,7 @@ def summarize_monitoring(assets: list[dict[str, Any]] | None = None, state: dict
     assets = assets if assets is not None else get_monitoring_assets()
     state = state if state is not None else get_monitoring_state()
     events = events if events is not None else get_monitoring_events()
+    rollups = get_monitoring_rollups()
 
     enabled_assets = [asset for asset in assets if asset.get("enabled", True)]
     counts = {"healthy": 0, "degraded": 0, "down": 0, "unknown": 0}
@@ -225,8 +246,35 @@ def summarize_monitoring(assets: list[dict[str, Any]] | None = None, state: dict
 
     avg_uptime = round(sum(uptime_values) / max(1, len(uptime_values)), 2) if uptime_values else 0.0
     recent_events = sorted(events, key=lambda item: str(item.get("created_at", "")), reverse=True)[:10]
+    generated_at = _now_utc()
+    last_evaluated = None
+    checked_times = [
+        _parse_iso((state.get(str(asset.get("id")), {}) or {}).get("checked_at"))
+        for asset in enabled_assets
+    ]
+    checked_times = [item for item in checked_times if item is not None]
+    if checked_times:
+        last_evaluated = max(checked_times)
+
+    assets_with_timing = []
+    for asset in assets:
+        asset_state = state.get(str(asset.get("id")), {})
+        checked_at = _parse_iso(asset_state.get("checked_at"))
+        interval = max(30, int(asset.get("check_interval_seconds") or DEFAULT_MONITORING_SETTINGS["default_check_interval_seconds"]))
+        next_due = checked_at + timedelta(seconds=interval) if checked_at else None
+        assets_with_timing.append(
+            {
+                **asset,
+                "state": {
+                    **asset_state,
+                    "next_check_due_at": next_due.isoformat() if next_due else None,
+                    "check_interval_seconds": interval,
+                },
+            }
+        )
 
     return {
+        "generated_at": generated_at.isoformat(),
         "overview": {
             "enabled_assets": len(enabled_assets),
             "healthy_assets": counts["healthy"],
@@ -235,14 +283,17 @@ def summarize_monitoring(assets: list[dict[str, Any]] | None = None, state: dict
             "unknown_assets": counts["unknown"],
             "active_incidents": counts["down"] + counts["degraded"],
             "uptime_24h_pct": avg_uptime,
+            "last_evaluated_at": last_evaluated.isoformat() if last_evaluated else None,
         },
-        "assets": [
-            {
-                **asset,
-                "state": state.get(str(asset.get("id")), {}),
-            }
-            for asset in assets
+        "status_breakdown": [
+            {"label": "Healthy", "value": counts["healthy"], "status": "healthy"},
+            {"label": "Degraded", "value": counts["degraded"], "status": "degraded"},
+            {"label": "Down", "value": counts["down"], "status": "down"},
+            {"label": "Unknown", "value": counts["unknown"], "status": "unknown"},
         ],
+        "uptime_trend": list(rollups.get("uptime_buckets", []))[-12:],
+        "incident_trend": list(rollups.get("incident_buckets", []))[-12:],
+        "assets": assets_with_timing,
         "incidents": incident_assets[:20],
         "events": recent_events,
     }
@@ -255,6 +306,85 @@ def _event_prune(events: list[dict[str, Any]], retention_days: int, max_events: 
     if len(kept) > max_events:
         kept = kept[-max_events:]
     return kept
+
+
+def _prune_rollup_buckets(items: list[dict[str, Any]], retention_days: int) -> list[dict[str, Any]]:
+    cutoff = _now_utc() - timedelta(days=max(1, retention_days))
+    kept = [item for item in items if _parse_iso(item.get("bucket")) and _parse_iso(item.get("bucket")) >= cutoff]
+    kept.sort(key=lambda item: str(item.get("bucket", "")))
+    if len(kept) > ROLLUP_MAX_BUCKETS:
+        kept = kept[-ROLLUP_MAX_BUCKETS:]
+    return kept
+
+
+def _bucket_start(dt: datetime) -> datetime:
+    minute = (dt.minute // ROLLUP_BUCKET_MINUTES) * ROLLUP_BUCKET_MINUTES
+    return dt.replace(minute=minute, second=0, microsecond=0)
+
+
+def _update_monitoring_rollups(
+    *,
+    state: dict[str, dict[str, Any]],
+    status_changed: bool,
+    checked_at: datetime,
+    retention_days: int,
+) -> None:
+    rollups = get_monitoring_rollups()
+    bucket = _bucket_start(checked_at).isoformat()
+
+    healthy = 0
+    degraded = 0
+    down = 0
+    total = 0
+    uptime_values: list[float] = []
+    for item in state.values():
+        if not isinstance(item, dict):
+            continue
+        total += 1
+        status = str(item.get("status") or "unknown").lower()
+        if status == "healthy":
+            healthy += 1
+        elif status == "degraded":
+            degraded += 1
+        elif status == "down":
+            down += 1
+        uptime = float(item.get("uptime_24h_pct") or 0.0)
+        if uptime > 0:
+            uptime_values.append(uptime)
+
+    avg_uptime = round(sum(uptime_values) / max(1, len(uptime_values)), 2) if uptime_values else 0.0
+
+    uptime_buckets = [item for item in rollups.get("uptime_buckets", []) if isinstance(item, dict)]
+    incident_buckets = [item for item in rollups.get("incident_buckets", []) if isinstance(item, dict)]
+
+    uptime_entry = next((item for item in uptime_buckets if str(item.get("bucket")) == bucket), None)
+    if uptime_entry is None:
+        uptime_entry = {"bucket": bucket}
+        uptime_buckets.append(uptime_entry)
+    uptime_entry.update(
+        {
+            "bucket": bucket,
+            "uptime_pct": avg_uptime,
+            "healthy": healthy,
+            "degraded": degraded,
+            "down": down,
+            "total": total,
+        }
+    )
+
+    incident_entry = next((item for item in incident_buckets if str(item.get("bucket")) == bucket), None)
+    if incident_entry is None:
+        incident_entry = {"bucket": bucket, "transitions": 0}
+        incident_buckets.append(incident_entry)
+    incident_entry["bucket"] = bucket
+    incident_entry["transitions"] = int(incident_entry.get("transitions") or 0) + (1 if status_changed else 0)
+    incident_entry["active_incidents"] = down + degraded
+    incident_entry["down"] = down
+    incident_entry["degraded"] = degraded
+
+    rollups["uptime_buckets"] = _prune_rollup_buckets(uptime_buckets, retention_days)
+    rollups["incident_buckets"] = _prune_rollup_buckets(incident_buckets, retention_days)
+    save_monitoring_rollups(rollups)
 
 
 def _host_and_port(target: str, fallback_port: int = 443) -> tuple[str, int]:
@@ -571,6 +701,12 @@ class MonitoringService:
             events.append(event)
             self._maybe_send_transition_alert(asset, state[asset_id], previous_status)
 
+        _update_monitoring_rollups(
+            state=state,
+            status_changed=previous_status != new_status,
+            checked_at=checked_at,
+            retention_days=int(settings.get("retention_days", 14)),
+        )
         pruned = _event_prune(events, int(settings.get("retention_days", 14)), int(settings.get("max_events", 1000)))
         save_monitoring_state(state)
         save_monitoring_events(pruned)

@@ -5,6 +5,7 @@ config/auth.json
 config/monitoring-state.json
 config/monitoring-events.json
 config/heartbeat-state.json
+config/monitoring-rollups.json
 
 # Generated reports
 reports/

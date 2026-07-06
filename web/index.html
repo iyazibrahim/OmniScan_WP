@@ -355,13 +355,25 @@
                         <div>
                             <p class="workspace-section-label">Monitoring</p>
                             <h1>Operations Monitoring</h1>
-                            <p class="view-subtitle workspace-subtitle">Track uptime, heartbeat health, and active incidents for websites, hosts, and office systems.</p>
+                            <p class="view-subtitle workspace-subtitle">See current health, active incidents, and recent changes across websites, hosts, and office systems.</p>
                         </div>
                         <div class="workspace-page-actions">
+                            <div class="workspace-status-pill" id="monitoringLastUpdatedPill">
+                                <span class="status-dot online"></span>
+                                <span>Loading live status...</span>
+                            </div>
                             <div class="workspace-status-pill">
                                 <span class="status-dot online"></span>
                                 <span>Transition Alerts</span>
                             </div>
+                            <button class="btn-ghost" id="monitoringRefreshBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                                Refresh
+                            </button>
+                            <button class="btn-primary" id="monitoringAddBtn">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                Add Monitor
+                            </button>
                         </div>
                     </header>
 
@@ -373,96 +385,137 @@
                         </div>
                     </div>
 
-                    <div class="targets-page-grid">
-                        <div class="targets-main-column">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h3>Add Monitoring Asset</h3>
-                                    <p class="subtitle">Register a website, TCP host, heartbeat agent, WAN probe, or network site monitor.</p>
-                                </div>
-                                <div class="card-body">
-                                    <form id="monitoringAssetForm" class="monitoring-asset-form">
-                                        <div class="monitoring-form-grid">
-                                            <input type="hidden" id="monitorAssetId">
-                                            <input type="text" id="monitorLabel" placeholder="Asset Label" required>
-                                            <select id="monitorType" required>
-                                                <option value="website_http">Website HTTP</option>
-                                                <option value="host_ping">Host TCP</option>
-                                                <option value="heartbeat_agent">Heartbeat Agent</option>
-                                                <option value="wan_probe">WAN Probe</option>
-                                                <option value="network_site">Network Site</option>
-                                            </select>
-                                            <input type="text" id="monitorTarget" placeholder="https://example.com or host:port">
-                                            <input type="text" id="monitorSiteName" placeholder="Site Name">
-                                            <input type="number" id="monitorInterval" placeholder="Check Interval (s)" min="30" value="300">
-                                            <input type="number" id="monitorTimeout" placeholder="Timeout (s)" min="2" value="8">
-                                            <input type="number" id="monitorHeartbeatSeconds" placeholder="Expected Heartbeat (s)" min="30" value="300">
-                                            <input type="text" id="monitorAgentId" placeholder="Agent ID (heartbeat)">
-                                            <input type="text" id="monitorAgentSecret" placeholder="Agent Secret (heartbeat)">
-                                        </div>
-                                        <div class="form-actions">
-                                            <button type="submit" class="btn-primary">Save Monitoring Asset</button>
-                                            <button type="button" class="btn-ghost" id="monitoringAssetReset">Clear</button>
-                                        </div>
-                                    </form>
+                    <div class="monitoring-visual-grid">
+                        <div class="card monitoring-chart-panel">
+                            <div class="card-header dashboard-card-header">
+                                <div>
+                                    <h3>Status Distribution</h3>
+                                    <p class="subtitle">Current asset-state split across healthy, degraded, down, and unknown.</p>
                                 </div>
                             </div>
-
-                            <div class="card workspace-stack-space">
-                                <div class="card-header">
-                                    <h3>Monitoring Inventory</h3>
-                                    <p class="subtitle">Current assets with latest status, uptime estimate, and last change.</p>
-                                </div>
-                                <div class="card-body">
-                                    <div class="targets-table-wrap">
-                                        <table class="data-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Asset</th>
-                                                    <th>Type</th>
-                                                    <th>Target</th>
-                                                    <th>Status</th>
-                                                    <th>Uptime</th>
-                                                    <th>Last Check</th>
-                                                    <th>Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="monitoringAssetsBody">
-                                                <tr><td colspan="7" class="empty-state">Loading monitoring assets...</td></tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                            <div class="card-body chart-container monitoring-chart-container">
+                                <canvas id="monitoringStatusChart"></canvas>
                             </div>
                         </div>
 
-                        <aside class="targets-rail">
-                            <div class="card">
-                                <div class="card-header dashboard-card-header">
-                                    <div>
-                                        <h3>Current Incidents</h3>
-                                        <p class="subtitle">Assets currently down or degraded.</p>
-                                    </div>
-                                </div>
-                                <div class="card-body" id="monitoringIncidents">
-                                    <div class="empty-state">Loading incidents...</div>
+                        <div class="card monitoring-chart-panel">
+                            <div class="card-header dashboard-card-header">
+                                <div>
+                                    <h3>Uptime Trend</h3>
+                                    <p class="subtitle">Compact uptime summary from recent monitoring buckets.</p>
                                 </div>
                             </div>
+                            <div class="card-body chart-container monitoring-chart-container">
+                                <canvas id="monitoringUptimeChart"></canvas>
+                            </div>
+                        </div>
 
-                            <div class="card">
-                                <div class="card-header dashboard-card-header">
-                                    <div>
-                                        <h3>Recent Events</h3>
-                                        <p class="subtitle">Compact transition history retained for the monitoring module.</p>
-                                    </div>
-                                </div>
-                                <div class="card-body" id="monitoringEvents">
-                                    <div class="empty-state">Loading monitoring events...</div>
+                        <div class="card monitoring-chart-panel">
+                            <div class="card-header dashboard-card-header">
+                                <div>
+                                    <h3>Incident Trend</h3>
+                                    <p class="subtitle">Transition counts and active incident load over recent buckets.</p>
                                 </div>
                             </div>
-                        </aside>
+                            <div class="card-body chart-container monitoring-chart-container">
+                                <canvas id="monitoringIncidentChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="monitoring-detail-grid">
+                        <div class="card monitoring-incidents-panel">
+                            <div class="card-header dashboard-card-header">
+                                <div>
+                                    <h3>Current Incidents</h3>
+                                    <p class="subtitle">Assets currently down or degraded and needing attention now.</p>
+                                </div>
+                            </div>
+                            <div class="card-body" id="monitoringIncidents">
+                                <div class="empty-state">Loading incidents...</div>
+                            </div>
+                        </div>
+
+                        <div class="card monitoring-events-panel">
+                            <div class="card-header dashboard-card-header">
+                                <div>
+                                    <h3>Recent Changes</h3>
+                                    <p class="subtitle">Transition-only history. This does not log every successful poll.</p>
+                                </div>
+                            </div>
+                            <div class="card-body" id="monitoringEvents">
+                                <div class="empty-state">Loading monitoring events...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card workspace-stack-space monitoring-inventory-panel">
+                        <div class="card-header">
+                            <h3>Monitoring Inventory</h3>
+                            <p class="subtitle">Operational list of monitors with timing clarity for last check, interval, and next due time.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="targets-table-wrap">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Asset</th>
+                                            <th>Type</th>
+                                            <th>Target</th>
+                                            <th>Status</th>
+                                            <th>Uptime</th>
+                                            <th>Last Check</th>
+                                            <th>Interval</th>
+                                            <th>Next Due</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="monitoringAssetsBody">
+                                        <tr><td colspan="9" class="empty-state">Loading monitoring assets...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
+
+                <div class="drawer-overlay" id="monitoringDrawerOverlay"></div>
+                <aside class="monitoring-drawer" id="monitoringDrawer" aria-hidden="true">
+                    <div class="monitoring-drawer-header">
+                        <div>
+                            <p class="workspace-section-label">Monitoring</p>
+                            <h2 id="monitoringDrawerTitle">Add Monitor</h2>
+                            <p class="subtitle" id="monitoringDrawerSubtitle">Register a website, TCP host, heartbeat agent, WAN probe, or network site monitor.</p>
+                        </div>
+                        <button class="btn-ghost btn-sm" id="monitoringDrawerClose" type="button">Close</button>
+                    </div>
+                    <div class="monitoring-drawer-body">
+                        <form id="monitoringAssetForm" class="monitoring-asset-form">
+                            <div class="monitoring-form-grid">
+                                <input type="hidden" id="monitorAssetId">
+                                <input type="text" id="monitorLabel" placeholder="Asset Label" required>
+                                <select id="monitorType" required>
+                                    <option value="website_http">Website HTTP</option>
+                                    <option value="host_ping">Host TCP</option>
+                                    <option value="heartbeat_agent">Heartbeat Agent</option>
+                                    <option value="wan_probe">WAN Probe</option>
+                                    <option value="network_site">Network Site</option>
+                                </select>
+                                <input type="text" id="monitorTarget" placeholder="https://example.com or host:port">
+                                <input type="text" id="monitorSiteName" placeholder="Site Name">
+                                <input type="number" id="monitorInterval" placeholder="Check Interval (s)" min="30" value="300">
+                                <input type="number" id="monitorTimeout" placeholder="Timeout (s)" min="2" value="8">
+                                <input type="number" id="monitorHeartbeatSeconds" placeholder="Expected Heartbeat (s)" min="30" value="300">
+                                <input type="text" id="monitorAgentId" placeholder="Agent ID (heartbeat)">
+                                <input type="text" id="monitorAgentSecret" placeholder="Agent Secret (heartbeat)">
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn-primary">Save Monitoring Asset</button>
+                                <button type="button" class="btn-ghost" id="monitoringAssetReset">Clear</button>
+                            </div>
+                        </form>
+                    </div>
+                </aside>
             </section>
 
             <section class="view" id="view-scan">

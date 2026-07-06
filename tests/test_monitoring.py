@@ -59,9 +59,14 @@ class MonitoringTest(unittest.TestCase):
         self.assertEqual(heartbeat["agent_id"], "office-nuc-01")
         summary = service.snapshot()
         self.assertEqual(summary["overview"]["healthy_assets"], 1)
+        self.assertTrue(summary["status_breakdown"])
         state = next(item["state"] for item in summary["assets"] if item["id"] == asset["id"])
         self.assertEqual(state["status"], "healthy")
         self.assertEqual(state["source"], "heartbeat")
+        self.assertIn("next_check_due_at", state)
+        self.assertIn("check_interval_seconds", state)
+        self.assertIn("uptime_trend", summary)
+        self.assertIn("incident_trend", summary)
 
     def test_asset_validation_rejects_missing_heartbeat_agent_id(self):
         with self.assertRaises(ValueError):

@@ -53,6 +53,14 @@ const App = {
     assessmentWorkbook: null,
     assessmentTarget: "",
     modules: {},
+    monitoringRefreshTimer: null,
+    monitoringDrawerOpen: false,
+    monitoringFormDirty: false,
+    monitoringCharts: {
+        status: null,
+        uptime: null,
+        incidents: null,
+    },
 
     async init() {
         this.setupNavigation();
@@ -102,6 +110,10 @@ const App = {
         if (this.modules?.[view] === false) {
             this.currentView = "dashboard";
             view = "dashboard";
+        }
+        if (view !== "monitoring") {
+            this.stopMonitoringRefresh();
+            this.closeMonitoringDrawer();
         }
         this.currentView = view;
         document.querySelectorAll(".nav-item").forEach((item) => {
@@ -2373,20 +2385,105 @@ const App = {
     },
 
     async loadMonitoringView() {
+        document.getElementById("monitoringRefreshBtn").onclick = () => this.loadMonitoringView(true);
+        document.getElementById("monitoringAddBtn").onclick = () => this.openMonitoringDrawer();
         const [status, events] = await Promise.all([
             this.api("/api/monitoring/status"),
             this.api("/api/monitoring/events?limit=25"),
         ]);
-        this.renderMonitoringOverview(status?.overview || {});
+        this.renderMonitoringOverview(status?.overview || {}, status);
+        this.renderMonitoringStatusCharts(status || {});
         this.renderMonitoringAssets(Array.isArray(status?.assets) ? status.assets : []);
         this.renderMonitoringIncidents(Array.isArray(status?.incidents) ? status.incidents : []);
         this.renderMonitoringEvents(Array.isArray(events) ? events : []);
         this.bindMonitoringAssetForm();
+        this.bindMonitoringDrawer();
+        this.startMonitoringRefresh();
     },
 
-    renderMonitoringOverview(overview) {
+    startMonitoringRefresh() {
+        if (this.monitoringRefreshTimer) {
+            clearInterval(this.monitoringRefreshTimer);
+        }
+        this.monitoringRefreshTimer = setInterval(() => {
+            if (this.currentView !== "monitoring") {
+                this.stopMonitoringRefresh();
+                return;
+            }
+            if (this.monitoringDrawerOpen) {
+                return;
+            }
+            this.loadMonitoringView(true);
+        }, 15000);
+    },
+
+    stopMonitoringRefresh() {
+        if (this.monitoringRefreshTimer) {
+            clearInterval(this.monitoringRefreshTimer);
+            this.monitoringRefreshTimer = null;
+        }
+    },
+
+    bindMonitoringDrawer() {
+        const overlay = document.getElementById("monitoringDrawerOverlay");
+        const closeBtn = document.getElementById("monitoringDrawerClose");
+        if (overlay && overlay.dataset.bound !== "true") {
+            overlay.dataset.bound = "true";
+            overlay.addEventListener("click", () => this.closeMonitoringDrawer());
+        }
+        if (closeBtn && closeBtn.dataset.bound !== "true") {
+            closeBtn.dataset.bound = "true";
+            closeBtn.addEventListener("click", () => this.closeMonitoringDrawer());
+        }
+    },
+
+    openMonitoringDrawer(asset = null) {
+        const drawer = document.getElementById("monitoringDrawer");
+        const overlay = document.getElementById("monitoringDrawerOverlay");
+        if (!drawer || !overlay) return;
+        this.monitoringDrawerOpen = true;
+        drawer.classList.add("open");
+        overlay.classList.add("open");
+        drawer.setAttribute("aria-hidden", "false");
+        if (asset) {
+            this.populateMonitoringDrawer(asset);
+        } else {
+            this.resetMonitoringAssetForm();
+        }
+    },
+
+    closeMonitoringDrawer() {
+        const drawer = document.getElementById("monitoringDrawer");
+        const overlay = document.getElementById("monitoringDrawerOverlay");
+        if (!drawer || !overlay) return;
+        drawer.classList.remove("open");
+        overlay.classList.remove("open");
+        drawer.setAttribute("aria-hidden", "true");
+        this.monitoringDrawerOpen = false;
+        this.monitoringFormDirty = false;
+    },
+
+    populateMonitoringDrawer(asset) {
+        document.getElementById("monitorAssetId").value = asset.id || "";
+        document.getElementById("monitorLabel").value = asset.label || "";
+        document.getElementById("monitorType").value = asset.asset_type || "website_http";
+        document.getElementById("monitorTarget").value = asset.target || "";
+        document.getElementById("monitorSiteName").value = asset.site_name || "";
+        document.getElementById("monitorInterval").value = String(asset.check_interval_seconds || 300);
+        document.getElementById("monitorTimeout").value = String(asset.timeout_seconds || 8);
+        document.getElementById("monitorHeartbeatSeconds").value = String(asset.expected_heartbeat_seconds || 300);
+        document.getElementById("monitorAgentId").value = asset.metadata?.agent_id || "";
+        document.getElementById("monitorAgentSecret").value = asset.metadata?.agent_secret || "";
+        document.getElementById("monitoringDrawerTitle").textContent = "Edit Monitor";
+        document.getElementById("monitoringDrawerSubtitle").textContent = "Adjust the selected monitor without leaving the operations overview.";
+        this.monitoringFormDirty = false;
+    },
+
+    renderMonitoringOverview(overview, statusPayload) {
         const node = document.getElementById("monitoringOverviewCards");
         if (!node) return;
+        const generatedAt = statusPayload?.generated_at ? this._formatTimestamp(statusPayload.generated_at) : "Unknown";
+        const lastEvaluated = overview?.last_evaluated_at ? this._formatTimestamp(overview.last_evaluated_at) : "No checks yet";
         node.innerHTML = `
             <div class="workspace-signal-card">
                 <span class="signal-label">Monitored Assets</span>
@@ -2407,21 +2504,126 @@ const App = {
                 <span class="signal-label">24h Uptime</span>
                 <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
                 <p>Average estimated uptime across monitored assets.</p>
+                <div class="monitoring-meta-line">
+                    <span class="monitoring-meta-pill">Last evaluated: ${this.esc(lastEvaluated)}</span>
+                    <span class="monitoring-meta-pill">View refreshed: ${this.esc(generatedAt)}</span>
+                </div>
             </div>
         `;
+        const pill = document.getElementById("monitoringLastUpdatedPill");
+        if (pill) {
+            const label = pill.querySelector("span:last-child");
+            if (label) {
+                label.textContent = `Updated ${generatedAt}`;
+            }
+        }
+    },
+
+    renderMonitoringStatusCharts(status) {
+        if (typeof Chart === "undefined") {
+            return;
+        }
+
+        const breakdown = Array.isArray(status?.status_breakdown) ? status.status_breakdown : [];
+        const uptimeTrend = Array.isArray(status?.uptime_trend) ? status.uptime_trend : [];
+        const incidentTrend = Array.isArray(status?.incident_trend) ? status.incident_trend : [];
+
+        this._renderMonitoringChart("status", "monitoringStatusChart", "doughnut", {
+            labels: breakdown.map((item) => item.label || "Status"),
+            datasets: [{
+                data: breakdown.map((item) => Number(item.value || 0)),
+                backgroundColor: ["#22c55e", "#f59e0b", "#ef4444", "#64748b"],
+                borderColor: "rgba(15, 23, 42, 0.92)",
+                borderWidth: 2,
+            }],
+        }, {
+            cutout: "66%",
+            plugins: {
+                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 16 } },
+            },
+        });
+
+        this._renderMonitoringChart("uptime", "monitoringUptimeChart", "line", {
+            labels: uptimeTrend.map((item) => this._formatBucketLabel(item.bucket)),
+            datasets: [{
+                label: "Uptime %",
+                data: uptimeTrend.map((item) => Number(item.uptime_pct || 0)),
+                borderColor: "#60a5fa",
+                backgroundColor: "rgba(96, 165, 250, 0.18)",
+                fill: true,
+                tension: 0.32,
+            }],
+        }, {
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
+                x: { ticks: { color: "#64748b" }, grid: { display: false } },
+            },
+        });
+
+        this._renderMonitoringChart("incidents", "monitoringIncidentChart", "bar", {
+            labels: incidentTrend.map((item) => this._formatBucketLabel(item.bucket)),
+            datasets: [
+                {
+                    label: "Transitions",
+                    data: incidentTrend.map((item) => Number(item.transitions || 0)),
+                    backgroundColor: "rgba(248, 113, 113, 0.7)",
+                    borderRadius: 8,
+                },
+                {
+                    label: "Active Incidents",
+                    data: incidentTrend.map((item) => Number(item.active_incidents || 0)),
+                    type: "line",
+                    borderColor: "#fbbf24",
+                    backgroundColor: "rgba(251, 191, 36, 0.18)",
+                    tension: 0.28,
+                    yAxisID: "y",
+                },
+            ],
+        }, {
+            plugins: {
+                legend: { position: "bottom", labels: { color: "#94a3b8", usePointStyle: true, padding: 16 } },
+            },
+            scales: {
+                y: { beginAtZero: true, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148, 163, 184, 0.08)" } },
+                x: { ticks: { color: "#64748b" }, grid: { display: false } },
+            },
+        });
+    },
+
+    _renderMonitoringChart(key, canvasId, type, data, options) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        if (this.monitoringCharts[key]) {
+            this.monitoringCharts[key].destroy();
+        }
+        Chart.defaults.color = "#94a3b8";
+        Chart.defaults.font.family = "Inter";
+        this.monitoringCharts[key] = new Chart(canvas.getContext("2d"), {
+            type,
+            data,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                ...options,
+            },
+        });
     },
 
     renderMonitoringAssets(assets) {
         const tbody = document.getElementById("monitoringAssetsBody");
         if (!tbody) return;
         if (!assets.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No monitoring assets added yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No monitoring assets added yet.</td></tr>';
             return;
         }
         tbody.innerHTML = assets.map((asset) => {
             const state = asset.state || {};
             const status = String(state.status || "unknown").toLowerCase();
             const badgeClass = status === "healthy" ? "badge-running" : status === "down" ? "badge-critical" : "badge-neutral";
+            const lastCheck = state.checked_at ? this._formatTimestamp(state.checked_at) : "Never";
+            const interval = this._formatInterval(state.check_interval_seconds || asset.check_interval_seconds || 300);
+            const nextDue = state.next_check_due_at ? this._formatTimestamp(state.next_check_due_at) : "Pending first run";
             return `
                 <tr>
                     <td><strong>${this.esc(asset.label || "Asset")}</strong><br><small>${this.esc(asset.site_name || "")}</small></td>
@@ -2429,7 +2631,9 @@ const App = {
                     <td>${this.esc(asset.target || "-")}</td>
                     <td><span class="badge ${badgeClass}">${this.esc(status)}</span></td>
                     <td>${this.esc(String(state.uptime_24h_pct || 0))}%</td>
-                    <td>${this.esc(state.checked_at ? this._formatTimestamp(state.checked_at) : "Never")}</td>
+                    <td>${this.esc(lastCheck)}</td>
+                    <td>${this.esc(interval)}</td>
+                    <td>${this.esc(nextDue)}</td>
                     <td>
                         <button class="btn-ghost btn-sm" onclick="App.editMonitoringAsset('${this.esc(asset.id)}')">Edit</button>
                         <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteMonitoringAsset('${this.esc(asset.id)}')">Delete</button>
@@ -2444,12 +2648,19 @@ const App = {
         const node = document.getElementById("monitoringIncidents");
         if (!node) return;
         node.innerHTML = incidents.length
-            ? `<div class="metric-list">${incidents.map((item) => `
-                <div class="metric-item">
-                    <span>${this.esc(item.label || "Asset")} <small>${this.esc(item.status || "")}</small></span>
-                    <strong>${this.esc(item.message || "-")}</strong>
-                </div>
-            `).join("")}</div>`
+            ? incidents.map((item) => `
+                <article class="incident-card">
+                    <div class="incident-card-head">
+                        <h4>${this.esc(item.label || "Asset")}</h4>
+                        <span class="badge ${item.status === "down" ? "badge-critical" : "badge-neutral"}">${this.esc(item.status || "")}</span>
+                    </div>
+                    <p>${this.esc(item.message || "No detail available.")}</p>
+                    <div class="monitoring-meta-line">
+                        <span class="monitoring-meta-pill">${this.esc(item.asset_type || "")}</span>
+                        <span class="monitoring-meta-pill">Changed ${this.esc(item.last_change_at ? this._formatTimestamp(item.last_change_at) : "Unknown")}</span>
+                    </div>
+                </article>
+            `).join("")
             : '<div class="empty-state">No active incidents.</div>';
     },
 
@@ -2457,18 +2668,27 @@ const App = {
         const node = document.getElementById("monitoringEvents");
         if (!node) return;
         node.innerHTML = events.length
-            ? `<div class="metric-list">${events.map((item) => `
-                <div class="metric-item">
-                    <span>${this.esc(item.asset_label || item.asset_id || "Asset")} <small>${this.esc(item.status || "")}</small></span>
-                    <strong>${this.esc(this._formatTimestamp(item.created_at))}</strong>
+            ? events.map((item) => `
+                <div class="event-row">
+                    <div>
+                        <strong>${this.esc(item.asset_label || item.asset_id || "Asset")}</strong>
+                        <small>${this.esc(item.previous_status || "unknown")} -> ${this.esc(item.status || "unknown")} · ${this.esc(item.message || "No detail")}</small>
+                    </div>
+                    <div><strong>${this.esc(this._formatTimestamp(item.created_at))}</strong></div>
                 </div>
-            `).join("")}</div>`
+            `).join("")
             : '<div class="empty-state">No monitoring events yet.</div>';
     },
 
     bindMonitoringAssetForm() {
         const form = document.getElementById("monitoringAssetForm");
         if (!form) return;
+        if (form.dataset.bound !== "true") {
+            form.dataset.bound = "true";
+            form.addEventListener("input", () => {
+                this.monitoringFormDirty = true;
+            });
+        }
         form.onsubmit = async (event) => {
             event.preventDefault();
             const assetType = document.getElementById("monitorType").value;
@@ -2497,6 +2717,7 @@ const App = {
                 if (response.ok) {
                     this.toast("Monitoring asset saved.", "success");
                     this.resetMonitoringAssetForm();
+                    this.closeMonitoringDrawer();
                     this.loadMonitoringView();
                 } else {
                     this.toast(result.error || "Failed to save monitoring asset", "error");
@@ -2512,29 +2733,24 @@ const App = {
         document.getElementById("monitoringAssetForm")?.reset();
         const hiddenId = document.getElementById("monitorAssetId");
         if (hiddenId) hiddenId.value = "";
+        const drawerTitle = document.getElementById("monitoringDrawerTitle");
+        const drawerSubtitle = document.getElementById("monitoringDrawerSubtitle");
+        if (drawerTitle) drawerTitle.textContent = "Add Monitor";
+        if (drawerSubtitle) drawerSubtitle.textContent = "Register a website, TCP host, heartbeat agent, WAN probe, or network site monitor.";
         const heartbeat = document.getElementById("monitorHeartbeatSeconds");
         if (heartbeat) heartbeat.value = "300";
         const interval = document.getElementById("monitorInterval");
         if (interval) interval.value = "300";
         const timeout = document.getElementById("monitorTimeout");
         if (timeout) timeout.value = "8";
+        this.monitoringFormDirty = false;
     },
 
     editMonitoringAsset(assetId) {
         const assets = Array.isArray(this._monitoringAssetsCache) ? this._monitoringAssetsCache : [];
         const asset = assets.find((item) => item.id === assetId);
         if (!asset) return;
-        document.getElementById("monitorAssetId").value = asset.id || "";
-        document.getElementById("monitorLabel").value = asset.label || "";
-        document.getElementById("monitorType").value = asset.asset_type || "website_http";
-        document.getElementById("monitorTarget").value = asset.target || "";
-        document.getElementById("monitorSiteName").value = asset.site_name || "";
-        document.getElementById("monitorInterval").value = String(asset.check_interval_seconds || 300);
-        document.getElementById("monitorTimeout").value = String(asset.timeout_seconds || 8);
-        document.getElementById("monitorHeartbeatSeconds").value = String(asset.expected_heartbeat_seconds || 300);
-        document.getElementById("monitorAgentId").value = asset.metadata?.agent_id || "";
-        document.getElementById("monitorAgentSecret").value = asset.metadata?.agent_secret || "";
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        this.openMonitoringDrawer(asset);
     },
 
     async deleteMonitoringAsset(assetId) {
@@ -2552,6 +2768,23 @@ const App = {
         } catch {
             this.toast("Connection error", "error");
         }
+    },
+
+    _formatBucketLabel(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    },
+
+    _formatInterval(value) {
+        const seconds = Number(value || 0);
+        if (seconds >= 3600) {
+            return `${Math.round(seconds / 3600)}h`;
+        }
+        if (seconds >= 60) {
+            return `${Math.round(seconds / 60)}m`;
+        }
+        return `${seconds}s`;
     },
 
     setupPerformanceTab() {
