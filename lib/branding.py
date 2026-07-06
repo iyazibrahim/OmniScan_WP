@@ -18,10 +18,18 @@ REPORT_LIGHT_TEXT = "#14345f"
 
 _BASE_DIR = Path(__file__).resolve().parent.parent
 WHITE_LOGO_PATH = _BASE_DIR / "web" / "assets" / "dp-logo-white-text.svg"
+ICON_LOGO_PATH = _BASE_DIR / "web" / "assets" / "dp-favicon.svg"
+FAVICON_HREF = "/assets/dp-favicon.svg"
 
 
 def _load_logo_source() -> str:
     return WHITE_LOGO_PATH.read_text(encoding="utf-8")
+
+
+def get_favicon_link_html(*, relative: bool = False) -> str:
+    """Return a favicon link tag for HTML pages."""
+    href = "assets/dp-favicon.svg" if relative else FAVICON_HREF
+    return f'<link rel="icon" href="{href}" type="image/svg+xml">'
 
 
 def get_logo_svg(variant: str = "white") -> str:

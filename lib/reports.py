@@ -17,6 +17,7 @@ from lib.branding import (
     REPORT_TAGLINE,
     REPORT_TITLE,
     assessment_profile_label,
+    get_favicon_link_html,
     get_logo_svg,
 )
 from lib.config import HTML_TEMPLATE_FILE, REPORTS_DIR, load_json, save_json
@@ -1139,6 +1140,7 @@ def generate_html_report(payload: dict) -> str:
             "REPORT_TITLE": html.escape(REPORT_TITLE),
             "REPORT_SUBTITLE": html.escape(REPORT_SUBTITLE),
             "REPORT_TAGLINE": html.escape(REPORT_TAGLINE),
+            "FAVICON_LINK": get_favicon_link_html(),
             "REPORT_LOGO_LIGHT": get_logo_svg("white"),
             "REPORT_LOGO_DARK": get_logo_svg("dark"),
             "TARGET_URL": html.escape(payload.get("target_url", "")),
@@ -1201,6 +1203,7 @@ def generate_html_report(payload: dict) -> str:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{REPORT_TITLE} - {html.escape(payload.get('target_url', 'target'))}</title>
+    {get_favicon_link_html()}
     <style>
         :root {{
             --bg: #08101d;

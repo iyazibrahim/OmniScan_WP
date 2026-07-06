@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{TITLE_TARGET}}</title>
+    {{FAVICON_LINK}}
     <style>
         :root {
             --bg: #f4f7fb;
@@ -334,7 +335,7 @@
             margin: 14px 0;
             border: 1px solid var(--border);
             border-radius: 12px;
-            background: rgba(10, 18, 31, 0.72);
+            background: var(--surface-soft);
             overflow: hidden;
         }
         .finding-details-panel > summary {
@@ -346,25 +347,26 @@
             gap: 12px;
             padding: 12px 14px;
             font-weight: 700;
-            color: var(--text);
-            background: rgba(12, 21, 36, 0.92);
+            color: var(--navy);
+            background: #eef2f7;
         }
         .finding-details-panel > summary::-webkit-details-marker {
             display: none;
         }
         .finding-details-panel .detail-count {
             font-size: 12px;
-            color: var(--text-soft);
+            color: var(--muted);
             font-weight: 600;
         }
         .finding-details-panel .finding-details-grid {
             margin: 0;
             padding: 12px;
+            background: var(--surface);
         }
         .detail-row {
             border: 1px solid var(--border);
             border-radius: 12px;
-            background: rgba(22, 33, 51, 0.96);
+            background: #f4f6f9;
             overflow: hidden;
         }
         .detail-label {
@@ -373,18 +375,21 @@
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.06em;
-            color: #dbeafe;
+            color: var(--navy);
             border-bottom: 1px solid var(--border);
-            background: rgba(9, 17, 31, 0.95);
+            background: #eef2f7;
         }
         .detail-value pre {
             margin: 0;
             border: 0;
             border-radius: 0;
             background: transparent;
-            color: #f8fafc;
+            color: var(--text);
             padding: 12px;
             white-space: pre-wrap;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 0.88rem;
+            line-height: 1.5;
         }
         .sum-title {
             font-weight: 600;
