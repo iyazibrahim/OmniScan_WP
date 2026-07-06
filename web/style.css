@@ -2292,6 +2292,27 @@ input::placeholder { color: var(--text-muted); }
     gap: 16px;
 }
 
+.module-hidden {
+    display: none !important;
+}
+
+.monitoring-stats-grid,
+.monitoring-form-grid,
+.monitoring-settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.monitoring-form-grid input,
+.monitoring-form-grid select {
+    width: 100%;
+}
+
+.operations-overview-panel {
+    margin-bottom: 20px;
+}
+
 .config-field { display: flex; flex-direction: column; }
 
 .config-label {
@@ -2497,7 +2518,10 @@ input::placeholder { color: var(--text-muted); }
     .scan-layout { grid-template-columns: 1fr; }
     .scan-progress-main { grid-template-columns: 1fr; }
     .scan-donut { margin: 0 auto; }
-    .config-grid { grid-template-columns: 1fr; }
+    .config-grid,
+    .monitoring-stats-grid,
+    .monitoring-form-grid,
+    .monitoring-settings-grid { grid-template-columns: 1fr; }
     .profile-cards { grid-template-columns: 1fr; }
     .assessment-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .assessment-layout { grid-template-columns: 1fr; }

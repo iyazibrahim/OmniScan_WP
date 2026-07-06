@@ -9,6 +9,7 @@ import uuid
 import time
 import functools
 import ipaddress
+import atexit
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 from collections import defaultdict
@@ -22,6 +23,15 @@ from lib.branding import (
     LOG_FILE_NAME,
     PRODUCT_NAME,
     SERVICE_SLUG,
+)
+from lib.monitoring import (
+    MonitoringService,
+    get_modules,
+    save_modules,
+    get_monitoring_assets,
+    get_monitoring_settings,
+    get_monitoring_events,
+    summarize_monitoring,
 )
 
 # ── Logging setup ───────────────────────────────────────────────────────────────
@@ -53,6 +63,7 @@ AUTH_FILE = CONFIG_DIR / "auth.json"
 AI_POLICY_FILE = CONFIG_DIR / "ai-policy.json"
 AI_PLANS_FILE = CONFIG_DIR / "ai-plans.json"
 AI_RESULTS_FILE = CONFIG_DIR / "ai-results.json"
+MONITORING_SERVICE = MonitoringService()
 
 # ── Auth bootstrap ───────────────────────────────────────────────────────────────
 
@@ -791,7 +802,7 @@ def _dashboard_insights_payload() -> dict:
         for asset, metrics in sorted(asset_rollup.items(), key=lambda item: (item[1]["risk"], item[1]["critical"]), reverse=True)[:10]
     ]
 
-    return {
+    payload = {
         "generated_at": now.isoformat(),
         "overview": {
             "risk_score": risk_score,
@@ -819,6 +830,17 @@ def _dashboard_insights_payload() -> dict:
         "aging_sla": aging,
         "top_assets": top_assets,
     }
+    monitoring_summary = summarize_monitoring()
+    payload["monitoring"] = monitoring_summary
+    payload["overview"].update(
+        {
+            "monitoring_enabled_assets": monitoring_summary.get("overview", {}).get("enabled_assets", 0),
+            "monitoring_active_incidents": monitoring_summary.get("overview", {}).get("active_incidents", 0),
+            "monitoring_uptime_24h_pct": monitoring_summary.get("overview", {}).get("uptime_24h_pct", 0),
+            "monitoring_healthy_assets": monitoring_summary.get("overview", {}).get("healthy_assets", 0),
+        }
+    )
+    return payload
 
 
 def _compute_scan_estimates() -> dict:
@@ -1071,6 +1093,115 @@ def update_tokens():
 
     _save_json(TOKENS_FILE, existing)
     return jsonify({"message": "Tokens saved"})
+
+
+# Modules
+
+@app.route('/api/modules', methods=['GET'])
+@login_required
+def get_modules_config():
+    return jsonify(get_modules())
+
+
+@app.route('/api/modules', methods=['PUT'])
+@login_required
+def update_modules_config():
+    body = request.json
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    return jsonify({"message": "Modules saved", "modules": save_modules(body)})
+
+
+# Monitoring
+
+@app.route('/api/monitoring/assets', methods=['GET'])
+@login_required
+def list_monitoring_assets():
+    status_map = MONITORING_SERVICE.snapshot()
+    state_by_asset = {}
+    for item in status_map.get("assets", []):
+        if isinstance(item, dict):
+            state_by_asset[str(item.get("id"))] = item.get("state", {})
+    assets = []
+    for asset in get_monitoring_assets():
+        asset_copy = dict(asset)
+        asset_copy["state"] = state_by_asset.get(str(asset.get("id")), {})
+        assets.append(asset_copy)
+    return jsonify(assets)
+
+
+@app.route('/api/monitoring/assets', methods=['POST'])
+@login_required
+def upsert_monitoring_asset():
+    body = request.json
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    try:
+        asset = MONITORING_SERVICE.upsert_asset(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"message": "Monitoring asset saved", "asset": asset})
+
+
+@app.route('/api/monitoring/assets/<asset_id>', methods=['DELETE'])
+@login_required
+def delete_monitoring_asset(asset_id):
+    if MONITORING_SERVICE.delete_asset(asset_id):
+        return jsonify({"message": "Monitoring asset removed"})
+    return jsonify({"error": "Asset not found"}), 404
+
+
+@app.route('/api/monitoring/settings', methods=['GET'])
+@login_required
+def get_monitoring_settings_route():
+    return jsonify(get_monitoring_settings())
+
+
+@app.route('/api/monitoring/settings', methods=['PUT'])
+@login_required
+def update_monitoring_settings_route():
+    body = request.json
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    return jsonify({"message": "Monitoring settings saved", "settings": MONITORING_SERVICE.update_settings(body)})
+
+
+@app.route('/api/monitoring/status', methods=['GET'])
+@login_required
+def get_monitoring_status_route():
+    return jsonify(MONITORING_SERVICE.snapshot())
+
+
+@app.route('/api/monitoring/events', methods=['GET'])
+@login_required
+def get_monitoring_events_route():
+    limit_raw = request.args.get("limit", "100")
+    try:
+        limit = max(1, min(int(limit_raw), 500))
+    except ValueError:
+        limit = 100
+    events = sorted(get_monitoring_events(), key=lambda item: str(item.get("created_at", "")), reverse=True)
+    return jsonify(events[:limit])
+
+
+@app.route('/api/monitoring/heartbeat', methods=['POST'])
+def post_monitoring_heartbeat():
+    body = request.json
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON object required"}), 400
+    try:
+        heartbeat = MONITORING_SERVICE.receive_heartbeat(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"message": "Heartbeat accepted", "heartbeat": heartbeat})
+
+
+@app.route('/api/monitoring/test-telegram', methods=['POST'])
+@login_required
+def test_monitoring_telegram():
+    success, message = MONITORING_SERVICE.test_telegram()
+    status = 200 if success else 400
+    return jsonify({"success": success, "message": message}), status
 
 # ── Tools Status & Management ───────────────────────────────────────────────────
 
@@ -1930,6 +2061,10 @@ def list_scan_jobs():
         })
     return jsonify(result)
 
+
+if os.environ.get("DP_DISABLE_MONITORING_THREAD") != "1":
+    MONITORING_SERVICE.start()
+    atexit.register(MONITORING_SERVICE.stop)
 
 
 if __name__ == '__main__':

@@ -52,12 +52,14 @@ const App = {
     assessmentCatalog: [],
     assessmentWorkbook: null,
     assessmentTarget: "",
+    modules: {},
 
-    init() {
+    async init() {
         this.setupNavigation();
         this.setupMobileMenu();
         this.setupTabs();
         this.checkServer();
+        await this.loadModuleRegistry();
         this.navigateTo("dashboard");
     },
 
@@ -76,7 +78,31 @@ const App = {
         });
     },
 
+    async loadModuleRegistry() {
+        const modules = await this.api("/api/modules");
+        this.modules = modules && typeof modules === "object" ? modules : {};
+        this.applyModuleVisibility();
+    },
+
+    applyModuleVisibility() {
+        const modules = this.modules || {};
+        document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
+            const view = item.dataset.view;
+            const visible = modules[view] !== false;
+            item.hidden = !visible;
+            item.classList.toggle("module-hidden", !visible);
+            const panel = document.getElementById(`view-${view}`);
+            if (panel) {
+                panel.dataset.moduleEnabled = visible ? "true" : "false";
+            }
+        });
+    },
+
     navigateTo(view) {
+        if (this.modules?.[view] === false) {
+            this.currentView = "dashboard";
+            view = "dashboard";
+        }
         this.currentView = view;
         document.querySelectorAll(".nav-item").forEach((item) => {
             item.classList.toggle("active", item.dataset.view === view);
@@ -89,6 +115,8 @@ const App = {
 
         if (view === "dashboard") {
             this.loadDashboard();
+        } else if (view === "monitoring") {
+            this.loadMonitoringView();
         } else if (view === "scan") {
             this.loadScanView();
         } else if (view === "reports") {
@@ -227,7 +255,50 @@ const App = {
         this.renderActiveScansDash(jobs);
         this.renderChart(chartData);
         this.renderDashboardInsights(insights);
+        this.renderDashboardMonitoring(insights?.monitoring || {});
         this.renderDashboardReports(reports?.reports || []);
+    },
+
+    renderDashboardMonitoring(monitoring) {
+        const overview = monitoring?.overview || {};
+        const statsNode = document.getElementById("dashboardMonitoringStats");
+        if (statsNode) {
+            statsNode.innerHTML = `
+                <div class="workspace-signal-card">
+                    <span class="signal-label">Healthy Assets</span>
+                    <strong>${this.esc(String(overview.healthy_assets || 0))}</strong>
+                    <p>Monitored assets currently reporting healthy state.</p>
+                </div>
+                <div class="workspace-signal-card">
+                    <span class="signal-label">Active Incidents</span>
+                    <strong>${this.esc(String(overview.active_incidents || 0))}</strong>
+                    <p>Assets currently degraded or down.</p>
+                </div>
+                <div class="workspace-signal-card">
+                    <span class="signal-label">24h Uptime</span>
+                    <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
+                    <p>Average estimated uptime across monitored assets.</p>
+                </div>
+                <div class="workspace-signal-card">
+                    <span class="signal-label">Enabled Monitors</span>
+                    <strong>${this.esc(String(overview.enabled_assets || 0))}</strong>
+                    <p>Low-storage monitoring checks currently active.</p>
+                </div>
+            `;
+        }
+
+        const incidentNode = document.getElementById("dashboardIncidentList");
+        const incidents = Array.isArray(monitoring?.incidents) ? monitoring.incidents : [];
+        if (incidentNode) {
+            incidentNode.innerHTML = incidents.length
+                ? `<div class="metric-list">${incidents.slice(0, 6).map((item) => `
+                    <div class="metric-item">
+                        <span>${this.esc(item.label || item.asset_id || "Asset")} <small>${this.esc(item.status || "")}</small></span>
+                        <strong>${this.esc(item.message || "-")}</strong>
+                    </div>
+                `).join("")}</div>`
+                : '<div class="empty-state">No active monitoring incidents.</div>';
+        }
     },
 
     renderDashboardInsights(insights) {
@@ -2011,6 +2082,8 @@ const App = {
             this.loadConfigTab(),
             this.loadTokensTab(),
             this.setupPerformanceTab(),
+            this.loadModulesTab(),
+            this.loadMonitoringSettingsTab(),
         ]);
     },
 
@@ -2130,6 +2203,355 @@ const App = {
                 this.toast("Connection error", "error");
             }
         };
+    },
+
+    async loadModulesTab() {
+        const modules = await this.api("/api/modules");
+        const container = document.getElementById("modulesFields");
+        if (!container) return;
+        this.modules = modules && typeof modules === "object" ? modules : {};
+        this.applyModuleVisibility();
+
+        container.innerHTML = Object.entries(this.modules).map(([key, value]) => `
+            <div class="config-field">
+                <label class="config-label">${this.humanizeKey(key)}</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" name="${key}" ${value ? "checked" : ""} data-type="boolean">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        `).join("");
+
+        document.getElementById("modulesForm").onsubmit = async (event) => {
+            event.preventDefault();
+            const payload = {};
+            container.querySelectorAll("input[name]").forEach((input) => {
+                payload[input.name] = input.checked;
+            });
+            try {
+                const response = await fetch("/api/modules", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                if (response.ok) {
+                    this.modules = payload;
+                    this.applyModuleVisibility();
+                    if (this.modules[this.currentView] === false) {
+                        this.navigateTo("dashboard");
+                    }
+                    this.toast("Module visibility updated.", "success");
+                } else {
+                    this.toast("Failed to save module visibility", "error");
+                }
+            } catch {
+                this.toast("Connection error", "error");
+            }
+        };
+    },
+
+    async loadMonitoringSettingsTab() {
+        const settings = await this.api("/api/monitoring/settings");
+        const container = document.getElementById("monitoringSettingsFields");
+        if (!container) return;
+        const telegram = settings?.telegram || {};
+        container.innerHTML = `
+            <div class="config-field">
+                <label class="config-label">Monitoring Enabled</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="monitoringEnabled" ${settings?.enabled ? "checked" : ""}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="workerInterval">Worker Interval Seconds</label>
+                <input type="number" id="workerInterval" min="5" value="${this.esc(String(settings?.worker_interval_seconds ?? 15))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="defaultCheckInterval">Default Check Interval Seconds</label>
+                <input type="number" id="defaultCheckInterval" min="30" value="${this.esc(String(settings?.default_check_interval_seconds ?? 300))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="defaultTimeout">Default Timeout Seconds</label>
+                <input type="number" id="defaultTimeout" min="2" value="${this.esc(String(settings?.default_timeout_seconds ?? 8))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="heartbeatGraceMultiplier">Heartbeat Grace Multiplier</label>
+                <input type="number" id="heartbeatGraceMultiplier" min="1" value="${this.esc(String(settings?.heartbeat_grace_multiplier ?? 2))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="retentionDays">Retention Days</label>
+                <input type="number" id="retentionDays" min="1" value="${this.esc(String(settings?.retention_days ?? 14))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label">Telegram Enabled</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="telegramEnabled" ${telegram.enabled ? "checked" : ""}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="telegramBotToken">Telegram Bot Token</label>
+                <input type="text" id="telegramBotToken" value="${this.esc(String(telegram.bot_token || ""))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="telegramChatId">Telegram Chat ID</label>
+                <input type="text" id="telegramChatId" value="${this.esc(String(telegram.chat_id || ""))}">
+            </div>
+            <div class="config-field">
+                <label class="config-label">Notify On Up</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="notifyOnUp" ${telegram.notify_on_up !== false ? "checked" : ""}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="config-field">
+                <label class="config-label">Notify On Down</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="notifyOnDown" ${telegram.notify_on_down !== false ? "checked" : ""}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="config-field">
+                <label class="config-label">Notify On Degraded</label>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="notifyOnDegraded" ${telegram.notify_on_degraded !== false ? "checked" : ""}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="config-field">
+                <label class="config-label" for="telegramCooldown">Telegram Cooldown Seconds</label>
+                <input type="number" id="telegramCooldown" min="0" value="${this.esc(String(telegram.cooldown_seconds ?? 300))}">
+            </div>
+        `;
+
+        document.getElementById("monitoringSettingsForm").onsubmit = async (event) => {
+            event.preventDefault();
+            const payload = {
+                enabled: document.getElementById("monitoringEnabled").checked,
+                worker_interval_seconds: Number(document.getElementById("workerInterval").value || 15),
+                default_check_interval_seconds: Number(document.getElementById("defaultCheckInterval").value || 300),
+                default_timeout_seconds: Number(document.getElementById("defaultTimeout").value || 8),
+                heartbeat_grace_multiplier: Number(document.getElementById("heartbeatGraceMultiplier").value || 2),
+                retention_days: Number(document.getElementById("retentionDays").value || 14),
+                telegram: {
+                    enabled: document.getElementById("telegramEnabled").checked,
+                    bot_token: document.getElementById("telegramBotToken").value.trim(),
+                    chat_id: document.getElementById("telegramChatId").value.trim(),
+                    notify_on_up: document.getElementById("notifyOnUp").checked,
+                    notify_on_down: document.getElementById("notifyOnDown").checked,
+                    notify_on_degraded: document.getElementById("notifyOnDegraded").checked,
+                    cooldown_seconds: Number(document.getElementById("telegramCooldown").value || 300),
+                },
+            };
+
+            try {
+                const response = await fetch("/api/monitoring/settings", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                if (response.ok) {
+                    this.toast("Monitoring settings saved.", "success");
+                } else {
+                    this.toast("Failed to save monitoring settings", "error");
+                }
+            } catch {
+                this.toast("Connection error", "error");
+            }
+        };
+
+        document.getElementById("testTelegramBtn").onclick = async () => {
+            try {
+                const response = await fetch("/api/monitoring/test-telegram", { method: "POST" });
+                const result = await response.json();
+                this.toast(result.message || (result.success ? "Telegram ok" : "Telegram test failed"), result.success ? "success" : "error");
+            } catch {
+                this.toast("Connection error", "error");
+            }
+        };
+    },
+
+    async loadMonitoringView() {
+        const [status, events] = await Promise.all([
+            this.api("/api/monitoring/status"),
+            this.api("/api/monitoring/events?limit=25"),
+        ]);
+        this.renderMonitoringOverview(status?.overview || {});
+        this.renderMonitoringAssets(Array.isArray(status?.assets) ? status.assets : []);
+        this.renderMonitoringIncidents(Array.isArray(status?.incidents) ? status.incidents : []);
+        this.renderMonitoringEvents(Array.isArray(events) ? events : []);
+        this.bindMonitoringAssetForm();
+    },
+
+    renderMonitoringOverview(overview) {
+        const node = document.getElementById("monitoringOverviewCards");
+        if (!node) return;
+        node.innerHTML = `
+            <div class="workspace-signal-card">
+                <span class="signal-label">Monitored Assets</span>
+                <strong>${this.esc(String(overview.enabled_assets || 0))}</strong>
+                <p>Enabled checks currently active on the platform.</p>
+            </div>
+            <div class="workspace-signal-card">
+                <span class="signal-label">Healthy Assets</span>
+                <strong>${this.esc(String(overview.healthy_assets || 0))}</strong>
+                <p>Assets currently reporting healthy state.</p>
+            </div>
+            <div class="workspace-signal-card">
+                <span class="signal-label">Active Incidents</span>
+                <strong>${this.esc(String(overview.active_incidents || 0))}</strong>
+                <p>Current degraded or down assets requiring review.</p>
+            </div>
+            <div class="workspace-signal-card">
+                <span class="signal-label">24h Uptime</span>
+                <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
+                <p>Average estimated uptime across monitored assets.</p>
+            </div>
+        `;
+    },
+
+    renderMonitoringAssets(assets) {
+        const tbody = document.getElementById("monitoringAssetsBody");
+        if (!tbody) return;
+        if (!assets.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No monitoring assets added yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = assets.map((asset) => {
+            const state = asset.state || {};
+            const status = String(state.status || "unknown").toLowerCase();
+            const badgeClass = status === "healthy" ? "badge-running" : status === "down" ? "badge-critical" : "badge-neutral";
+            return `
+                <tr>
+                    <td><strong>${this.esc(asset.label || "Asset")}</strong><br><small>${this.esc(asset.site_name || "")}</small></td>
+                    <td><span class="badge badge-neutral">${this.esc(asset.asset_type || "")}</span></td>
+                    <td>${this.esc(asset.target || "-")}</td>
+                    <td><span class="badge ${badgeClass}">${this.esc(status)}</span></td>
+                    <td>${this.esc(String(state.uptime_24h_pct || 0))}%</td>
+                    <td>${this.esc(state.checked_at ? this._formatTimestamp(state.checked_at) : "Never")}</td>
+                    <td>
+                        <button class="btn-ghost btn-sm" onclick="App.editMonitoringAsset('${this.esc(asset.id)}')">Edit</button>
+                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteMonitoringAsset('${this.esc(asset.id)}')">Delete</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+        this._monitoringAssetsCache = assets;
+    },
+
+    renderMonitoringIncidents(incidents) {
+        const node = document.getElementById("monitoringIncidents");
+        if (!node) return;
+        node.innerHTML = incidents.length
+            ? `<div class="metric-list">${incidents.map((item) => `
+                <div class="metric-item">
+                    <span>${this.esc(item.label || "Asset")} <small>${this.esc(item.status || "")}</small></span>
+                    <strong>${this.esc(item.message || "-")}</strong>
+                </div>
+            `).join("")}</div>`
+            : '<div class="empty-state">No active incidents.</div>';
+    },
+
+    renderMonitoringEvents(events) {
+        const node = document.getElementById("monitoringEvents");
+        if (!node) return;
+        node.innerHTML = events.length
+            ? `<div class="metric-list">${events.map((item) => `
+                <div class="metric-item">
+                    <span>${this.esc(item.asset_label || item.asset_id || "Asset")} <small>${this.esc(item.status || "")}</small></span>
+                    <strong>${this.esc(this._formatTimestamp(item.created_at))}</strong>
+                </div>
+            `).join("")}</div>`
+            : '<div class="empty-state">No monitoring events yet.</div>';
+    },
+
+    bindMonitoringAssetForm() {
+        const form = document.getElementById("monitoringAssetForm");
+        if (!form) return;
+        form.onsubmit = async (event) => {
+            event.preventDefault();
+            const assetType = document.getElementById("monitorType").value;
+            const payload = {
+                id: document.getElementById("monitorAssetId").value.trim() || undefined,
+                label: document.getElementById("monitorLabel").value.trim(),
+                asset_type: assetType,
+                target: document.getElementById("monitorTarget").value.trim(),
+                site_name: document.getElementById("monitorSiteName").value.trim(),
+                check_interval_seconds: Number(document.getElementById("monitorInterval").value || 300),
+                timeout_seconds: Number(document.getElementById("monitorTimeout").value || 8),
+                expected_heartbeat_seconds: Number(document.getElementById("monitorHeartbeatSeconds").value || 300),
+                metadata: {},
+            };
+            const agentId = document.getElementById("monitorAgentId").value.trim();
+            const agentSecret = document.getElementById("monitorAgentSecret").value.trim();
+            if (agentId) payload.metadata.agent_id = agentId;
+            if (agentSecret) payload.metadata.agent_secret = agentSecret;
+            try {
+                const response = await fetch("/api/monitoring/assets", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    this.toast("Monitoring asset saved.", "success");
+                    this.resetMonitoringAssetForm();
+                    this.loadMonitoringView();
+                } else {
+                    this.toast(result.error || "Failed to save monitoring asset", "error");
+                }
+            } catch {
+                this.toast("Connection error", "error");
+            }
+        };
+        document.getElementById("monitoringAssetReset").onclick = () => this.resetMonitoringAssetForm();
+    },
+
+    resetMonitoringAssetForm() {
+        document.getElementById("monitoringAssetForm")?.reset();
+        const hiddenId = document.getElementById("monitorAssetId");
+        if (hiddenId) hiddenId.value = "";
+        const heartbeat = document.getElementById("monitorHeartbeatSeconds");
+        if (heartbeat) heartbeat.value = "300";
+        const interval = document.getElementById("monitorInterval");
+        if (interval) interval.value = "300";
+        const timeout = document.getElementById("monitorTimeout");
+        if (timeout) timeout.value = "8";
+    },
+
+    editMonitoringAsset(assetId) {
+        const assets = Array.isArray(this._monitoringAssetsCache) ? this._monitoringAssetsCache : [];
+        const asset = assets.find((item) => item.id === assetId);
+        if (!asset) return;
+        document.getElementById("monitorAssetId").value = asset.id || "";
+        document.getElementById("monitorLabel").value = asset.label || "";
+        document.getElementById("monitorType").value = asset.asset_type || "website_http";
+        document.getElementById("monitorTarget").value = asset.target || "";
+        document.getElementById("monitorSiteName").value = asset.site_name || "";
+        document.getElementById("monitorInterval").value = String(asset.check_interval_seconds || 300);
+        document.getElementById("monitorTimeout").value = String(asset.timeout_seconds || 8);
+        document.getElementById("monitorHeartbeatSeconds").value = String(asset.expected_heartbeat_seconds || 300);
+        document.getElementById("monitorAgentId").value = asset.metadata?.agent_id || "";
+        document.getElementById("monitorAgentSecret").value = asset.metadata?.agent_secret || "";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+
+    async deleteMonitoringAsset(assetId) {
+        if (!confirm("Remove this monitoring asset?")) {
+            return;
+        }
+        try {
+            const response = await fetch(`/api/monitoring/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
+            if (response.ok) {
+                this.toast("Monitoring asset removed", "success");
+                this.loadMonitoringView();
+            } else {
+                this.toast("Failed to remove monitoring asset", "error");
+            }
+        } catch {
+            this.toast("Connection error", "error");
+        }
     },
 
     setupPerformanceTab() {
@@ -2268,6 +2690,12 @@ const App = {
                 this.toast("Connection error", "error");
             }
         };
+    },
+
+    _formatTimestamp(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value || "");
+        return date.toLocaleString();
     },
 
     async api(url, options) {

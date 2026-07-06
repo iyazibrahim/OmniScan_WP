@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "worker_interval_seconds": 15,
+  "default_check_interval_seconds": 300,
+  "default_timeout_seconds": 8,
+  "heartbeat_grace_multiplier": 2,
+  "retention_days": 14,
+  "max_events": 1000,
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "chat_id": "",
+    "notify_on_up": true,
+    "notify_on_down": true,
+    "notify_on_degraded": true,
+    "cooldown_seconds": 300
+  }
+}

@@ -36,6 +36,7 @@ Security assessments usually require many disconnected tools with different inst
 - Unified pipeline across 18+ open-source tools.
 - Environment-aware logic for localhost/internal targets.
 - SPA dashboard for targets, scan launch, status tracking, and report browsing.
+- Built-in monitoring for website uptime, TCP/host reachability, heartbeat-based office NUC visibility, and Telegram incident alerts.
 - Report management in UI: open, download artifacts, rename, and delete.
 - Configurable report profiles (executive/technical/full) and optional manual-assessment appendix.
 - Built-in remediation database mapping findings to fix guidance.
@@ -140,7 +141,9 @@ Use dashboard to:
 
 - Manage targets and profiles.
 - Configure token-backed tools.
+- Configure module visibility and monitoring settings.
 - Launch/cancel scans.
+- Manage monitored assets and heartbeat-backed uptime checks.
 - Monitor scan progress and ETA.
 - Open/download/rename/delete reports.
 
@@ -213,6 +216,7 @@ High-level phases:
 4. Normalization and severity mapping.
 5. Remediation enrichment.
 6. Report generation and dashboard indexing.
+7. Lightweight uptime monitoring, heartbeat ingestion, and transition-based incident alerting.
 
 Representative portable-core passive tooling:
 

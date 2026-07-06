@@ -1,0 +1,9 @@
+{
+  "dashboard": true,
+  "monitoring": true,
+  "scan": true,
+  "reports": true,
+  "assessments": false,
+  "targets": true,
+  "settings": true
+}
