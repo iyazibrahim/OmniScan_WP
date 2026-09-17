@@ -215,3 +215,61 @@ HTML security assessment reports used a wide web layout (`max-width: 1240px` / `
 
 ### Note
 Existing saved report HTML files are static; re-run a scan (or regenerate from JSON) to pick up the new layout.
+
+---
+
+## Completed: responsive Priority Findings + dashboard layout (2026-09-17)
+
+### Problem
+Dashboard Priority Findings cramped five action buttons into one column, truncated asset/finding text, and did not reflow on mid/narrow widths. Other tables relied on fixed layouts without reliable overflow containment.
+
+### Fix
+- Findings actions compacted to **Confirm / Review / More** (Not an issue, Retest, Suppress in menu)
+- ≤1100px: findings rows become labeled cards; text wraps; actions no longer stack/overlap
+- ≤768/480px: KPI strip, ops-health metrics, pagination, and finding cards stack further
+- Shared table wraps (`.table-scroll`, `.targets-table-wrap`) scroll horizontally when needed
+- Cache-bust query on `style.css` / `app.js` so browsers pick up the layout
+
+### Files touched
+- `web/style.css`
+- `web/index.html`
+- `web/app.js`
+- `workflow.md`
+
+### Validation
+- CSS brace balance: 615 / 615
+- `node --check web/app.js` OK
+- `pytest tests/test_finding_confirmation.py` → 9 passed
+
+### Manual check
+Hard-refresh the dashboard (Ctrl+F5). Resize below ~1100px and confirm Priority Findings becomes cards with readable actions and pagination.
+
+---
+
+## Completed: responsive layout + spacing system (2026-09-17)
+
+### Decisions
+- Scope: all main views (Dashboard, Monitoring, Scan, Reports, Playbook, Targets, Settings)
+- Density: balanced ops UI (consistent desktop/tablet; more breathing room + touch targets on phone)
+
+### Changes
+- Added spacing tokens (`--space-*`, `--page-pad-*`, `--section-gap`, `--card-pad*`, `--control-gap`, `--touch-min`)
+- Remapped shell/card/page-grid gaps to tokens
+- Unified breakpoint ladder: 1279 → 1100 → 1024 → 768 → 480
+- Fixed tablet padding regression (page pad no longer jumps to `32px` at ≤1024)
+- Single-column page grids ≤1024; findings card stack ≤1100; mobile drawer ≤768
+- Touch-min heights on primary controls; overflow contained in table wraps
+- Cache-bust: `style.css?v=spacing-20260917`, `app.js?v=spacing-20260917`
+
+### Files
+- `web/style.css`
+- `web/index.html`
+- `workflow.md`
+
+### Validation
+- CSS braces balanced
+- `node --check web/app.js` OK
+- `pytest tests/test_finding_confirmation.py` → 9 passed
+
+### Manual resize checklist
+1440 / 1100 / 768 / 390 across Dashboard, Monitoring, Scan, Reports, Playbook, Targets, Settings — hard-refresh first.

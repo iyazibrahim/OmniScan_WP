@@ -24,6 +24,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!e.target.closest(".dl-dropdown")) {
             document.querySelectorAll(".dl-menu.open").forEach((m) => m.classList.remove("open"));
         }
+        if (!e.target.closest(".finding-more")) {
+            App.closeFindingMenus();
+        }
     });
 });
 
@@ -404,7 +407,7 @@ const App = {
         if (!attentionBody) return;
 
         if (!attention.length) {
-            attentionBody.innerHTML = '<tr><td colspan="6" class="empty-state">No priority vulnerabilities right now.</td></tr>';
+            attentionBody.innerHTML = '<tr><td colspan="5" class="empty-state">No priority vulnerabilities right now.</td></tr>';
             if (pagerHost) pagerHost.innerHTML = "";
             return;
         }
@@ -414,35 +417,59 @@ const App = {
             const index = pageInfo.start + localIndex;
             const sev = (item.severity || "low").toLowerCase();
             const sevBadge = `<span class="badge badge-${this.esc(sev)}">${this.esc(sev)}</span>`;
-            const status = item.status || "needs_review";
+            const statusLabel = String(item.status || "needs_review").replace(/_/g, " ");
             const ai = item.ai_recommendation
                 ? `<span class="ai-recommendation-badge" title="${this.esc(item.ai_reason || "")}">AI: ${this.esc(item.ai_recommendation)}</span>`
-                : '<span class="text-muted">—</span>';
-            return `<tr>
-                <td>${this.esc(item.asset || "-")}</td>
-                <td title="${this.esc(item.title || item.cve || "-")}">${this.esc(item.title || item.cve || "-")}</td>
-                <td>${sevBadge}</td>
-                <td>${this.esc(status)}</td>
-                <td>${ai}</td>
-                <td>
+                : "";
+            const title = item.title || item.cve || "-";
+            const asset = item.asset || "-";
+            return `<tr class="finding-row">
+                <td class="finding-col-asset" data-label="Asset" title="${this.esc(asset)}">${this.esc(asset)}</td>
+                <td class="finding-col-title" data-label="Finding" title="${this.esc(title)}">${this.esc(title)}</td>
+                <td class="finding-col-sev" data-label="Severity">${sevBadge}</td>
+                <td class="finding-col-status" data-label="Status">
+                    <span class="finding-status-text">${this.esc(statusLabel)}</span>
+                    ${ai}
+                </td>
+                <td class="finding-col-actions" data-label="Actions">
                     <div class="finding-action-row">
                         <button type="button" class="btn-ghost btn-xs" data-finding-action="confirm" data-finding-index="${index}">Confirm</button>
-                        <button type="button" class="btn-ghost btn-xs" data-finding-action="false_positive" data-finding-index="${index}">Not an issue</button>
-                        <button type="button" class="btn-ghost btn-xs" data-finding-action="retest" data-finding-index="${index}">Retest</button>
-                        <button type="button" class="btn-ghost btn-xs" data-finding-action="suppress" data-finding-index="${index}">Suppress</button>
-                        <button type="button" class="btn-ghost btn-xs" data-finding-action="details" data-finding-index="${index}">Details</button>
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="details" data-finding-index="${index}">Review</button>
+                        <div class="finding-more">
+                            <button type="button" class="btn-ghost btn-xs finding-more-toggle" aria-expanded="false">More</button>
+                            <div class="finding-more-menu">
+                                <button type="button" data-finding-action="false_positive" data-finding-index="${index}">Not an issue</button>
+                                <button type="button" data-finding-action="retest" data-finding-index="${index}">Retest</button>
+                                <button type="button" data-finding-action="suppress" data-finding-index="${index}">Suppress next scan</button>
+                            </div>
+                        </div>
                     </div>
                 </td>
             </tr>`;
         }).join("");
 
         attentionBody.querySelectorAll("[data-finding-action]").forEach((btn) => {
-            btn.addEventListener("click", () => {
+            btn.addEventListener("click", (event) => {
+                event.stopPropagation();
                 const idx = Number(btn.dataset.findingIndex || -1);
                 const action = btn.dataset.findingAction;
                 const item = this._attentionFindings?.[idx];
                 if (!item) return;
+                this.closeFindingMenus();
                 this.handleFindingAction(action, item);
+            });
+        });
+
+        attentionBody.querySelectorAll(".finding-more-toggle").forEach((btn) => {
+            btn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                const menu = btn.parentElement;
+                const open = menu.classList.contains("open");
+                this.closeFindingMenus();
+                if (!open) {
+                    menu.classList.add("open");
+                    btn.setAttribute("aria-expanded", "true");
+                }
             });
         });
 
@@ -450,6 +477,14 @@ const App = {
             pagerHost.innerHTML = this.renderPaginationBar("attention", pageInfo, "renderAttentionTablePage");
             this.bindPagination(pagerHost, "attention", "renderAttentionTablePage");
         }
+    },
+
+    closeFindingMenus() {
+        document.querySelectorAll(".finding-more.open").forEach((node) => {
+            node.classList.remove("open");
+            const toggle = node.querySelector(".finding-more-toggle");
+            if (toggle) toggle.setAttribute("aria-expanded", "false");
+        });
     },
 
     async handleFindingAction(action, item) {
