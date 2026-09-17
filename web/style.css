@@ -2925,7 +2925,42 @@ input::placeholder { color: var(--text-muted); }
 
 /* ── Utilities ──────────────────────────────────────────────────────────────── */
 
-.hidden { display: none !important; }
+.table-pagination-host {
+    margin-top: 10px;
+}
+
+.table-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 8px 2px;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.table-pagination-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.table-pagination-page {
+    min-width: 88px;
+    text-align: center;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.table-pagination-meta {
+    color: var(--text-muted);
+}
+
+.table-pagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 
 @keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(-4px); }

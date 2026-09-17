@@ -147,6 +147,20 @@ free -h && df -h
 dmesg -T | grep -iE "oom|killed process" | tail
 ```
 
+## Completed: table pagination (2026-09-17)
+
+### Change
+All main UI tables now paginate (10 rows per page) with Prev/Next controls:
+- Dashboard Priority Findings
+- Reports website summary
+- Monitoring inventory
+- Targets saved list
+
+### Files
+- `web/app.js`, `web/index.html`, `web/style.css`, `workflow.md`
+
+---
+
 ## Completed: compact UI, finding confirmation, OpenRouter verify (2026-09-17)
 
 ### Problems

@@ -45,6 +45,8 @@ const App = {
     _reportFilter: "all",
     _reportSearch: "",
     _allReports: [],
+    _tablePages: {},
+    _tablePageSize: 10,
     _dashRefreshTimer: null,
     activeScanId: null,
     scanPollingTimer: null,
@@ -329,46 +331,7 @@ const App = {
     renderDashboardInsights(insights) {
         const attention = Array.isArray(insights?.attention_now) ? insights.attention_now : [];
         this._attentionFindings = attention;
-        const attentionBody = document.getElementById("attentionTableBody");
-        if (attentionBody) {
-            if (!attention.length) {
-                attentionBody.innerHTML = '<tr><td colspan="6" class="empty-state">No priority vulnerabilities right now.</td></tr>';
-            } else {
-                attentionBody.innerHTML = attention.map((item, index) => {
-                    const sev = (item.severity || "low").toLowerCase();
-                    const sevBadge = `<span class="badge badge-${this.esc(sev)}">${this.esc(sev)}</span>`;
-                    const status = item.status || "needs_review";
-                    const ai = item.ai_recommendation
-                        ? `<span class="ai-recommendation-badge" title="${this.esc(item.ai_reason || "")}">AI: ${this.esc(item.ai_recommendation)}</span>`
-                        : '<span class="text-muted">—</span>';
-                    return `<tr>
-                        <td>${this.esc(item.asset || "-")}</td>
-                        <td>${this.esc(item.title || item.cve || "-")}</td>
-                        <td>${sevBadge}</td>
-                        <td>${this.esc(status)}</td>
-                        <td>${ai}</td>
-                        <td>
-                            <div class="finding-action-row">
-                                <button type="button" class="btn-ghost btn-xs" data-finding-action="confirm" data-finding-index="${index}">Confirm</button>
-                                <button type="button" class="btn-ghost btn-xs" data-finding-action="false_positive" data-finding-index="${index}">Not an issue</button>
-                                <button type="button" class="btn-ghost btn-xs" data-finding-action="retest" data-finding-index="${index}">Retest</button>
-                                <button type="button" class="btn-ghost btn-xs" data-finding-action="suppress" data-finding-index="${index}">Suppress</button>
-                                <button type="button" class="btn-ghost btn-xs" data-finding-action="details" data-finding-index="${index}">Details</button>
-                            </div>
-                        </td>
-                    </tr>`;
-                }).join("");
-                attentionBody.querySelectorAll("[data-finding-action]").forEach((btn) => {
-                    btn.addEventListener("click", () => {
-                        const idx = Number(btn.dataset.findingIndex || -1);
-                        const action = btn.dataset.findingAction;
-                        const item = this._attentionFindings?.[idx];
-                        if (!item) return;
-                        this.handleFindingAction(action, item);
-                    });
-                });
-            }
-        }
+        this.renderAttentionTablePage();
 
         const attackSurface = Array.isArray(insights?.attack_surface) ? insights.attack_surface : [];
         const attackNode = document.getElementById("attackSurfaceList");
@@ -431,6 +394,61 @@ const App = {
                     `<div class="metric-item"><span>${this.esc(row.asset || "Asset")}</span><strong>${this.esc(String(row.risk_score || 0))}</strong></div>`
                 ).join("")}</div>`
                 : '<div class="empty-state">No asset risk ranking yet.</div>';
+        }
+    },
+
+    renderAttentionTablePage() {
+        const attention = Array.isArray(this._attentionFindings) ? this._attentionFindings : [];
+        const attentionBody = document.getElementById("attentionTableBody");
+        const pagerHost = document.getElementById("attentionTablePager");
+        if (!attentionBody) return;
+
+        if (!attention.length) {
+            attentionBody.innerHTML = '<tr><td colspan="6" class="empty-state">No priority vulnerabilities right now.</td></tr>';
+            if (pagerHost) pagerHost.innerHTML = "";
+            return;
+        }
+
+        const pageInfo = this.paginateItems("attention", attention);
+        attentionBody.innerHTML = pageInfo.rows.map((item, localIndex) => {
+            const index = pageInfo.start + localIndex;
+            const sev = (item.severity || "low").toLowerCase();
+            const sevBadge = `<span class="badge badge-${this.esc(sev)}">${this.esc(sev)}</span>`;
+            const status = item.status || "needs_review";
+            const ai = item.ai_recommendation
+                ? `<span class="ai-recommendation-badge" title="${this.esc(item.ai_reason || "")}">AI: ${this.esc(item.ai_recommendation)}</span>`
+                : '<span class="text-muted">—</span>';
+            return `<tr>
+                <td>${this.esc(item.asset || "-")}</td>
+                <td title="${this.esc(item.title || item.cve || "-")}">${this.esc(item.title || item.cve || "-")}</td>
+                <td>${sevBadge}</td>
+                <td>${this.esc(status)}</td>
+                <td>${ai}</td>
+                <td>
+                    <div class="finding-action-row">
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="confirm" data-finding-index="${index}">Confirm</button>
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="false_positive" data-finding-index="${index}">Not an issue</button>
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="retest" data-finding-index="${index}">Retest</button>
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="suppress" data-finding-index="${index}">Suppress</button>
+                        <button type="button" class="btn-ghost btn-xs" data-finding-action="details" data-finding-index="${index}">Details</button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join("");
+
+        attentionBody.querySelectorAll("[data-finding-action]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const idx = Number(btn.dataset.findingIndex || -1);
+                const action = btn.dataset.findingAction;
+                const item = this._attentionFindings?.[idx];
+                if (!item) return;
+                this.handleFindingAction(action, item);
+            });
+        });
+
+        if (pagerHost) {
+            pagerHost.innerHTML = this.renderPaginationBar("attention", pageInfo, "renderAttentionTablePage");
+            this.bindPagination(pagerHost, "attention", "renderAttentionTablePage");
         }
     },
 
@@ -1174,6 +1192,7 @@ const App = {
                 tabContainer.querySelectorAll(".filter-tab").forEach((b) => b.classList.remove("active"));
                 btn.classList.add("active");
                 this._reportFilter = btn.dataset.sev || "all";
+                this.setTablePage("reports", 1);
                 this._renderFilteredReports();
             });
         }
@@ -1183,6 +1202,7 @@ const App = {
             searchInput._wired = true;
             searchInput.addEventListener("input", () => {
                 this._reportSearch = searchInput.value.toLowerCase();
+                this.setTablePage("reports", 1);
                 this._renderFilteredReports();
             });
         }
@@ -1370,6 +1390,7 @@ const App = {
             return;
         }
 
+        const pageInfo = this.paginateItems("reports", visible);
         container.innerHTML = `
             <div class="reports-summary-shell">
                 <div class="reports-summary-head">
@@ -1386,7 +1407,7 @@ const App = {
                         <span>Last Scan</span>
                         <span>Quick Actions</span>
                     </div>
-                    ${visible.map((group) => {
+                    ${pageInfo.rows.map((group) => {
                         const latest = group.latest || {};
                         const status = this._reportStatusSummary(latest.severities || {});
                         const historyId = `${group.id}-history`;
@@ -1444,7 +1465,9 @@ const App = {
                             </div>`;
                         }).join("")}
                 </div>
+                <div id="reportsTablePager" class="table-pagination-host">${this.renderPaginationBar("reports", pageInfo, "_renderFilteredReports")}</div>
             </div>`;
+        this.bindPagination(container, "reports", "_renderFilteredReports");
     },
 
     renderReportsSidebar(counts, reports, groups) {
@@ -2141,31 +2164,75 @@ const App = {
             .replace(/\b\w/g, (char) => char.toUpperCase());
     },
 
+    getTablePage(key) {
+        return Math.max(1, Number(this._tablePages[key] || 1));
+    },
+
+    setTablePage(key, page) {
+        this._tablePages[key] = Math.max(1, Number(page) || 1);
+    },
+
+    paginateItems(key, items, pageSize) {
+        const rows = Array.isArray(items) ? items : [];
+        const size = Math.max(1, Number(pageSize || this._tablePageSize || 10));
+        const totalPages = Math.max(1, Math.ceil(rows.length / size) || 1);
+        let page = this.getTablePage(key);
+        if (page > totalPages) {
+            page = totalPages;
+            this.setTablePage(key, page);
+        }
+        const start = (page - 1) * size;
+        return {
+            rows: rows.slice(start, start + size),
+            page,
+            pageSize: size,
+            total: rows.length,
+            totalPages,
+            start,
+        };
+    },
+
+    renderPaginationBar(key, pageInfo, onChangeName) {
+        const { page, totalPages, total, pageSize, start } = pageInfo;
+        if (total <= pageSize) {
+            return total
+                ? `<div class="table-pagination"><span class="table-pagination-meta">Showing ${total} item${total === 1 ? "" : "s"}</span></div>`
+                : "";
+        }
+        const from = start + 1;
+        const to = Math.min(start + pageSize, total);
+        return `
+            <div class="table-pagination" data-page-key="${this.esc(key)}">
+                <span class="table-pagination-meta">Showing ${from}-${to} of ${total}</span>
+                <div class="table-pagination-controls">
+                    <button type="button" class="btn-ghost btn-xs" data-page-action="prev" data-page-handler="${this.esc(onChangeName)}" ${page <= 1 ? "disabled" : ""}>Prev</button>
+                    <span class="table-pagination-page">Page ${page} / ${totalPages}</span>
+                    <button type="button" class="btn-ghost btn-xs" data-page-action="next" data-page-handler="${this.esc(onChangeName)}" ${page >= totalPages ? "disabled" : ""}>Next</button>
+                </div>
+            </div>
+        `;
+    },
+
+    bindPagination(container, key, onChangeName) {
+        if (!container) return;
+        container.querySelectorAll(`[data-page-key="${key}"] [data-page-action]`).forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const action = btn.dataset.pageAction;
+                const current = this.getTablePage(key);
+                if (action === "prev") this.setTablePage(key, current - 1);
+                if (action === "next") this.setTablePage(key, current + 1);
+                if (typeof this[onChangeName] === "function") {
+                    this[onChangeName]();
+                }
+            });
+        });
+    },
+
     async loadTargets() {
         const targets = await this.api("/api/targets");
-        const tbody = document.getElementById("targetsBody");
-
-        if (!Array.isArray(targets) || targets.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No targets added yet. Use the form above to add one.</td></tr>';
-        } else {
-            tbody.innerHTML = targets.map((target, index) => `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td><strong>${this.esc(target.label)}</strong></td>
-                    <td><a href="${this.esc(target.url)}" target="_blank" class="link-accent">${this.esc(target.url)}</a></td>
-                    <td><span class="badge badge-neutral">${this.esc(target.profile || "auto")}</span></td>
-                    <td>${this.esc(target.last_scanned || "Never")}</td>
-                    <td>
-                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteTarget(${index})">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                            Delete
-                        </button>
-                    </td>
-                </tr>
-            `).join("");
-        }
-
-        this.renderTargetOverview(Array.isArray(targets) ? targets : []);
+        this._targetsCache = Array.isArray(targets) ? targets : [];
+        this.renderTargetsTablePage();
+        this.renderTargetOverview(this._targetsCache);
 
         document.getElementById("addTargetForm").onsubmit = async (event) => {
             event.preventDefault();
@@ -2197,6 +2264,44 @@ const App = {
                 this.toast("Connection error", "error");
             }
         };
+    },
+
+    renderTargetsTablePage() {
+        const targets = Array.isArray(this._targetsCache) ? this._targetsCache : [];
+        const tbody = document.getElementById("targetsBody");
+        const pagerHost = document.getElementById("targetsTablePager");
+        if (!tbody) return;
+
+        if (!targets.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No targets added yet. Use the form above to add one.</td></tr>';
+            if (pagerHost) pagerHost.innerHTML = "";
+            return;
+        }
+
+        const pageInfo = this.paginateItems("targets", targets);
+        tbody.innerHTML = pageInfo.rows.map((target, localIndex) => {
+            const index = pageInfo.start + localIndex;
+            return `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td><strong>${this.esc(target.label)}</strong></td>
+                    <td><a href="${this.esc(target.url)}" target="_blank" class="link-accent">${this.esc(target.url)}</a></td>
+                    <td><span class="badge badge-neutral">${this.esc(target.profile || "auto")}</span></td>
+                    <td>${this.esc(target.last_scanned || "Never")}</td>
+                    <td>
+                        <button class="btn-ghost btn-sm btn-danger" onclick="App.deleteTarget(${index})">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            Delete
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+
+        if (pagerHost) {
+            pagerHost.innerHTML = this.renderPaginationBar("targets", pageInfo, "renderTargetsTablePage");
+            this.bindPagination(pagerHost, "targets", "renderTargetsTablePage");
+        }
     },
 
     renderTargetOverview(targets) {
@@ -2857,13 +2962,22 @@ const App = {
     },
 
     renderMonitoringAssets(assets) {
+        this._monitoringAssetsCache = Array.isArray(assets) ? assets : [];
+        this.renderMonitoringAssetsPage();
+    },
+
+    renderMonitoringAssetsPage() {
+        const assets = Array.isArray(this._monitoringAssetsCache) ? this._monitoringAssetsCache : [];
         const tbody = document.getElementById("monitoringAssetsBody");
+        const pagerHost = document.getElementById("monitoringAssetsPager");
         if (!tbody) return;
         if (!assets.length) {
             tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No monitoring assets added yet.</td></tr>';
+            if (pagerHost) pagerHost.innerHTML = "";
             return;
         }
-        tbody.innerHTML = assets.map((asset) => {
+        const pageInfo = this.paginateItems("monitoringAssets", assets);
+        tbody.innerHTML = pageInfo.rows.map((asset) => {
             const state = asset.state || {};
             const status = String(state.status || "unknown").toLowerCase();
             const badgeClass = status === "healthy" ? "badge-running" : status === "down" ? "badge-critical" : "badge-neutral";
@@ -2887,7 +3001,10 @@ const App = {
                 </tr>
             `;
         }).join("");
-        this._monitoringAssetsCache = assets;
+        if (pagerHost) {
+            pagerHost.innerHTML = this.renderPaginationBar("monitoringAssets", pageInfo, "renderMonitoringAssetsPage");
+            this.bindPagination(pagerHost, "monitoringAssets", "renderMonitoringAssetsPage");
+        }
     },
 
     renderMonitoringIncidents(incidents) {
