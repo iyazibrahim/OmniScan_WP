@@ -310,6 +310,7 @@ a:hover { text-decoration: underline; }
     overflow-x: hidden;
     padding: 20px 24px;
     scroll-behavior: smooth;
+    min-width: 0;
 }
 
 .content-area::-webkit-scrollbar { width: 6px; }
@@ -618,6 +619,9 @@ a:hover { text-decoration: underline; }
     grid-template-columns: repeat(4, 1fr);
     gap: 20px;
     margin-bottom: 28px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .stat-card {
@@ -722,6 +726,30 @@ a:hover { text-decoration: underline; }
 
 .table-scroll {
     overflow-x: auto;
+    max-width: 100%;
+}
+
+.priority-findings-panel,
+.priority-findings-panel .card-body {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.priority-findings-panel .decision-table {
+    width: 100%;
+    table-layout: fixed;
+}
+
+.priority-findings-panel .decision-table th,
+.priority-findings-panel .decision-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.priority-findings-panel .decision-table td:last-child {
+    white-space: normal;
+    overflow: visible;
 }
 
 .decision-table {
@@ -1470,6 +1498,9 @@ input::placeholder { color: var(--text-muted); }
 .dashboard-shell {
     display: grid;
     gap: 12px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .dashboard-header {
@@ -1512,6 +1543,9 @@ input::placeholder { color: var(--text-muted); }
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 10px;
     margin-bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .executive-strip .stat-card {
@@ -1560,35 +1594,60 @@ input::placeholder { color: var(--text-muted); }
 
 .dashboard-command-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.95fr);
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
     gap: 12px;
     align-items: start;
+    width: 100%;
+    max-width: 100%;
 }
 
 .dashboard-main-column,
 .dashboard-rail {
     display: grid;
     gap: 12px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.dashboard-main-column {
+    overflow: hidden;
+}
+
+.dashboard-rail {
+    position: relative;
+    z-index: 1;
+    align-content: start;
 }
 
 .dashboard-mini-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    min-width: 0;
 }
 
 .dashboard-analytics-collapsed {
-    display: none;
+    display: none !important;
 }
 
 .dashboard-shell.show-more-analytics .dashboard-analytics-collapsed {
-    display: contents;
+    display: grid !important;
+}
+
+.dashboard-shell.show-more-analytics .dashboard-rail .dashboard-analytics-collapsed {
+    display: block !important;
 }
 
 .ops-health-metrics {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+}
+
+@media (min-width: 1280px) {
+    .ops-health-metrics {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
 }
 
 .ops-health-metric {
@@ -1617,7 +1676,8 @@ input::placeholder { color: var(--text-muted); }
 .finding-action-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
+    max-width: 220px;
 }
 
 .finding-action-row .btn-xs {
@@ -2874,12 +2934,24 @@ input::placeholder { color: var(--text-muted); }
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
 
+@media (max-width: 1100px) {
+    .dashboard-command-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-rail {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 1024px) {
     .stats-grid,
     .executive-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dashboard-grid,
     .dashboard-command-grid,
     .dashboard-mini-grid { grid-template-columns: 1fr; }
+    .dashboard-rail { grid-template-columns: 1fr; }
     .workspace-signal-strip.compact-strip,
     .scan-page-grid,
     .reports-page-grid,
