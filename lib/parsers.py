@@ -152,16 +152,26 @@ def _derive_confidence_status(finding: dict) -> tuple[str, str]:
 
     kind = str(finding.get("evidence_kind", "") or "").strip().lower()
     if kind in {"injection", "command_injection", "xss"}:
-        if proof_count >= 4:
-            return "confirmed", "reproduced"
-        if proof_count >= 2:
-            return "detected", "reproduced"
-        return "weak_signal", "detected"
+        has_payload = bool(str(finding.get("payload", "") or "").strip())
+        has_reflection = bool(str(finding.get("matched_evidence", "") or "").strip()) and (
+            has_payload
+            or "reflect" in str(finding.get("matched_evidence", "") or "").lower()
+            or "xss" in str(finding.get("matched_evidence", "") or "").lower()
+        )
+        # URL + message alone is never enough to mark XSS/injection as reproduced.
+        if has_payload and has_reflection and proof_count >= 4:
+            return "confirmed", "detected"
+        if has_payload and proof_count >= 3:
+            return "detected", "detected"
+        return "weak_signal", "needs_review"
     if kind == "content":
         if proof_count >= 3 and str(finding.get("parameter", "") or "").strip():
             return "detected", "detected"
         return "weak_signal", "detected"
     if kind in {"component", "version", "tls", "headers", "cors", "exposure", "content"}:
+        if kind == "headers":
+            # Header claims need live retest; keep parser confidence conservative.
+            return "weak_signal", "needs_review"
         if proof_count >= 2:
             return "detected", "detected"
         return "weak_signal", "detected"
@@ -199,6 +209,13 @@ def _finalize_finding(finding: dict) -> dict:
 
     normalized["confidence"] = confidence
     normalized["verification_status"] = verification
+    if not str(normalized.get("status") or "").strip():
+        if verification in {"false_positive", "fixed"}:
+            normalized["status"] = verification
+        elif verification in {"needs_review"}:
+            normalized["status"] = "needs_review"
+        else:
+            normalized["status"] = "needs_review"
     normalized["evidence"] = _compact_evidence(normalized)
     return normalized
 
@@ -444,6 +461,7 @@ def parse_nikto(results_file: Path) -> list[dict]:
                     protection_target=uri or "Affected web route or server configuration",
                     fix_target=uri or "Web server or application route handling",
                     evidence_kind="headers" if "header" in msg.lower() else "exposure",
+                    status="needs_review",
                 )
             )
     return findings
@@ -733,7 +751,8 @@ def parse_dalfox(results_file: Path) -> list[dict]:
                 items = maybe
                 break
         else:
-            items = [data]
+            # Never treat a metadata/summary dict as a single XSS finding.
+            items = []
     else:
         items = []
 
@@ -758,6 +777,11 @@ def parse_dalfox(results_file: Path) -> list[dict]:
         parameter = item.get("param") or item.get("parameter") or _query_parameter_from_url(str(target_url))
         payload = item.get("payload") or item.get("poc") or ""
         matched = item.get("evidence") or item.get("data") or ""
+        # Require a concrete URL and either payload or matched evidence.
+        if not str(target_url).strip():
+            continue
+        if not str(payload).strip() and not str(matched).strip():
+            continue
         request_text = _stringify(item.get("request"))
         response_text = _stringify(item.get("response"))
         reproduction = item.get("poc") or (str(target_url) if target_url and payload else "")
@@ -782,6 +806,7 @@ def parse_dalfox(results_file: Path) -> list[dict]:
                 protection_target=protection_target,
                 fix_target=parameter or target_url or "Affected client-side sink",
                 evidence_kind=evidence_kind,
+                status="needs_review",
             )
         )
     return findings

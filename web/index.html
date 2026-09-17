@@ -104,7 +104,6 @@
                     <header class="view-header dashboard-header">
                         <div>
                             <h1>Security Overview</h1>
-                            <p class="view-subtitle">Executive posture, priority findings, and live execution status across the monitored surface.</p>
                         </div>
                         <div class="dashboard-header-actions">
                             <div class="dashboard-sync-pill">
@@ -126,66 +125,56 @@
                         <div class="stat-card executive-card executive-card-score" data-accent="blue">
                             <div class="stat-card-head">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4z"></path><path d="M9 12h6"></path></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 6-4 9-8 10-4-1-8-4-8-10V6l8-4z"></path><path d="M9 12h6"></path></svg>
                                 </div>
-                                <span class="stat-kicker">Portfolio posture</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statRiskScore">0</span>
                                 <span class="stat-label">Risk Score</span>
-                                <span class="stat-meta">Composite score across recent findings and asset criticality.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="green">
                             <div class="stat-card-head">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><circle cx="12" cy="16" r="0.8"></circle></svg>
                                 </div>
-                                <span class="stat-kicker">Findings backlog</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statOpenFindings">0</span>
                                 <span class="stat-label">Open Findings</span>
-                                <span class="stat-meta">Unresolved issues currently awaiting validation or remediation.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="red">
                             <div class="stat-card-head">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
                                 </div>
-                                <span class="stat-kicker">Priority assets</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statHighRiskAssets">0</span>
                                 <span class="stat-label">High-Risk Assets</span>
-                                <span class="stat-meta">Assets currently carrying the highest combined risk concentration.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="orange">
                             <div class="stat-card-head">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15 15 0 0 1 0 20"></path><path d="M12 2a15 15 0 0 0 0 20"></path></svg>
                                 </div>
-                                <span class="stat-kicker">Public exposure</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statPublicAssets">0</span>
                                 <span class="stat-label">Internet-Facing Assets</span>
-                                <span class="stat-meta" id="statPublicAssetsMeta">Tracked assets currently exposed to the public internet.</span>
                             </div>
                         </div>
                         <div class="stat-card executive-card" data-accent="cyan">
                             <div class="stat-card-head">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 1 16 0"></path><path d="M12 12l3-3"></path></svg>
                                 </div>
-                                <span class="stat-kicker">Recent activity</span>
                             </div>
                             <div class="stat-info">
                                 <span class="stat-value" id="statNewFindings">0</span>
                                 <span class="stat-label">New This Week</span>
-                                <span class="stat-meta">Findings first seen or still newly active within the last 7 days.</span>
                             </div>
                         </div>
                     </div>
@@ -196,11 +185,10 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Operations Health</h3>
-                                        <p class="subtitle">Monitoring uptime, incidents, and monitored infrastructure health.</p>
                                     </div>
                                 </div>
                                 <div class="card-body">
-                                    <div class="monitoring-stats-grid" id="dashboardMonitoringStats">
+                                    <div class="ops-health-metrics" id="dashboardMonitoringStats">
                                         <div class="empty-state">Loading monitoring posture...</div>
                                     </div>
                                 </div>
@@ -210,20 +198,20 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Priority Findings</h3>
-                                        <p class="subtitle">Issues ranked for immediate analyst attention by severity, exploitability, and asset impact.</p>
                                     </div>
                                 </div>
                                 <div class="card-body">
                                     <div class="table-scroll">
                                         <table class="decision-table" id="attentionTable">
                                             <thead>
-                                                <tr><th>Asset</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Exploit</th><th>SLA</th><th>Action</th></tr>
+                                                <tr><th>Asset</th><th>Finding</th><th>Severity</th><th>Status</th><th>AI</th><th>Action</th></tr>
                                             </thead>
                                             <tbody id="attentionTableBody">
-                                                <tr><td colspan="7" class="empty-state">Loading risk priorities...</td></tr>
+                                                <tr><td colspan="6" class="empty-state">Loading risk priorities...</td></tr>
                                             </tbody>
                                         </table>
                                     </div>
+                                    <div id="priorityFindingDrawer" class="finding-drawer hidden"></div>
                                 </div>
                             </div>
 
@@ -231,7 +219,6 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Risk Trend</h3>
-                                        <p class="subtitle">Severity distribution and longitudinal risk movement across recent assessment windows.</p>
                                     </div>
                                     <div class="chart-mode-toggle">
                                         <button class="btn-ghost btn-xs active" id="chartModeStacked" onclick="App.setChartMode('stacked')">Severity Mix</button>
@@ -243,12 +230,15 @@
                                 </div>
                             </div>
 
-                            <div class="dashboard-mini-grid">
+                            <div class="card">
+                                <button type="button" class="btn-ghost btn-sm" id="toggleMoreAnalytics">More analytics</button>
+                            </div>
+
+                            <div class="dashboard-mini-grid dashboard-analytics-collapsed" id="dashboardMoreAnalytics">
                                 <div class="card dashboard-mini-panel">
                                     <div class="card-header dashboard-card-header">
                                         <div>
                                             <h3>Tracked Assets</h3>
-                                            <p class="subtitle">Recently reviewed portfolio entries.</p>
                                         </div>
                                     </div>
                                     <div class="card-body">
@@ -262,7 +252,6 @@
                                     <div class="card-header dashboard-card-header">
                                         <div>
                                             <h3>Aging &amp; SLA</h3>
-                                            <p class="subtitle">Open findings by age band and compliance state.</p>
                                         </div>
                                     </div>
                                     <div class="card-body" id="agingSlaList">
@@ -274,7 +263,6 @@
                                     <div class="card-header dashboard-card-header">
                                         <div>
                                             <h3>Top Vulnerable Assets</h3>
-                                            <p class="subtitle">Highest risk concentration by tracked asset.</p>
                                         </div>
                                     </div>
                                     <div class="card-body" id="topAssetsList">
@@ -286,7 +274,6 @@
                                     <div class="card-header dashboard-card-header">
                                         <div>
                                             <h3>Vulnerability Breakdown</h3>
-                                            <p class="subtitle">CVSS bands, exploit presence, and top CWE volume.</p>
                                         </div>
                                     </div>
                                     <div class="card-body" id="vulnBreakdownList">
@@ -301,7 +288,6 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Active Incidents</h3>
-                                        <p class="subtitle">Current degraded or down monitored assets.</p>
                                     </div>
                                 </div>
                                 <div class="card-body" id="dashboardIncidentList">
@@ -321,11 +307,10 @@
                                 </div>
                             </div>
 
-                            <div class="card dashboard-rail-panel">
+                            <div class="card dashboard-rail-panel dashboard-analytics-collapsed">
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Coverage by Surface</h3>
-                                        <p class="subtitle">Tracked surface mix and vulnerability density.</p>
                                     </div>
                                 </div>
                                 <div class="card-body" id="attackSurfaceList">
@@ -337,11 +322,21 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Recent Reports</h3>
-                                        <p class="subtitle">Latest generated artifacts and posture snapshots.</p>
                                     </div>
                                 </div>
                                 <div class="card-body" id="dashRecentReportsList">
                                     <div class="empty-state">Loading reports...</div>
+                                </div>
+                            </div>
+
+                            <div class="card dashboard-rail-panel">
+                                <div class="card-header dashboard-card-header">
+                                    <div>
+                                        <h3>Suppressed Findings</h3>
+                                    </div>
+                                </div>
+                                <div class="card-body" id="dashSuppressedList">
+                                    <div class="empty-state">No suppressions.</div>
                                 </div>
                             </div>
                         </aside>
@@ -551,21 +546,11 @@
                         </div>
                     </header>
 
-                    <div class="workspace-signal-strip compact-strip">
-                        <div class="workspace-signal-card">
-                            <span class="signal-label">Execution Model</span>
-                            <strong>Adaptive</strong>
-                            <p>Skip or defer tools when the target lacks useful inputs.</p>
-                        </div>
-                        <div class="workspace-signal-card">
-                            <span class="signal-label">Parallelism</span>
-                            <strong>2 Tools</strong>
-                            <p>Heavy tools are capped independently to avoid saturation.</p>
-                        </div>
-                        <div class="workspace-signal-card">
-                            <span class="signal-label">Hard Timeout</span>
-                            <strong>45 Minutes</strong>
-                            <p>Scans end predictably instead of hanging on sparse targets.</p>
+                    <div class="workspace-signal-strip scan-status-line">
+                        <div class="workspace-signal-card scan-status-inline">
+                            <span class="signal-chip">Execution <strong>Adaptive</strong></span>
+                            <span class="signal-chip">Parallelism <strong>2 tools</strong></span>
+                            <span class="signal-chip">Hard timeout <strong>45 min</strong></span>
                         </div>
                     </div>
 
@@ -1036,6 +1021,15 @@
                                                 <label for="tokenZap">OWASP ZAP API Key</label>
                                                 <input type="text" id="tokenZap" placeholder="Enter ZAP API key">
                                             </div>
+                                            <div class="form-group">
+                                                <label for="tokenOpenRouter">OpenRouter API Key</label>
+                                                <input type="password" id="tokenOpenRouter" placeholder="sk-or-..." autocomplete="off">
+                                                <small class="form-hint">Used to recommend finding verdicts. Never auto-closes findings.</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="tokenOpenRouterModel">OpenRouter Model</label>
+                                                <input type="text" id="tokenOpenRouterModel" placeholder="openai/gpt-4o-mini">
+                                            </div>
                                             <div class="form-actions">
                                                 <button type="submit" class="btn-primary">
                                                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
@@ -1108,7 +1102,6 @@
                                 <div class="card-header dashboard-card-header">
                                     <div>
                                         <h3>Active Scan Profile Summary</h3>
-                                        <p class="subtitle">Current bounded-scan posture used as the default platform baseline.</p>
                                     </div>
                                 </div>
                                 <div class="metric-list">
@@ -1131,29 +1124,6 @@
                                     <div class="metric-item">
                                         <span class="metric-label">Default Formats</span>
                                         <strong id="settingsOutputFormats">HTML, MD, JSON, SARIF, CSV</strong>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="card">
-                                <div class="card-header dashboard-card-header">
-                                    <div>
-                                        <h3>Policy Intent</h3>
-                                        <p class="subtitle">Run a deeper adaptive baseline on the VPS while keeping execution bounded and repeatable.</p>
-                                    </div>
-                                </div>
-                                <div class="settings-note-list">
-                                    <div class="settings-note-item">
-                                        <strong>Adaptive by default</strong>
-                                        <p>The scanner now favors stronger VPS throughput while still skipping low-signal branches that do not improve evidence quality.</p>
-                                    </div>
-                                    <div class="settings-note-item">
-                                        <strong>Bounded execution</strong>
-                                        <p>Parallelism, per-tool limits, and scan budgets are tuned for a 2 vCPU / 2 GB VPS without letting jobs hang indefinitely.</p>
-                                    </div>
-                                    <div class="settings-note-item">
-                                        <strong>Formal reporting</strong>
-                                        <p>Every completed scan is designed to generate clean HTML, Markdown, JSON, CSV, and SARIF outputs.</p>
                                     </div>
                                 </div>
                             </div>

@@ -128,13 +128,22 @@ def get_tokens() -> dict:
     """Load API tokens from tokens.json, with env var fallback for CI/cron."""
     data = load_json(TOKENS_FILE)
     if not isinstance(data, dict):
-        data = {"wpscan_api_token": "", "zap_api_key": ""}
+        data = {
+            "wpscan_api_token": "",
+            "zap_api_key": "",
+            "openrouter_api_key": "",
+            "openrouter_model": "",
+        }
 
     # Environment variables override empty values (useful for CI/cron)
     if not data.get("wpscan_api_token"):
         data["wpscan_api_token"] = os.environ.get("WPSCAN_API_TOKEN", "")
     if not data.get("zap_api_key"):
         data["zap_api_key"] = os.environ.get("ZAP_API_KEY", "")
+    if not data.get("openrouter_api_key"):
+        data["openrouter_api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+    if not data.get("openrouter_model"):
+        data["openrouter_model"] = os.environ.get("OPENROUTER_MODEL", "")
 
     return data
 
@@ -239,6 +248,8 @@ def get_scan_config() -> dict:
         "ai_require_approval_high_impact": True,
         "ai_allow_full_autonomous_testing": False,
         "ai_full_testing_bypass_token": "",
+        "ai_verify_findings": True,
+        "openrouter_model": "openai/gpt-4o-mini",
         "scan_hard_timeout_seconds": 2700,
         "parallel_scans": True,
         "max_parallel_tools": 2,

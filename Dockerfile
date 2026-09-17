@@ -115,7 +115,7 @@ COPY --from=tools /out/feroxbuster /usr/local/bin/feroxbuster
 RUN python3 -m venv /opt/venv && \
     python3 -m venv /opt/scanner-venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/scanner-venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
+    /opt/scanner-venv/bin/pip install --no-cache-dir --upgrade "pip" "setuptools>=70,<82" "wheel"
 
 COPY requirements.txt /tmp/requirements.txt
 COPY requirements-scanners.txt /tmp/requirements-scanners.txt
@@ -135,6 +135,7 @@ RUN apt-get update && \
     printf '#!/usr/bin/env bash\nexec /opt/scanner-venv/bin/arjun "$@"\n' >/usr/local/bin/arjun && \
     chmod +x /usr/local/bin/wapiti /usr/local/bin/droopescan /usr/local/bin/sslyze /usr/local/bin/arjun && \
     /opt/scanner-venv/bin/python /tmp/patch_wapiti_gettext.py && \
+    /opt/scanner-venv/bin/wapiti --help >/dev/null && \
     gem install --no-document wpscan && \
     apt-get purge -y --auto-remove build-essential python3-dev && \
     rm -rf /var/lib/apt/lists/*

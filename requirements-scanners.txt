@@ -1,5 +1,7 @@
 # Isolated scanner venv (/opt/scanner-venv). Kept separate from the Flask 3 app venv.
 # wapiti3 3.1.x needs Python 3.11 + mitmproxy 9 (Flask 1.x) — fine here, not in the app.
+# setuptools>=82 removed pkg_resources which wapiti 3.1.x still imports.
+setuptools>=70,<82
 wapiti3>=3.1.8,<3.2
 droopescan
 sslyze

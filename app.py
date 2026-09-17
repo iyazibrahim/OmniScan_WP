@@ -35,6 +35,13 @@ from lib.monitoring import (
     summarize_monitoring,
 )
 from lib.reports import apply_report_layout_overrides
+from lib.dispositions import (
+    fingerprint_finding,
+    list_dispositions,
+    reopen_disposition,
+    upsert_disposition,
+)
+from lib.finding_retest import retest_finding, apply_retest_to_finding
 
 # ── Logging setup ───────────────────────────────────────────────────────────────
 
@@ -646,7 +653,12 @@ def _load_dashboard_findings(limit_reports: int = 300) -> list[dict]:
             if not isinstance(finding, dict):
                 continue
             sev = str(finding.get("severity", "low")).strip().lower()
-            status = str(finding.get("status", "open")).strip().lower() or "open"
+            status = str(finding.get("status", "needs_review")).strip().lower() or "needs_review"
+            if status in {"false_positive", "fixed", "resolved", "closed", "mitigated"}:
+                # Keep closed findings out of open risk metrics.
+                pass
+            elif str(finding.get("verification_status", "")).strip().lower() in {"false_positive", "fixed"}:
+                status = str(finding.get("verification_status")).strip().lower()
             cvss = _extract_cvss(finding)
             exploitability = str(finding.get("exploitability", "")).strip().lower()
             exploit_available = bool(finding.get("exploit_available") or exploitability == "high")
@@ -657,6 +669,7 @@ def _load_dashboard_findings(limit_reports: int = 300) -> list[dict]:
             base = cvss if cvss > 0 else _severity_weight(sev)
             criticality = 1.25 if asset_type in {"internet", "cloud", "network"} else 1.0
             exploit_factor = 1.2 if exploit_available else 1.0
+            closed = status in {"false_positive", "fixed", "resolved", "closed", "mitigated"}
             findings_rows.append(
                 {
                     "asset": asset,
@@ -670,8 +683,20 @@ def _load_dashboard_findings(limit_reports: int = 300) -> list[dict]:
                     "exploit_available": exploit_available,
                     "title": str(finding.get("title", "")).strip(),
                     "age_days": age_days,
-                    "fixed": status in {"fixed", "resolved", "closed", "mitigated"},
+                    "fixed": closed,
                     "risk_points": round(base * criticality * exploit_factor, 2),
+                    "finding_id": str(finding.get("id") or "").strip(),
+                    "fingerprint": str(finding.get("fingerprint") or fingerprint_finding(finding, target_url)).strip(),
+                    "report_path": str(json_file.relative_to(REPORTS_DIR)).replace("\\", "/"),
+                    "ai_recommendation": str(finding.get("ai_recommendation") or "").strip(),
+                    "ai_reason": str(finding.get("ai_reason") or "").strip(),
+                    "evidence_kind": str(finding.get("evidence_kind") or "").strip(),
+                    "url": str(finding.get("url") or "").strip(),
+                    "path": str(finding.get("path") or "").strip(),
+                    "parameter": str(finding.get("parameter") or "").strip(),
+                    "payload": str(finding.get("payload") or "").strip(),
+                    "matched_evidence": str(finding.get("matched_evidence") or finding.get("evidence") or "").strip(),
+                    "last_retest": finding.get("last_retest") if isinstance(finding.get("last_retest"), dict) else {},
                 }
             )
     return findings_rows
@@ -736,6 +761,21 @@ def _dashboard_insights_payload() -> dict:
                 "exploit_available": bool(item.get("exploit_available")),
                 "sla": sla_text,
                 "action": "Patch now" if bool(item.get("exploit_available")) and sev in {"critical", "high"} else "Review",
+                "title": item.get("title") or item.get("cve") or "Finding",
+                "status": item.get("status") or "needs_review",
+                "finding_id": item.get("finding_id") or "",
+                "fingerprint": item.get("fingerprint") or "",
+                "report_path": item.get("report_path") or "",
+                "target": item.get("target") or "",
+                "ai_recommendation": item.get("ai_recommendation") or "",
+                "ai_reason": item.get("ai_reason") or "",
+                "evidence_kind": item.get("evidence_kind") or "",
+                "url": item.get("url") or "",
+                "path": item.get("path") or "",
+                "parameter": item.get("parameter") or "",
+                "payload": item.get("payload") or "",
+                "matched_evidence": item.get("matched_evidence") or "",
+                "last_retest": item.get("last_retest") or {},
             }
         )
 
@@ -1062,7 +1102,12 @@ def update_config():
 def get_tokens():
     data = _load_json(TOKENS_FILE)
     if not isinstance(data, dict):
-        data = {"wpscan_api_token": "", "zap_api_key": ""}
+        data = {
+            "wpscan_api_token": "",
+            "zap_api_key": "",
+            "openrouter_api_key": "",
+            "openrouter_model": "",
+        }
     # Mask values for security
     masked = {}
     for key, val in data.items():
@@ -1086,7 +1131,12 @@ def update_tokens():
     # Load existing tokens so we don't overwrite with masked values
     existing = _load_json(TOKENS_FILE)
     if not isinstance(existing, dict):
-        existing = {"wpscan_api_token": "", "zap_api_key": ""}
+        existing = {
+            "wpscan_api_token": "",
+            "zap_api_key": "",
+            "openrouter_api_key": "",
+            "openrouter_model": "",
+        }
 
     for key, val in body.items():
         # Only update if the value doesn't contain mask chars (user actually changed it)
@@ -1095,6 +1145,178 @@ def update_tokens():
 
     _save_json(TOKENS_FILE, existing)
     return jsonify({"message": "Tokens saved"})
+
+
+def _resolve_report_json_path(report_path: str) -> Path | None:
+    rel = str(report_path or "").strip().replace("\\", "/").lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        return None
+    path = REPORTS_DIR / rel
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        path.resolve().relative_to(REPORTS_DIR.resolve())
+    except Exception:
+        return None
+    return path
+
+
+def _update_finding_in_report(report_path: str, matcher: dict, updates: dict) -> dict | None:
+    path = _resolve_report_json_path(report_path)
+    if not path:
+        return None
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(report, dict):
+        return None
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        return None
+
+    target_url = str(report.get("target_url") or "").strip()
+    fingerprint = str(matcher.get("fingerprint") or "").strip()
+    finding_id = str(matcher.get("finding_id") or matcher.get("id") or "").strip()
+    updated_finding = None
+    for idx, finding in enumerate(findings):
+        if not isinstance(finding, dict):
+            continue
+        fp = str(finding.get("fingerprint") or fingerprint_finding(finding, target_url)).strip()
+        fid = str(finding.get("id") or "").strip()
+        if fingerprint and fp == fingerprint:
+            pass
+        elif finding_id and fid == finding_id:
+            pass
+        else:
+            continue
+        row = dict(finding)
+        row.update(updates)
+        row["fingerprint"] = fp or fingerprint_finding(row, target_url)
+        findings[idx] = row
+        updated_finding = row
+        break
+
+    if not updated_finding:
+        return None
+
+    report["findings"] = findings
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"finding": updated_finding, "report_path": str(path.relative_to(REPORTS_DIR)).replace("\\", "/"), "target_url": target_url}
+
+
+@app.route('/api/findings/dispositions', methods=['GET'])
+@login_required
+def api_list_dispositions():
+    target = str(request.args.get("target") or "").strip()
+    suppressed_only = str(request.args.get("suppressed") or "").strip().lower() in {"1", "true", "yes"}
+    return jsonify({"dispositions": list_dispositions(target=target, suppressed_only=suppressed_only)})
+
+
+@app.route('/api/findings/disposition', methods=['POST'])
+@login_required
+def api_set_disposition():
+    body = request.json if isinstance(request.json, dict) else {}
+    status = str(body.get("status") or "").strip().lower()
+    if status not in {"confirmed", "false_positive", "fixed", "needs_review"}:
+        return jsonify({"error": "status must be confirmed, false_positive, fixed, or needs_review"}), 400
+
+    finding = body.get("finding") if isinstance(body.get("finding"), dict) else {}
+    for key in ("title", "url", "path", "parameter", "evidence_kind", "id", "fingerprint", "asset"):
+        if body.get(key) and not finding.get(key):
+            finding[key] = body.get(key)
+
+    report_path = str(body.get("report_path") or "").strip()
+    target_url = str(body.get("target_url") or body.get("target") or finding.get("asset") or "").strip()
+    suppress_future = bool(body.get("suppress_future"))
+    note = str(body.get("note") or "").strip()
+    finding_id = str(body.get("finding_id") or finding.get("id") or "").strip()
+    fingerprint = str(body.get("fingerprint") or finding.get("fingerprint") or "").strip()
+
+    if report_path:
+        report_update = _update_finding_in_report(
+            report_path,
+            {"fingerprint": fingerprint, "finding_id": finding_id},
+            {
+                "status": status,
+                "verification_status": status if status != "confirmed" else "confirmed",
+                "disposition_note": note,
+                "disposition_updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        if report_update and isinstance(report_update.get("finding"), dict):
+            finding = report_update["finding"]
+            target_url = report_update.get("target_url") or target_url
+
+    if not finding.get("title") and not fingerprint:
+        return jsonify({"error": "finding details or fingerprint required"}), 400
+
+    if fingerprint and not finding.get("fingerprint"):
+        finding["fingerprint"] = fingerprint
+
+    try:
+        record = upsert_disposition(
+            finding,
+            status,
+            target_url=target_url,
+            suppress_future=suppress_future,
+            note=note,
+            report_path=report_path,
+            finding_id=finding_id,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "Disposition saved", "disposition": record, "finding": finding})
+
+
+@app.route('/api/findings/disposition/reopen', methods=['POST'])
+@login_required
+def api_reopen_disposition():
+    body = request.json if isinstance(request.json, dict) else {}
+    fingerprint = str(body.get("fingerprint") or "").strip()
+    if not fingerprint:
+        return jsonify({"error": "fingerprint required"}), 400
+    record = reopen_disposition(fingerprint)
+    if not record:
+        return jsonify({"error": "disposition not found"}), 404
+    return jsonify({"message": "Disposition reopened", "disposition": record})
+
+
+@app.route('/api/findings/retest', methods=['POST'])
+@login_required
+def api_retest_finding():
+    body = request.json if isinstance(request.json, dict) else {}
+    finding = body.get("finding") if isinstance(body.get("finding"), dict) else {}
+    for key in ("title", "url", "path", "parameter", "evidence_kind", "id", "fingerprint", "asset", "payload", "matched_evidence", "method"):
+        if body.get(key) and not finding.get(key):
+            finding[key] = body.get(key)
+    if not finding:
+        return jsonify({"error": "finding required"}), 400
+
+    report_path = str(body.get("report_path") or "").strip()
+    target_url = str(body.get("target_url") or body.get("target") or finding.get("asset") or "").strip()
+    retest = retest_finding(finding, target_url=target_url)
+    updated = apply_retest_to_finding(finding, retest)
+
+    if report_path:
+        report_update = _update_finding_in_report(
+            report_path,
+            {
+                "fingerprint": str(finding.get("fingerprint") or body.get("fingerprint") or "").strip(),
+                "finding_id": str(finding.get("id") or body.get("finding_id") or "").strip(),
+            },
+            {
+                "status": updated.get("status"),
+                "verification_status": updated.get("verification_status"),
+                "last_retest": updated.get("last_retest"),
+                "retest_source": updated.get("retest_source"),
+            },
+        )
+        if report_update and isinstance(report_update.get("finding"), dict):
+            updated = report_update["finding"]
+
+    return jsonify({"message": "Retest complete", "retest": retest, "finding": updated})
 
 
 # Modules

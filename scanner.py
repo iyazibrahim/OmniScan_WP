@@ -38,6 +38,9 @@ from lib.notifier import send_scan_email, configure_email
 from lib.assessments import get_workbook, summarize_workbook
 from lib.ai_runner import apply_verdicts_to_findings
 from lib.branding import ORGANIZATION_TEAM, PRODUCT_NAME
+from lib.dispositions import apply_dispositions_to_findings, fingerprint_finding
+from lib.finding_retest import retest_findings
+from lib.ai_verify import recommend_findings
 
 
 def _is_ci() -> bool:
@@ -46,28 +49,24 @@ def _is_ci() -> bool:
 
 
 def _apply_ai_verdicts(findings: list[dict], target_url: str, scan_config: dict) -> list[dict]:
-    if not bool(scan_config.get("ai_operator_enabled", False)):
-        return findings
+    # Deterministic HTTP operator verdicts (existing optional flow).
+    operator_findings = findings
+    if bool(scan_config.get("ai_operator_enabled", False)):
+        results_file = config.CONFIG_DIR / "ai-results.json"
+        if results_file.exists():
+            try:
+                store = json.loads(results_file.read_text(encoding="utf-8"))
+            except Exception:
+                store = None
+            if isinstance(store, dict):
+                target_results = store.get(target_url)
+                if isinstance(target_results, dict):
+                    results = target_results.get("results")
+                    if isinstance(results, list) and results:
+                        operator_findings = apply_verdicts_to_findings(findings, results)
 
-    results_file = config.CONFIG_DIR / "ai-results.json"
-    if not results_file.exists():
-        return findings
-
-    try:
-        store = json.loads(results_file.read_text(encoding="utf-8"))
-    except Exception:
-        return findings
-    if not isinstance(store, dict):
-        return findings
-
-    target_results = store.get(target_url)
-    if not isinstance(target_results, dict):
-        return findings
-    results = target_results.get("results")
-    if not isinstance(results, list) or not results:
-        return findings
-
-    return apply_verdicts_to_findings(findings, results)
+    # OpenRouter recommendations only — never auto-applies status.
+    return recommend_findings(operator_findings, target_url=target_url, scan_config=scan_config)
 
 
 # ── Demo Mode ───────────────────────────────────────────────────────────────────
@@ -405,6 +404,14 @@ def run_scan(url: str, mode: str = "passive", ci_mode: bool = False,
         "message": "Correlating findings with remediation guidance.",
     })
     enriched = enrich_findings(findings)
+    ui.status("Running deterministic live retests on checkable findings...")
+    enriched = retest_findings(enriched, target_url=url)
+    enriched = apply_dispositions_to_findings(enriched, target_url=url)
+    for item in enriched:
+        if isinstance(item, dict) and not item.get("fingerprint"):
+            item["fingerprint"] = fingerprint_finding(item, target_url=url)
+        if isinstance(item, dict) and not str(item.get("status") or "").strip():
+            item["status"] = "needs_review"
     enriched = _apply_ai_verdicts(enriched, url, scan_config)
 
     # Generate reports

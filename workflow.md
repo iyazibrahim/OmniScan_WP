@@ -147,7 +147,37 @@ free -h && df -h
 dmesg -T | grep -iE "oom|killed process" | tail
 ```
 
-## Completed: A4 report layout fix (2026-08-07)
+## Completed: compact UI, finding confirmation, OpenRouter verify (2026-09-17)
+
+### Problems
+- Dashboard/pages used oversized signal cards, long helper copy, and too many panels (hard to act).
+- Scan findings had no Confirm / Not an issue / Retest path; false positives (XSS, missing headers) reappeared every scan.
+- Wapiti import crash risk from setuptools≥82 removing `pkg_resources`.
+
+### Fixes
+- Compact UI: tighter padding, no KPI min-height, hide page/card helper noise, collapse secondary analytics, Scan Center status line.
+- Finding confirmation: `lib/dispositions.py` + APIs for Confirm / Not an issue / Suppress / Reopen; persists across scans when suppressed.
+- Live retest: `lib/finding_retest.py` + `lib/header_check.py` auto-check headers/exposure/CORS/XSS replay at scan end and via Retest button.
+- Parser gates: Dalfox metadata no longer becomes XSS; XSS/header confidence stays `needs_review` until proven.
+- OpenRouter: Settings token + `lib/ai_verify.py` recommendations only (never auto-closes).
+- Wapiti: pin `setuptools>=70,<82` in scanner venv; build smoke `wapiti --help`.
+
+### Files touched
+- `web/style.css`, `web/index.html`, `web/app.js`
+- `lib/dispositions.py`, `lib/header_check.py`, `lib/finding_retest.py`, `lib/ai_verify.py`
+- `lib/parsers.py`, `lib/config.py`, `lib/reports.py`, `scanner.py`, `app.py`
+- `config/scan-config.json`, `requirements-scanners.txt`, `Dockerfile`, `.gitignore`
+- `tests/test_finding_confirmation.py`, `workflow.md`
+
+### Manual after VPS rebuild
+```bash
+docker compose build --no-cache
+docker compose up -d
+docker compose exec dp-security-platform wapiti --help
+```
+Add OpenRouter key under Settings → API Tokens. Use Priority Findings actions to Confirm / Not an issue / Retest / Suppress.
+
+---
 
 ### Problem
 HTML security assessment reports used a wide web layout (`max-width: 1240px` / `1320px`), so on-screen viewing looked oversized and triggered horizontal scrolling. A4 rules existed only under `@media print`.

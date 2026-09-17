@@ -67,9 +67,20 @@ const App = {
         this.setupNavigation();
         this.setupMobileMenu();
         this.setupTabs();
+        this.setupMoreAnalyticsToggle();
         this.checkServer();
         await this.loadModuleRegistry();
         this.navigateTo("dashboard");
+    },
+
+    setupMoreAnalyticsToggle() {
+        const btn = document.getElementById("toggleMoreAnalytics");
+        const shell = document.querySelector("#view-dashboard .dashboard-shell");
+        if (!btn || !shell) return;
+        btn.addEventListener("click", () => {
+            const open = shell.classList.toggle("show-more-analytics");
+            btn.textContent = open ? "Hide analytics" : "More analytics";
+        });
     },
 
     setupNavigation() {
@@ -265,7 +276,7 @@ const App = {
                     <span class="target-url-sm">${this.esc(target.url)}</span>
                 </li>
             `).join("");
-        } else {
+        } else if (recentTargets) {
             recentTargets.innerHTML = '<li class="empty-state">No targets configured yet</li>';
         }
 
@@ -274,6 +285,7 @@ const App = {
         this.renderDashboardInsights(insights);
         this.renderDashboardMonitoring(insights?.monitoring || {});
         this.renderDashboardReports(reports?.reports || []);
+        this.loadSuppressedFindings();
     },
 
     renderDashboardMonitoring(monitoring) {
@@ -281,25 +293,21 @@ const App = {
         const statsNode = document.getElementById("dashboardMonitoringStats");
         if (statsNode) {
             statsNode.innerHTML = `
-                <div class="workspace-signal-card">
-                    <span class="signal-label">Healthy Assets</span>
+                <div class="ops-health-metric">
+                    <span>Healthy</span>
                     <strong>${this.esc(String(overview.healthy_assets || 0))}</strong>
-                    <p>Monitored assets currently reporting healthy state.</p>
                 </div>
-                <div class="workspace-signal-card">
-                    <span class="signal-label">Active Incidents</span>
+                <div class="ops-health-metric">
+                    <span>Incidents</span>
                     <strong>${this.esc(String(overview.active_incidents || 0))}</strong>
-                    <p>Assets currently degraded or down.</p>
                 </div>
-                <div class="workspace-signal-card">
-                    <span class="signal-label">24h Uptime</span>
+                <div class="ops-health-metric">
+                    <span>24h Uptime</span>
                     <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
-                    <p>Average estimated uptime across monitored assets.</p>
                 </div>
-                <div class="workspace-signal-card">
-                    <span class="signal-label">Enabled Monitors</span>
+                <div class="ops-health-metric">
+                    <span>Monitors</span>
                     <strong>${this.esc(String(overview.enabled_assets || 0))}</strong>
-                    <p>Low-storage monitoring checks currently active.</p>
                 </div>
             `;
         }
@@ -320,27 +328,45 @@ const App = {
 
     renderDashboardInsights(insights) {
         const attention = Array.isArray(insights?.attention_now) ? insights.attention_now : [];
+        this._attentionFindings = attention;
         const attentionBody = document.getElementById("attentionTableBody");
         if (attentionBody) {
             if (!attention.length) {
-                attentionBody.innerHTML = '<tr><td colspan="7" class="empty-state">No priority vulnerabilities right now.</td></tr>';
+                attentionBody.innerHTML = '<tr><td colspan="6" class="empty-state">No priority vulnerabilities right now.</td></tr>';
             } else {
-                attentionBody.innerHTML = attention.map((item) => {
+                attentionBody.innerHTML = attention.map((item, index) => {
                     const sev = (item.severity || "low").toLowerCase();
                     const sevBadge = `<span class="badge badge-${this.esc(sev)}">${this.esc(sev)}</span>`;
-                    const exploitBadge = item.exploit_available
-                        ? '<span class="badge-pill exploit-yes">Yes</span>'
-                        : '<span class="badge-pill exploit-no">No</span>';
+                    const status = item.status || "needs_review";
+                    const ai = item.ai_recommendation
+                        ? `<span class="ai-recommendation-badge" title="${this.esc(item.ai_reason || "")}">AI: ${this.esc(item.ai_recommendation)}</span>`
+                        : '<span class="text-muted">—</span>';
                     return `<tr>
                         <td>${this.esc(item.asset || "-")}</td>
-                        <td>${this.esc(item.cve || "-")}</td>
+                        <td>${this.esc(item.title || item.cve || "-")}</td>
                         <td>${sevBadge}</td>
-                        <td>${this.esc(String(item.cvss ?? "-"))}</td>
-                        <td>${exploitBadge}</td>
-                        <td>${this.esc(item.sla || "-")}</td>
-                        <td><strong>${this.esc(item.action || "Review")}</strong></td>
+                        <td>${this.esc(status)}</td>
+                        <td>${ai}</td>
+                        <td>
+                            <div class="finding-action-row">
+                                <button type="button" class="btn-ghost btn-xs" data-finding-action="confirm" data-finding-index="${index}">Confirm</button>
+                                <button type="button" class="btn-ghost btn-xs" data-finding-action="false_positive" data-finding-index="${index}">Not an issue</button>
+                                <button type="button" class="btn-ghost btn-xs" data-finding-action="retest" data-finding-index="${index}">Retest</button>
+                                <button type="button" class="btn-ghost btn-xs" data-finding-action="suppress" data-finding-index="${index}">Suppress</button>
+                                <button type="button" class="btn-ghost btn-xs" data-finding-action="details" data-finding-index="${index}">Details</button>
+                            </div>
+                        </td>
                     </tr>`;
                 }).join("");
+                attentionBody.querySelectorAll("[data-finding-action]").forEach((btn) => {
+                    btn.addEventListener("click", () => {
+                        const idx = Number(btn.dataset.findingIndex || -1);
+                        const action = btn.dataset.findingAction;
+                        const item = this._attentionFindings?.[idx];
+                        if (!item) return;
+                        this.handleFindingAction(action, item);
+                    });
+                });
             }
         }
 
@@ -405,6 +431,171 @@ const App = {
                     `<div class="metric-item"><span>${this.esc(row.asset || "Asset")}</span><strong>${this.esc(String(row.risk_score || 0))}</strong></div>`
                 ).join("")}</div>`
                 : '<div class="empty-state">No asset risk ranking yet.</div>';
+        }
+    },
+
+    async handleFindingAction(action, item) {
+        if (action === "details") {
+            this.showFindingDrawer(item);
+            return;
+        }
+        if (action === "retest") {
+            await this.retestFinding(item);
+            return;
+        }
+        if (action === "accept_ai" && item.ai_recommendation) {
+            const mapped = item.ai_recommendation === "false_positive" ? "false_positive"
+                : (item.ai_recommendation === "confirmed" ? "confirmed" : "needs_review");
+            await this.setFindingDisposition(item, mapped, false);
+            return;
+        }
+        if (action === "confirm") {
+            await this.setFindingDisposition(item, "confirmed", false);
+            return;
+        }
+        if (action === "false_positive") {
+            await this.setFindingDisposition(item, "false_positive", false);
+            return;
+        }
+        if (action === "suppress") {
+            await this.setFindingDisposition(item, "false_positive", true);
+        }
+    },
+
+    showFindingDrawer(item) {
+        const drawer = document.getElementById("priorityFindingDrawer");
+        if (!drawer) return;
+        const retest = item.last_retest || {};
+        drawer.classList.remove("hidden");
+        drawer.innerHTML = `
+            <div><strong>${this.esc(item.title || "Finding")}</strong></div>
+            <div class="report-feed-meta">${this.esc(item.asset || "")} · ${this.esc(item.status || "needs_review")}</div>
+            ${item.ai_recommendation ? `<div class="ai-recommendation-badge" style="margin-top:8px;">AI suggests ${this.esc(item.ai_recommendation)}: ${this.esc(item.ai_reason || "")}</div>` : ""}
+            <div class="metric-list" style="margin-top:10px;">
+                <div class="metric-item"><span>Evidence</span><strong>${this.esc(item.matched_evidence || item.payload || "-")}</strong></div>
+                <div class="metric-item"><span>URL</span><strong>${this.esc(item.url || item.path || "-")}</strong></div>
+                <div class="metric-item"><span>Last retest</span><strong>${this.esc(retest.outcome || "not run")}${retest.reason ? ` — ${this.esc(retest.reason)}` : ""}</strong></div>
+            </div>
+            <div class="finding-drawer-actions">
+                <button type="button" class="btn-primary btn-sm" data-drawer-action="confirm">Confirm</button>
+                <button type="button" class="btn-ghost btn-sm" data-drawer-action="false_positive">Not an issue</button>
+                <button type="button" class="btn-ghost btn-sm" data-drawer-action="retest">Retest</button>
+                <button type="button" class="btn-ghost btn-sm" data-drawer-action="suppress">Suppress next scan</button>
+                ${item.ai_recommendation ? `<button type="button" class="btn-ghost btn-sm" data-drawer-action="accept_ai">Accept AI suggestion</button>` : ""}
+            </div>
+        `;
+        drawer.querySelectorAll("[data-drawer-action]").forEach((btn) => {
+            btn.addEventListener("click", () => this.handleFindingAction(btn.dataset.drawerAction, item));
+        });
+    },
+
+    async setFindingDisposition(item, status, suppressFuture) {
+        try {
+            const response = await _authedFetch("/api/findings/disposition", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    status,
+                    suppress_future: !!suppressFuture,
+                    report_path: item.report_path || "",
+                    target_url: item.target || item.asset || "",
+                    finding_id: item.finding_id || "",
+                    fingerprint: item.fingerprint || "",
+                    finding: {
+                        id: item.finding_id || "",
+                        title: item.title || "",
+                        asset: item.asset || "",
+                        url: item.url || "",
+                        path: item.path || "",
+                        parameter: item.parameter || "",
+                        evidence_kind: item.evidence_kind || "",
+                        fingerprint: item.fingerprint || "",
+                    },
+                    note: suppressFuture ? "Suppressed for future scans" : "",
+                }),
+            });
+            if (!response.ok) {
+                this.toast("Failed to save disposition", "error");
+                return;
+            }
+            this.toast(suppressFuture ? "Finding suppressed for future scans" : `Marked as ${status.replace("_", " ")}`, "success");
+            await this.loadDashboard();
+        } catch {
+            this.toast("Connection error", "error");
+        }
+    },
+
+    async retestFinding(item) {
+        try {
+            const response = await _authedFetch("/api/findings/retest", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    report_path: item.report_path || "",
+                    target_url: item.target || item.asset || "",
+                    finding_id: item.finding_id || "",
+                    fingerprint: item.fingerprint || "",
+                    finding: {
+                        id: item.finding_id || "",
+                        title: item.title || "",
+                        asset: item.asset || "",
+                        url: item.url || "",
+                        path: item.path || "",
+                        parameter: item.parameter || "",
+                        evidence_kind: item.evidence_kind || "",
+                        payload: item.payload || "",
+                        matched_evidence: item.matched_evidence || "",
+                        fingerprint: item.fingerprint || "",
+                    },
+                }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                this.toast(data.error || "Retest failed", "error");
+                return;
+            }
+            const outcome = data.retest?.outcome || "needs_review";
+            this.toast(`Retest: ${outcome}${data.retest?.reason ? ` — ${data.retest.reason}` : ""}`, "success");
+            await this.loadDashboard();
+        } catch {
+            this.toast("Connection error", "error");
+        }
+    },
+
+    async loadSuppressedFindings() {
+        const node = document.getElementById("dashSuppressedList");
+        if (!node) return;
+        try {
+            const data = await this.api("/api/findings/dispositions?suppressed=1");
+            const rows = Array.isArray(data?.dispositions) ? data.dispositions : [];
+            if (!rows.length) {
+                node.innerHTML = '<div class="empty-state">No suppressions.</div>';
+                return;
+            }
+            node.innerHTML = `<div class="metric-list">${rows.slice(0, 8).map((row) => `
+                <div class="metric-item">
+                    <span>${this.esc(row.title || row.fingerprint || "Finding")}<br><small>${this.esc(row.host || row.target_url || "")}</small></span>
+                    <button type="button" class="btn-ghost btn-xs" data-reopen-fp="${this.esc(row.fingerprint || "")}">Reopen</button>
+                </div>
+            `).join("")}</div>`;
+            node.querySelectorAll("[data-reopen-fp]").forEach((btn) => {
+                btn.addEventListener("click", async () => {
+                    const fingerprint = btn.dataset.reopenFp;
+                    const response = await _authedFetch("/api/findings/disposition/reopen", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ fingerprint }),
+                    });
+                    if (response.ok) {
+                        this.toast("Suppression cleared", "success");
+                        this.loadSuppressedFindings();
+                    } else {
+                        this.toast("Failed to reopen", "error");
+                    }
+                });
+            });
+        } catch {
+            node.innerHTML = '<div class="empty-state">Unable to load suppressions.</div>';
         }
     },
 
@@ -2196,6 +2387,10 @@ const App = {
         if (tokens) {
             document.getElementById("tokenWpscan").value = tokens.wpscan_api_token || "";
             document.getElementById("tokenZap").value = tokens.zap_api_key || "";
+            const openrouter = document.getElementById("tokenOpenRouter");
+            const openrouterModel = document.getElementById("tokenOpenRouterModel");
+            if (openrouter) openrouter.value = tokens.openrouter_api_key || "";
+            if (openrouterModel) openrouterModel.value = tokens.openrouter_model || "openai/gpt-4o-mini";
         }
 
         document.getElementById("tokensForm").onsubmit = async (event) => {
@@ -2203,6 +2398,8 @@ const App = {
             const payload = {
                 wpscan_api_token: document.getElementById("tokenWpscan").value,
                 zap_api_key: document.getElementById("tokenZap").value,
+                openrouter_api_key: document.getElementById("tokenOpenRouter")?.value || "",
+                openrouter_model: document.getElementById("tokenOpenRouterModel")?.value || "openai/gpt-4o-mini",
             };
 
             try {
@@ -2541,25 +2738,21 @@ const App = {
             <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Monitored Assets</span>
                 <strong>${this.esc(String(overview.enabled_assets || 0))}</strong>
-                <p>Enabled monitors currently scheduled.</p>
             </div>
             <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Healthy Assets</span>
                 <strong>${this.esc(String(overview.healthy_assets || 0))}</strong>
-                <p>Assets currently holding a healthy state.</p>
             </div>
             <div class="workspace-signal-card monitoring-operator-card">
                 <span class="signal-label">Active Incidents</span>
                 <strong>${this.esc(String(overview.active_incidents || 0))}</strong>
-                <p>Down or degraded assets requiring action.</p>
             </div>
             <div class="workspace-signal-card monitoring-operator-card">
-                <span class="signal-label">Timing</span>
+                <span class="signal-label">24h Uptime</span>
                 <strong>${this.esc(String(overview.uptime_24h_pct || 0))}%</strong>
-                <p>24h average uptime across monitored assets.</p>
                 <div class="monitoring-meta-line">
-                    <span class="monitoring-meta-pill">Last check pass: ${this.esc(lastEvaluated)}</span>
-                    <span class="monitoring-meta-pill">UI updated: ${this.esc(generatedAt)}</span>
+                    <span class="monitoring-meta-pill">Last check: ${this.esc(lastEvaluated)}</span>
+                    <span class="monitoring-meta-pill">UI: ${this.esc(generatedAt)}</span>
                 </div>
             </div>
         `;

@@ -894,14 +894,18 @@ def generate_html_report(payload: dict) -> str:
 
     def _derive_status(finding: dict) -> str:
         val = str(finding.get("status", "")).strip().lower()
-        if val in {"new", "known", "in_progress", "fixed", "verified", "false_positive"}:
+        if val in {"new", "known", "in_progress", "fixed", "verified", "false_positive", "needs_review", "confirmed"}:
             return val
         verification = str(finding.get("verification_status", "")).lower()
         if verification in {"fixed"}:
             return "fixed"
+        if verification in {"false_positive"}:
+            return "false_positive"
         if verification in {"confirmed", "reproduced"}:
-            return "verified"
-        return "new"
+            return "confirmed"
+        if verification in {"needs_review"}:
+            return "needs_review"
+        return "needs_review"
 
     def _derive_owner(finding: dict) -> str:
         return str(finding.get("owner") or finding.get("assignee") or "-")
