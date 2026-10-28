@@ -73,9 +73,13 @@ On first launch, DP Security Platform redirects to `/setup` for one-time admin c
 
 ### Persistent Data
 
-- `./config` for runtime config, tokens, auth, and targets.
-- Docker volume `dp-security-platform-scan-data` for generated reports and raw scan output (mounted at `/app/reports`).
-- `./logs` for runtime/container logs.
+Named Docker volumes (Dokploy Autodeploy-safe — do not bind-mount `./config` or `./reports`):
+
+- `dp-security-platform-config` → `/app/config` (tokens, auth, targets, settings)
+- `dp-security-platform-scan-data` → `/app/reports` (reports + raw scan output)
+- `dp-security-platform-logs` → `/app/logs`
+
+Dokploy Compose deploy notes: [ops/dokploy.md](ops/dokploy.md).
 
 ## Quick Start (Native Fallback)
 
@@ -297,6 +301,10 @@ Assessment tools and raw scan output will match VPS malware / hacktool signature
 docker compose exec dp-security-platform /app/docker/tool-inventory.sh
 docker volume inspect dp-security-platform-scan-data --format '{{ .Mountpoint }}'
 ```
+
+### Dokploy
+
+Use a **Docker Compose** application (not Stack). Point the domain at port **5000**, set `DP_SECURITY_PLATFORM_SECRET_KEY` in Environment, and leave the named volumes as-is. Full checklist: [ops/dokploy.md](ops/dokploy.md).
 
 ### 2 GB VPS notes
 

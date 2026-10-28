@@ -2,7 +2,35 @@
 
 ## Current status
 
-Host malware-alert containment is implemented in-repo (named report volume, Nuclei template path, exception pack). **Live scan validation and VPS report migration remain manual on the cloud server**.
+Host malware-alert containment + Dokploy-safe named volumes are in-repo. **Redeploy on Dokploy and one-time data migration from old `./config` / `./reports` binds remain manual**.
+
+## Completed: Dokploy-safe volumes (2026-10-28)
+
+### Problem
+Dokploy Autodeploy `git clone`s into the app code directory and clears it. Bind mounts `./config` and `./logs` (and the old `./reports`) lose or empty data after each deploy.
+
+### Fix
+All persistence is named Docker volumes with stable names:
+
+- `dp-security-platform-config` → `/app/config`
+- `dp-security-platform-scan-data` → `/app/reports`
+- `dp-security-platform-logs` → `/app/logs`
+
+Also: optional `.env` via `env_file`, `DP_SECURITY_PLATFORM_SECRET_KEY` / `UPDATE_NUCLEI_TEMPLATES` from env, and [ops/dokploy.md](ops/dokploy.md).
+
+### Dokploy checklist
+1. App type: Docker Compose, file `docker-compose.yml`
+2. Domain → port **5000**
+3. Environment: set `DP_SECURITY_PLATFORM_SECRET_KEY`
+4. Deploy / rebuild
+5. If migrating from bind mounts, `docker cp` old config/reports into the container paths once
+6. Enable Volume Backups for `config` + `scan-data` volumes
+7. Confirm login + Open report still work
+
+### Files
+- `docker-compose.yml`, `ops/dokploy.md`, `ops/host-scanner-exception.md`, `README.md`, `workflow.md`
+
+---
 
 ## Completed: contain host malware alerts (2026-10-28)
 

@@ -19,13 +19,20 @@ Do exclude:
 1. **Signature / hacktool detections** for the assessment tools listed below (preferred).
 2. **One stable volume path** for raw scan output — the named Docker volume `dp-security-platform-scan-data` mounted at `/app/reports` inside the container.
 
-Resolve the host path after deploy:
+Resolve the host path after deploy (works the same under Dokploy Compose):
 
 ```bash
 docker volume inspect dp-security-platform-scan-data --format '{{ .Mountpoint }}'
 ```
 
-That Mountpoint is the only filesystem path that should be ignored for report noise. It survives image rebuilds.
+That Mountpoint is the only filesystem path that should be ignored for report noise. It survives image rebuilds and Dokploy Autodeploy clones.
+
+Related persist volumes (usually no hacktool signatures, but useful for backups):
+
+- `dp-security-platform-config` → `/app/config`
+- `dp-security-platform-logs` → `/app/logs`
+
+Dokploy deploy steps: [dokploy.md](dokploy.md).
 
 ## Tool inventory (for hash allowlists)
 

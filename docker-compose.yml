@@ -7,19 +7,25 @@ services:
     container_name: dp-security-platform
     ports:
       - "5000:5000"
+    # Dokploy writes UI env vars into .env next to this compose file.
+    env_file:
+      - path: .env
+        required: false
     environment:
       # Templates are baked at image build; set to "1" only when you need a refresh.
-      UPDATE_NUCLEI_TEMPLATES: "0"
+      UPDATE_NUCLEI_TEMPLATES: "${UPDATE_NUCLEI_TEMPLATES:-0}"
       PYTHONUNBUFFERED: "1"
-      # Set a strong secret key in production — if unset, a random key is
-      # generated per-process which invalidates sessions on restart.
-      DP_SECURITY_PLATFORM_SECRET_KEY: ""
+      # Set a strong secret key in Dokploy Environment (or local .env).
+      # If unset, a random key is generated per-process and sessions reset on restart.
+      DP_SECURITY_PLATFORM_SECRET_KEY: "${DP_SECURITY_PLATFORM_SECRET_KEY:-}"
+      NUCLEI_TEMPLATES_PATH: "${NUCLEI_TEMPLATES_PATH:-/opt/nuclei-templates}"
     volumes:
-      - ./config:/app/config
-      # Named volume keeps raw scan output off the host project folder
-      # that VPS malware scanners typically walk.
+      # Named volumes survive Dokploy Autodeploy git clones.
+      # Do NOT use ./config or ./logs bind mounts — Dokploy clears the code dir each deploy.
+      - app-config:/app/config
+      # Keeps raw scan output off the host project folder malware scanners walk.
       - scan-data:/app/reports
-      - ./logs:/app/logs
+      - app-logs:/app/logs
     restart: unless-stopped
     # Leave ~512MB for the host OS/Docker on a 2GB VPS.
     mem_limit: 1536m
@@ -46,5 +52,9 @@ services:
       retries: 5
 
 volumes:
+  app-config:
+    name: dp-security-platform-config
   scan-data:
     name: dp-security-platform-scan-data
+  app-logs:
+    name: dp-security-platform-logs
