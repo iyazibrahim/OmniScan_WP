@@ -1432,10 +1432,12 @@ def test_monitoring_telegram():
 @app.route('/api/tools/update-templates', methods=['POST'])
 @login_required
 def update_nuclei_templates():
-    """Trigger a nuclei template update. Runs nuclei -ut in a subprocess."""
+    """Trigger a nuclei template update into the pinned templates directory."""
+    templates_path = os.environ.get("NUCLEI_TEMPLATES_PATH", "/opt/nuclei-templates")
     try:
+        Path(templates_path).mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
-            ["nuclei", "-ut"],
+            ["nuclei", "-ud", templates_path, "-ut"],
             capture_output=True,
             text=True,
             timeout=300,

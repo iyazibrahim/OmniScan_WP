@@ -74,7 +74,7 @@ On first launch, DP Security Platform redirects to `/setup` for one-time admin c
 ### Persistent Data
 
 - `./config` for runtime config, tokens, auth, and targets.
-- `./reports` for generated reports.
+- Docker volume `dp-security-platform-scan-data` for generated reports and raw scan output (mounted at `/app/reports`).
 - `./logs` for runtime/container logs.
 
 ## Quick Start (Native Fallback)
@@ -289,9 +289,18 @@ docker compose up -d --build
 docker compose run --rm dp-security-platform scanner --target https://example.com --mode full --profile auto --ci
 ```
 
+### Host malware scanner alerts
+
+Assessment tools and raw scan output will match VPS malware / hacktool signatures. Reports persist in the named Docker volume `dp-security-platform-scan-data` (not the host project folder). For allowlist wording, volume path resolution, and a hash inventory script, see [ops/host-scanner-exception.md](ops/host-scanner-exception.md):
+
+```bash
+docker compose exec dp-security-platform /app/docker/tool-inventory.sh
+docker volume inspect dp-security-platform-scan-data --format '{{ .Mountpoint }}'
+```
+
 ### 2 GB VPS notes
 
-The compose file caps the container at `1536m` RAM, rotates Docker JSON logs (`10m` × 3), and probes health via `http://127.0.0.1:5000/health` every 60s. Gunicorn runs one `gthread` worker with `--max-requests` recycling so a dead worker cannot leave the container **Up** but Unhealthy for weeks.
+The compose file caps the container at `1536m` RAM and `512` PIDs, drops unused capabilities, sets `no-new-privileges`, rotates Docker JSON logs (`10m` × 3), and probes health via `http://127.0.0.1:5000/health` every 60s. Gunicorn runs one `gthread` worker with `--max-requests` recycling so a dead worker cannot leave the container **Up** but Unhealthy for weeks.
 
 Scanner CLIs are downloaded as pinned GitHub release binaries (not compiled with Go/Rust on the VPS), which keeps rebuilds much lighter on small hosts.
 
@@ -325,7 +334,7 @@ Docker tooling notes:
 
 - **httpx**: ProjectDiscovery's Go `httpx` must win over the Python `httpx` CLI. Scanner packages live in `/opt/scanner-venv`; wrappers call those binaries without putting that venv first on `PATH`. Use `-websocket` (not `-ws`) with httpx v1.7.x.
 - **Nikto**: Requires Perl `XML::Writer` (`libxml-writer-perl`) for `-Format json`.
-- **Nuclei**: Templates are baked at image build (`nuclei -ut`). Runtime refresh is off by default (`UPDATE_NUCLEI_TEMPLATES=0`); set to `1` only when needed.
+- **Nuclei**: Templates are baked at `/opt/nuclei-templates` (`nuclei -ud … -ut`). Runtime refresh is off by default (`UPDATE_NUCLEI_TEMPLATES=0`); set to `1` only when needed.
 - **Wapiti / droopescan / sslyze / arjun**: Installed in an isolated `/opt/scanner-venv` so wapiti’s `mitmproxy→Flask<2.3` pin cannot conflict with the Flask 3 app. App deps are in `requirements.txt`; scanner deps are in `requirements-scanners.txt`. Wapiti remains `>=3.1.8,<3.2` on Debian’s Python 3.11 (3.2+ needs Python 3.12+).
 
 Operational reliability knobs in `config/scan-config.json`:

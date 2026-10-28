@@ -71,6 +71,14 @@ DEEP_SCAN_ONLY_TOOLS = {
     "droopescan",
 }
 
+# Stable path baked into the image; keeps templates off /root for allowlisting.
+NUCLEI_TEMPLATES_PATH = os.environ.get("NUCLEI_TEMPLATES_PATH", "/opt/nuclei-templates")
+
+
+def _nuclei_cmd(*args: str) -> list[str]:
+    """Build a nuclei argv with the pinned templates directory."""
+    return ["nuclei", "-ud", NUCLEI_TEMPLATES_PATH, *args]
+
 TOOLSET_PROFILES = {
     "portable_core": PORTABLE_CORE_TOOLS,
     "deep_scan": PORTABLE_CORE_TOOLS | DEEP_SCAN_ONLY_TOOLS,
@@ -776,8 +784,7 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
 
     severities = config.get("nuclei_severity", "critical,high,medium,low,info")
     rate = str(config.get("nuclei_rate_limit", 25))
-    cmd = [
-        "nuclei",
+    cmd = _nuclei_cmd(
         "-u",
         url,
         "-tags",
@@ -790,7 +797,7 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
         "-o",
         str(output_file),
         "-silent",
-    ]
+    )
     timeout = int(config.get("nuclei_timeout_seconds", 900) or 900)
     result = _run_tool(cmd, "nuclei", "Nuclei", "passive", scan_dir, output_files=[output_file], timeout=timeout, cancel_check=cancel_check)
 
@@ -800,8 +807,11 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
     fallback_notes: list[str] = []
     if result.get("status") == "completed_no_output" and run_auto_fallback:
         ui.status("Nuclei returned no tagged matches; retrying with auto-scan templates...")
-        auto_cmd = [
-            "nuclei",
+        auto_timeout = int(config.get("nuclei_auto_fallback_timeout_seconds", max(timeout, 1200)) or max(timeout, 1200))
+        auto_concurrency = int(config.get("nuclei_auto_scan_concurrency", 10) or 10)
+        auto_bulk_size = int(config.get("nuclei_auto_scan_bulk_size", 10) or 10)
+        req_timeout = int(config.get("nuclei_request_timeout", 10) or 10)
+        auto_cmd = _nuclei_cmd(
             "-u",
             url,
             "-as",
@@ -813,17 +823,15 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             "-o",
             str(output_file),
             "-silent",
-        ]
-        auto_timeout = int(config.get("nuclei_auto_fallback_timeout_seconds", max(timeout, 1200)) or max(timeout, 1200))
-        auto_concurrency = int(config.get("nuclei_auto_scan_concurrency", 10) or 10)
-        auto_bulk_size = int(config.get("nuclei_auto_scan_bulk_size", 10) or 10)
-        req_timeout = int(config.get("nuclei_request_timeout", 10) or 10)
-        auto_cmd += [
-            "-concurrency", str(auto_concurrency),
-            "-bulk-size", str(auto_bulk_size),
-            "-timeout", str(req_timeout),
-            "-retries", "0",
-        ]
+            "-concurrency",
+            str(auto_concurrency),
+            "-bulk-size",
+            str(auto_bulk_size),
+            "-timeout",
+            str(req_timeout),
+            "-retries",
+            "0",
+        )
         auto_result = _run_tool(
             auto_cmd,
             "nuclei",
@@ -853,8 +861,7 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
         full_concurrency = int(config.get("nuclei_auto_scan_concurrency", 10) or 10)
         full_bulk_size = int(config.get("nuclei_auto_scan_bulk_size", 10) or 10)
         req_timeout = int(config.get("nuclei_request_timeout", 10) or 10)
-        full_cmd = [
-            "nuclei",
+        full_cmd = _nuclei_cmd(
             "-u",
             url,
             "-severity",
@@ -865,11 +872,15 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
             "-o",
             str(output_file),
             "-silent",
-            "-concurrency", str(full_concurrency),
-            "-bulk-size", str(full_bulk_size),
-            "-timeout", str(req_timeout),
-            "-retries", "0",
-        ]
+            "-concurrency",
+            str(full_concurrency),
+            "-bulk-size",
+            str(full_bulk_size),
+            "-timeout",
+            str(req_timeout),
+            "-retries",
+            "0",
+        )
         full_result = _run_tool(
             full_cmd,
             "nuclei",
@@ -890,7 +901,8 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
     if result.get("status") == "completed_no_output":
         if _nuclei_missing_templates_signal(result):
             fallback_notes.append(
-                "Nuclei templates appear missing or unusable. Update templates with `nuclei -ut` "
+                "Nuclei templates appear missing or unusable. Update templates with "
+                f"`nuclei -ud {NUCLEI_TEMPLATES_PATH} -ut` "
                 "or set UPDATE_NUCLEI_TEMPLATES=1 and rebuild/restart the container."
             )
         else:

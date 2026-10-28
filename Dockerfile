@@ -140,8 +140,10 @@ RUN apt-get update && \
     apt-get purge -y --auto-remove build-essential python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Bake Nuclei templates into the image (requires network at build time).
-RUN nuclei -ut || nuclei -update-templates || true
+# Bake Nuclei templates to a stable path for host-scanner allowlisting.
+ENV NUCLEI_TEMPLATES_PATH=/opt/nuclei-templates
+RUN mkdir -p /opt/nuclei-templates && \
+    (nuclei -ud /opt/nuclei-templates -ut || nuclei -ud /opt/nuclei-templates -update-templates || true)
 
 RUN git clone --depth 1 https://github.com/urbanadventurer/WhatWeb.git /opt/tools/whatweb && \
     printf '#!/usr/bin/env bash\nexec ruby /opt/tools/whatweb/whatweb "$@"\n' >/usr/local/bin/whatweb && \
@@ -178,9 +180,9 @@ RUN rm -f /opt/venv/bin/httpx /opt/scanner-venv/bin/httpx
 
 COPY . /app
 
-RUN chmod +x /app/docker/entrypoint.sh /app/docker/healthcheck.sh && \
+RUN chmod +x /app/docker/entrypoint.sh /app/docker/healthcheck.sh /app/docker/tool-inventory.sh && \
     find /app -maxdepth 1 -name "*.sh" -exec sed -i 's/\r$//' {} \; && \
-    sed -i 's/\r$//' /app/docker/entrypoint.sh /app/docker/healthcheck.sh
+    sed -i 's/\r$//' /app/docker/entrypoint.sh /app/docker/healthcheck.sh /app/docker/tool-inventory.sh
 
 EXPOSE 5000
 

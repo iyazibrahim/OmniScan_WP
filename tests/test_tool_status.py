@@ -6,10 +6,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lib.tools import (
+    NUCLEI_TEMPLATES_PATH,
     _annotate_coverage,
+    _nuclei_cmd,
     _nuclei_missing_templates_signal,
     _run_tool,
     run_httpx,
+    run_nuclei,
     run_wpscan,
 )
 
@@ -106,6 +109,55 @@ class ToolStatusMappingTest(unittest.TestCase):
             stderr.write_text("Could not find template / no templates found\n", encoding="utf-8")
             result = {"note": "", "stderr_log": str(stderr), "stdout_log": ""}
             self.assertTrue(_nuclei_missing_templates_signal(result))
+
+    def test_nuclei_cmd_pins_templates_directory(self):
+        cmd = _nuclei_cmd("-u", "https://example.com", "-silent")
+        self.assertEqual(cmd[0], "nuclei")
+        self.assertEqual(cmd[1:3], ["-ud", NUCLEI_TEMPLATES_PATH])
+        self.assertIn("-u", cmd)
+
+    def test_run_nuclei_passes_ud_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = Path(tmp)
+            captured = {}
+
+            def fake_run_tool(cmd, *args, **kwargs):
+                captured["cmd"] = list(cmd)
+                return _annotate_coverage(
+                    {
+                        "name": "nuclei",
+                        "label": "Nuclei",
+                        "phase": "passive",
+                        "command": list(cmd),
+                        "status": "completed",
+                        "returncode": 0,
+                        "duration_seconds": 1.0,
+                        "stdout_log": "",
+                        "stderr_log": "",
+                        "output_files": ["nuclei.jsonl"],
+                        "primary_output": "nuclei.jsonl",
+                        "note": "",
+                    }
+                )
+
+            with patch("lib.tools._run_tool", side_effect=fake_run_tool):
+                result = run_nuclei(
+                    "https://example.com",
+                    {
+                        "nuclei_tags": "cve",
+                        "nuclei_severity": "high",
+                        "nuclei_rate_limit": 10,
+                        "nuclei_timeout_seconds": 60,
+                        "nuclei_retry_auto_scan_on_empty": False,
+                        "nuclei_retry_full_template_on_empty_full": False,
+                    },
+                    scan_dir,
+                    "webapp",
+                    scan_mode="passive",
+                )
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(captured["cmd"][1:3], ["-ud", NUCLEI_TEMPLATES_PATH])
 
     def test_run_wpscan_passes_vulnerable_exit_code(self):
         with tempfile.TemporaryDirectory() as tmp:

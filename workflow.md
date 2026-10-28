@@ -2,6 +2,54 @@
 
 ## Current status
 
+Host malware-alert containment is implemented in-repo (named report volume, Nuclei template path, exception pack). **Live scan validation and VPS report migration remain manual on the cloud server**.
+
+## Completed: contain host malware alerts (2026-10-28)
+
+### Problem
+VPS / host malware scanners flag the assessment appliance because SQLMap, Nuclei templates, Commix, Nikto, Dalfox, and raw scan artifacts match hacktool signatures. Bind-mounting `./reports` put nuclei/sqlmap output in the host project folder those scanners walk.
+
+### Fixes
+- Named Docker volume `dp-security-platform-scan-data` mounts at `/app/reports` (config/logs stay bind-mounted).
+- Compose hardening: `no-new-privileges`, targeted `cap_drop`, `pids_limit: 512`.
+- Nuclei templates baked and run from `/opt/nuclei-templates` (`-ud`).
+- Exception pack: `ops/host-scanner-exception.md` + `docker/tool-inventory.sh`.
+
+### Files touched
+- `docker-compose.yml`, `Dockerfile`, `docker/entrypoint.sh`, `docker/tool-inventory.sh`
+- `lib/tools.py`, `app.py`
+- `ops/host-scanner-exception.md`, `README.md`, `workflow.md`
+
+### Manual VPS migration (required once)
+
+```bash
+# 1. Rebuild and start (creates empty scan-data volume)
+docker compose build
+docker compose up -d
+
+# 2. Copy existing host reports into the volume (if ./reports still has history)
+docker compose cp ./reports/. dp-security-platform:/app/reports/
+
+# 3. Confirm dashboard can Open an existing report
+
+# 4. Remove the old host tree so the AV stops matching leftover nuclei/sqlmap files
+rm -rf ./reports
+
+# 5. Allowlist pack for the provider
+docker volume inspect dp-security-platform-scan-data --format '{{ .Mountpoint }}'
+docker compose exec dp-security-platform /app/docker/tool-inventory.sh
+```
+
+Send `ops/host-scanner-exception.md` plus the inventory output with the ticket. Prefer signature ignores for the tools; exclude only the volume Mountpoint (not all of `/var/lib/docker`).
+
+### Validation
+- Local unit tests for tools/reports (see below after changes)
+- Full Docker rebuild + migration checklist is manual on the VPS
+
+---
+
+## Previous: scanner tool fixes
+
 Scanner tooling fixes for Nikto, httpx, Nuclei, WPScan, and gau are implemented in-repo. **Live scan validation is manual on the cloud server** (not run by the agent).
 
 ## Completed: scanner tool fixes (2026-08-03)

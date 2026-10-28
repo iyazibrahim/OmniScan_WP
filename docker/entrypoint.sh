@@ -5,9 +5,13 @@ cd /app
 
 mkdir -p reports logs config
 
+NUCLEI_TEMPLATES_PATH="${NUCLEI_TEMPLATES_PATH:-/opt/nuclei-templates}"
+export NUCLEI_TEMPLATES_PATH
+mkdir -p "${NUCLEI_TEMPLATES_PATH}"
+
 if [[ "${UPDATE_NUCLEI_TEMPLATES:-0}" == "1" ]] && command -v nuclei >/dev/null 2>&1; then
-    echo "[*] Updating nuclei templates..."
-    nuclei -ut || true
+    echo "[*] Updating nuclei templates in ${NUCLEI_TEMPLATES_PATH}..."
+    nuclei -ud "${NUCLEI_TEMPLATES_PATH}" -ut || true
 fi
 
 if [[ $# -eq 0 || "$1" == "app" ]]; then

@@ -16,11 +16,23 @@ services:
       DP_SECURITY_PLATFORM_SECRET_KEY: ""
     volumes:
       - ./config:/app/config
-      - ./reports:/app/reports
+      # Named volume keeps raw scan output off the host project folder
+      # that VPS malware scanners typically walk.
+      - scan-data:/app/reports
       - ./logs:/app/logs
     restart: unless-stopped
     # Leave ~512MB for the host OS/Docker on a 2GB VPS.
     mem_limit: 1536m
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_PTRACE
+      - SYS_MODULE
+      - MKNOD
     logging:
       driver: json-file
       options:
@@ -32,3 +44,7 @@ services:
       timeout: 15s
       start_period: 60s
       retries: 5
+
+volumes:
+  scan-data:
+    name: dp-security-platform-scan-data
