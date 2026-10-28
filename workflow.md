@@ -2,6 +2,30 @@
 
 ## Current status
 
+Host malware-alert containment + Dokploy-safe named volumes are in-repo. **Redeploy on Dokploy after the Wapiti `greenlet` pin.**
+
+## Completed: fix Wapiti greenlet build failure (2026-10-28)
+
+### Problem
+Dokploy image build failed at `wapiti --help` smoke check:
+
+`ImportError: The SQLAlchemy asyncio module requires that the Python 'greenlet' library is installed.`
+
+Wapiti’s SqlPersister imports `sqlalchemy.ext.asyncio`, but `wapiti3` installs sqlalchemy without the `[asyncio]` extra, so `greenlet` was missing.
+
+### Fix
+Pin in `requirements-scanners.txt`:
+
+- `greenlet>=3.0.0`
+- `sqlalchemy[asyncio]>=2.0.0`
+
+### Validation
+Redeploy/rebuild on Dokploy; build step that runs `wapiti --help` must succeed.
+
+---
+
+## Previous status
+
 Host malware-alert containment + Dokploy-safe named volumes are in-repo. **Redeploy on Dokploy and one-time data migration from old `./config` / `./reports` binds remain manual**.
 
 ## Completed: Dokploy-safe volumes (2026-10-28)
