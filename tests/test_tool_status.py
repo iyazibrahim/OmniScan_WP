@@ -11,8 +11,10 @@ from lib.tools import (
     _nuclei_cmd,
     _nuclei_missing_templates_signal,
     _run_tool,
+    run_dalfox,
     run_httpx,
     run_nuclei,
+    run_sqlmap,
     run_wpscan,
 )
 
@@ -194,6 +196,116 @@ class ToolStatusMappingTest(unittest.TestCase):
 
             self.assertEqual(captured.get("acceptable_returncodes"), {0, 5})
             self.assertEqual(result["status"], "completed")
+
+    def test_empty_output_dir_with_bad_exit_is_failed_not_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = Path(tmp)
+            empty_dir = scan_dir / "sqlmap-out"
+            empty_dir.mkdir()
+
+            mock_proc = MagicMock()
+            mock_proc.pid = 99
+            mock_proc.poll.return_value = 1
+            mock_proc.returncode = 1
+            mock_proc.communicate.return_value = ("", "")
+
+            with patch("lib.tools._spawn_tool_process", return_value=mock_proc):
+                result = _run_tool(
+                    ["sqlmap", "--batch"],
+                    "sqlmap",
+                    "SQLMap",
+                    "active",
+                    scan_dir,
+                    output_files=[empty_dir],
+                    acceptable_returncodes={0},
+                )
+
+            self.assertEqual(result["status"], "failed")
+
+    def test_exit_zero_empty_file_is_completed_no_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = Path(tmp)
+            output_file = scan_dir / "nuclei.jsonl"
+            output_file.write_text("", encoding="utf-8")
+
+            mock_proc = MagicMock()
+            mock_proc.pid = 42
+            mock_proc.poll.return_value = 0
+            mock_proc.returncode = 0
+            mock_proc.communicate.return_value = ("", "")
+
+            with patch("lib.tools._spawn_tool_process", return_value=mock_proc):
+                result = _run_tool(
+                    ["nuclei", "-u", "https://example.com"],
+                    "nuclei",
+                    "Nuclei",
+                    "passive",
+                    scan_dir,
+                    output_files=[output_file],
+                )
+
+            self.assertEqual(result["status"], "completed_no_output")
+            self.assertIn("no issues found", result.get("note", "").lower())
+
+    def test_run_dalfox_uses_config_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = Path(tmp)
+            captured = {}
+
+            def fake_run_tool(*args, **kwargs):
+                captured["timeout"] = kwargs.get("timeout")
+                captured["acceptable_returncodes"] = kwargs.get("acceptable_returncodes")
+                return _annotate_coverage(
+                    {
+                        "name": "dalfox",
+                        "label": "Dalfox",
+                        "phase": "active",
+                        "command": [],
+                        "status": "completed",
+                        "returncode": 0,
+                        "duration_seconds": 1.0,
+                        "stdout_log": "",
+                        "stderr_log": "",
+                        "output_files": ["dalfox.json"],
+                        "primary_output": "dalfox.json",
+                        "note": "",
+                    }
+                )
+
+            with patch("lib.tools._run_tool", side_effect=fake_run_tool):
+                run_dalfox("https://example.com", scan_dir, {"dalfox_timeout_seconds": 1800})
+
+            self.assertEqual(captured.get("timeout"), 1800)
+            self.assertEqual(captured.get("acceptable_returncodes"), {0, 1})
+
+    def test_run_sqlmap_default_timeout_from_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_dir = Path(tmp)
+            captured = {}
+
+            def fake_run_tool(*args, **kwargs):
+                captured["timeout"] = kwargs.get("timeout")
+                return _annotate_coverage(
+                    {
+                        "name": "sqlmap",
+                        "label": "SQLMap",
+                        "phase": "active",
+                        "command": [],
+                        "status": "completed",
+                        "returncode": 0,
+                        "duration_seconds": 1.0,
+                        "stdout_log": "",
+                        "stderr_log": "",
+                        "output_files": ["sqlmap-out"],
+                        "primary_output": "sqlmap-out",
+                        "note": "",
+                    }
+                )
+
+            with patch("lib.tools._run_tool", side_effect=fake_run_tool):
+                run_sqlmap("https://example.com", scan_dir, "wordpress", {"sqlmap_timeout_seconds": 900})
+
+            self.assertEqual(captured.get("timeout"), 900)
 
 
 if __name__ == "__main__":

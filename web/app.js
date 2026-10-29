@@ -422,10 +422,11 @@ const App = {
                 ? `<span class="ai-recommendation-badge" title="${this.esc(item.ai_reason || "")}">AI: ${this.esc(item.ai_recommendation)}</span>`
                 : "";
             const title = item.title || item.cve || "-";
+            const titleShort = title.length > 120 ? `${title.slice(0, 117)}...` : title;
             const asset = item.asset || "-";
             return `<tr class="finding-row">
                 <td class="finding-col-asset" data-label="Asset" title="${this.esc(asset)}">${this.esc(asset)}</td>
-                <td class="finding-col-title" data-label="Finding" title="${this.esc(title)}">${this.esc(title)}</td>
+                <td class="finding-col-title" data-label="Finding" title="${this.esc(title)}">${this.esc(titleShort)}</td>
                 <td class="finding-col-sev" data-label="Severity">${sevBadge}</td>
                 <td class="finding-col-status" data-label="Status">
                     <span class="finding-status-text">${this.esc(statusLabel)}</span>

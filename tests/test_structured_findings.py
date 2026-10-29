@@ -130,9 +130,9 @@ class StructuredFindingsTest(unittest.TestCase):
         )
 
         html = generate_html_report(payload)
-        self.assertIn("Affected Asset", html)
-        self.assertIn("Safe Verification Step", html)
-        self.assertIn("Where To Protect", html)
+        self.assertIn("Affected page / asset", html)
+        self.assertIn("How to check", html)
+        self.assertIn("Where to fix", html)
 
         csv_output = generate_csv_report(payload)
         self.assertIn("verification_status", csv_output)

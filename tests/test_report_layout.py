@@ -77,6 +77,33 @@ class ReportLayoutTest(unittest.TestCase):
         patched = apply_report_layout_overrides(self.html)
         self.assertEqual(patched, self.html)
 
+    def test_coverage_uses_side_by_side_metrics_and_plain_copy(self):
+        self.assertIn("coverage-metrics", self.html)
+        self.assertIn("Tools finished", self.html)
+        self.assertIn("Coverage score", self.html)
+        self.assertNotIn("Raw Execution Coverage", self.html)
+        self.assertNotIn("closeout record", self.html)
+
+    def test_tool_appendix_omits_command_and_outputs(self):
+        self.assertIn("Appendix: Tool Results", self.html)
+        self.assertIn("What happened", self.html)
+        self.assertNotIn("<th>Command</th>", self.html)
+        self.assertNotIn("<th>Outputs</th>", self.html)
+
+    def test_fingerprint_stack_present_for_long_lists(self):
+        payload = _minimal_payload()
+        payload["overview"]["fingerprint"] = {
+            "title": "Example",
+            "status_code": 200,
+            "webserver": "nginx",
+            "technologies": ["WordPress", "PHP", "LiteSpeed"],
+            "whatweb_plugins": ["WordPress", "JQuery"],
+        }
+        html = generate_html_report(payload)
+        self.assertIn("fingerprint-stack", html)
+        self.assertIn("fp-chip", html)
+        self.assertIn("WordPress", html)
+
 
 if __name__ == "__main__":
     unittest.main()

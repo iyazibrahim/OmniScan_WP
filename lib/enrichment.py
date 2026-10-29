@@ -16,7 +16,10 @@ def _load_remediation_db() -> dict:
 
 def _match_category(finding: dict, keyword_map: dict, categories: dict) -> dict | None:
     """Match a finding to a remediation category by keyword search."""
-    search_text = f"{finding.get('title', '')} {finding.get('description', '')}".lower()
+    search_text = " ".join(
+        str(finding.get(key, "") or "")
+        for key in ("title", "description", "matched_evidence", "evidence", "cve")
+    ).lower()
 
     for keyword, cat_key in keyword_map.items():
         if keyword.lower() in search_text:
@@ -55,9 +58,20 @@ def enrich_findings(findings: list[dict]) -> list[dict]:
             if sev_order.get(db_sev, 4) < sev_order.get(f["severity"], 4):
                 f["severity"] = db_sev
         else:
-            # No match - provide a generic fix
+            # No match — keep a concrete fallback instead of a vague one-liner.
             if not f.get("fix"):
-                f["fix"] = "Review this finding manually and apply appropriate security measures."
+                where = str(f.get("protection_target") or f.get("fix_target") or "the affected page or server setting").strip()
+                f["fix"] = f"Review the evidence and harden {where}."
+            if not f.get("fix_steps"):
+                where = str(f.get("protection_target") or f.get("fix_target") or "the affected page or server setting").strip()
+                f["fix_steps"] = [
+                    f"Locate {where} using the evidence in this finding.",
+                    "Apply the matching configuration change, update, or access restriction.",
+                    "Retest the same check to confirm the issue is resolved.",
+                ]
+
+        if match and not f.get("fix_steps"):
+            f["fix_steps"] = match.get("fix_steps", [])
 
         enriched.append(f)
 

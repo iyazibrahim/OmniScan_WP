@@ -267,31 +267,31 @@ def _annotate_coverage(result: dict) -> dict:
         coverage_bucket = "completed"
         coverage_applicable = True
         if status == "completed_no_output":
-            coverage_reason = note or "Completed successfully but did not return actionable output for this target."
+            coverage_reason = note or "Finished — no issues found for this target."
         elif status == "completed_partial":
-            coverage_reason = note or "Completed with partial evidence; review telemetry before dismissing the result."
+            coverage_reason = note or "Finished with limited results; review the scan folder if needed."
         else:
-            coverage_reason = note or "Completed successfully."
+            coverage_reason = note or "Finished normally."
     elif status == "missing":
         coverage_bucket = "unavailable"
         coverage_applicable = True
-        coverage_reason = note or "Required tool was unavailable on PATH."
+        coverage_reason = note or "Tool was not available on this scanner."
     elif status == "timeout":
         coverage_bucket = "timeout"
         coverage_applicable = True
-        coverage_reason = note or "Timed out before completing this applicable coverage check."
+        coverage_reason = note or "Stopped because it ran out of time."
     elif status == "skipped":
         coverage_bucket = "not_applicable"
         coverage_applicable = False
-        coverage_reason = note or "Skipped as intentionally non-applicable for the current profile or planner decision."
+        coverage_reason = note or "Skipped because it does not apply to this site."
     elif status == "cancelled":
         coverage_bucket = "failed"
         coverage_applicable = True
-        coverage_reason = note or "Cancelled before this applicable coverage check could complete."
+        coverage_reason = note or "Cancelled before finishing."
     else:
         coverage_bucket = "failed"
         coverage_applicable = True
-        coverage_reason = note or "Failed before this applicable coverage check could complete."
+        coverage_reason = note or "Did not finish successfully."
 
     result["coverage_applicable"] = coverage_applicable
     result["coverage_reason"] = coverage_reason
@@ -434,22 +434,25 @@ def _run_tool(
             outputs.append(str(stdout_file))
 
         ok_codes = acceptable_returncodes if acceptable_returncodes is not None else {0}
-        has_output = bool(outputs)
-        has_meaningful_output = bool((stdout or "").strip()) or any(_path_has_content(path) for path in existing_output_paths)
+        # Require real content. Empty dirs (e.g. pre-created sqlmap-out) do not count.
+        has_meaningful_output = bool((stdout or "").strip()) or any(
+            _path_has_content(path) for path in existing_output_paths
+        )
         if stdout_file is not None and stdout_file.exists():
             has_meaningful_output = has_meaningful_output or _path_has_content(stdout_file)
 
-        status = "completed" if (returncode in ok_codes or has_output) else "failed"
-        if returncode == 0 and not has_meaningful_output:
-            status = "completed_no_output"
-        elif returncode not in ok_codes and has_output:
+        if returncode in ok_codes:
+            status = "completed" if has_meaningful_output else "completed_no_output"
+        elif has_meaningful_output:
             status = "completed_partial"
+        else:
+            status = "failed"
 
         note = ""
         if status == "completed_no_output":
-            note = "Completed successfully but did not return actionable output for this target."
+            note = "Finished — no issues found for this target."
         elif status == "completed_partial":
-            note = stderr.strip()[:400] if stderr else "Completed with partial evidence; review captured output."
+            note = stderr.strip()[:400] if stderr else "Finished with limited results; review the scan folder if needed."
         elif returncode not in ok_codes and stderr:
             note = stderr.strip()[:400]
         elif returncode not in ok_codes:
@@ -489,9 +492,9 @@ def _run_tool(
                 "output_files": outputs,
                 "primary_output": outputs[0] if outputs else "",
                 "note": (
-                    f"Timed out after {timeout} seconds. Partial output was captured before termination."
+                    f"Stopped after {timeout} seconds. Some results were saved before it stopped."
                     if has_meaningful_output
-                    else f"Timed out after {timeout} seconds."
+                    else f"Stopped after {timeout} seconds — ran out of time."
                 ),
             }
         )
@@ -901,13 +904,13 @@ def run_nuclei(url: str, config: dict, scan_dir: Path, profile: str, scan_mode: 
     if result.get("status") == "completed_no_output":
         if _nuclei_missing_templates_signal(result):
             fallback_notes.append(
-                "Nuclei templates appear missing or unusable. Update templates with "
+                "Nuclei templates look missing. Update them with "
                 f"`nuclei -ud {NUCLEI_TEMPLATES_PATH} -ut` "
-                "or set UPDATE_NUCLEI_TEMPLATES=1 and rebuild/restart the container."
+                "or set UPDATE_NUCLEI_TEMPLATES=1 and rebuild/restart."
             )
         else:
             fallback_notes.append(
-                "Nuclei executed successfully but reported no findings. This can be normal for low-exposure targets; update templates and widen scope if needed."
+                "Finished — no issues found. That can be normal for a well-hardened site."
             )
 
     if fallback_notes:
@@ -1207,11 +1210,24 @@ def run_arjun(url: str, scan_dir: Path, cancel_check=None) -> dict:
     return result
 
 
-def run_dalfox(url: str, scan_dir: Path, cancel_check=None) -> dict:
+def run_dalfox(url: str, scan_dir: Path, config: dict | None = None, cancel_check=None) -> dict:
     ui.status("Running Dalfox...")
     output_file = scan_dir / "dalfox.json"
+    cfg = config or {}
+    timeout = int(cfg.get("dalfox_timeout_seconds", 1800) or 1800)
     cmd = ["dalfox", "url", url, "--format", "json", "-o", str(output_file), "--no-color"]
-    result = _run_tool(cmd, "dalfox", "Dalfox", "active", scan_dir, output_files=[output_file], timeout=1200, cancel_check=cancel_check)
+    # Dalfox commonly exits 0 with findings or empty results; treat both as success.
+    result = _run_tool(
+        cmd,
+        "dalfox",
+        "Dalfox",
+        "active",
+        scan_dir,
+        output_files=[output_file],
+        timeout=timeout,
+        acceptable_returncodes={0, 1},
+        cancel_check=cancel_check,
+    )
     if result["status"].startswith("completed"):
         ui.ok("Dalfox complete.")
     return result
@@ -1665,7 +1681,7 @@ def run_all_tools(
         dynamic_plan.extend(
             [
                 ("arjun", "active", lambda: run_arjun(url, scan_dir, cancel_check=should_cancel)),
-                ("dalfox", "active", lambda: run_dalfox(url, scan_dir, cancel_check=should_cancel)),
+                ("dalfox", "active", lambda: run_dalfox(url, scan_dir, config, cancel_check=should_cancel)),
             ]
         )
         wapiti_enabled, reason_wapiti = _should_run_wapiti()

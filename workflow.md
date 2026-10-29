@@ -2,6 +2,33 @@
 
 ## Current status
 
+Report layout / plain-language UX + tool-status fixes are in-repo. **Redeploy on Dokploy and re-run a scan to regenerate HTML reports.**
+
+## Completed: report layout, plain language, tool status (2026-10-29)
+
+### Changes
+- Coverage metrics split into side-by-side tables; narrative rewritten in plain English
+- Target overview: short fields side-by-side; Technologies / WhatWeb moved to chip stacks
+- Tool appendix: Command/Outputs removed; human status labels + short notes
+- Print CSS: avoid cutting cards/findings mid-page
+- Finding cards: 2-column evidence grid; drop redundant Compact Evidence; concrete Recommended fix steps
+- Enrichment: Link / LiteSpeed header categories with real fix steps
+- Dashboard: truncate finding titles; keep Confirm/Review/More on one row
+- Tool status: empty dirs no longer force `completed_partial`; Dalfox timeout 1800s; SQLMap timeout 900s
+
+### Validation
+- `py -3 -m pytest tests/test_report_layout.py tests/test_tool_status.py tests/test_enrichment_plain_fixes.py` (and related suite)
+
+### Manual checklist after deploy
+1. Open a newly generated HTML report — Coverage tables side-by-side, no Command column
+2. Print / Save as PDF — cards and findings should not split awkwardly
+3. Dashboard Priority Findings — short titles, actions on one line
+4. Re-scan and confirm Nuclei empty results show “Finished — no issues found”, not a failure
+
+---
+
+## Previous: Wapiti greenlet
+
 Host malware-alert containment + Dokploy-safe named volumes are in-repo. **Redeploy on Dokploy after the Wapiti `greenlet` pin.**
 
 ## Completed: fix Wapiti greenlet build failure (2026-10-28)

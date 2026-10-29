@@ -305,6 +305,38 @@
         "https://developer.wordpress.org/advanced-administration/security/hardening/",
         "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/03-Identity_Management_Testing/04-Testing_for_Account_Enumeration_and_Guessable_User_Account"
       ]
+    },
+    "info-header-noise": {
+      "title": "Informational HTTP Header",
+      "severity": "info",
+      "description": "The scanner noted an uncommon or informational HTTP header. This is usually not a vulnerability by itself.",
+      "impact": "Headers like cache status or API discovery links can help fingerprint the stack, but they rarely allow direct compromise.",
+      "fix_summary": "Decide whether the header should stay public. Keep it if it is required for caching or WordPress APIs; hide it only if policy requires a quieter footprint.",
+      "fix_steps": [
+        "Confirm whether the header is required for CDN/cache or WordPress REST/API behavior",
+        "If it is only informational, leave it in place and mark the finding as accepted risk",
+        "If policy requires hiding fingerprint headers, adjust the web server, LiteSpeed/CDN, or security plugin header settings and retest"
+      ],
+      "references": [
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers",
+        "https://developer.wordpress.org/rest-api/"
+      ]
+    },
+    "link-header-disclosure": {
+      "title": "Link Header Disclosure",
+      "severity": "info",
+      "description": "The site advertises WordPress REST API or alternate links through the HTTP Link header.",
+      "impact": "Attackers can more easily discover API endpoints, but the header alone is not an exploit.",
+      "fix_summary": "Keep Link headers if the REST API is intentional. Restrict public REST access if user or content discovery is a concern.",
+      "fix_steps": [
+        "Confirm the WordPress REST API is needed for the site or its plugins",
+        "If public user/content discovery is unwanted, restrict /wp-json endpoints with a security plugin or server rules",
+        "Retest the homepage response headers after the change"
+      ],
+      "references": [
+        "https://developer.wordpress.org/rest-api/",
+        "https://developer.wordpress.org/advanced-administration/security/hardening/"
+      ]
     }
   },
 
@@ -364,6 +396,16 @@
     "php version": "information-disclosure",
     "user enumeration": "user-enumeration",
     "author enumeration": "user-enumeration",
-    "wp-json/wp/v2/users": "user-enumeration"
+    "wp-json/wp/v2/users": "user-enumeration",
+    "x-litespeed-cache": "info-header-noise",
+    "uncommon header": "info-header-noise",
+    "link header": "link-header-disclosure",
+    "rel=\"https://api.w.org": "link-header-disclosure",
+    "api.w.org": "link-header-disclosure",
+    "shortlink": "link-header-disclosure",
+    "x-powered-by": "information-disclosure",
+    "missing security header": "missing-security-headers",
+    "content-security-policy": "missing-security-headers",
+    "x-xss-protection": "missing-security-headers"
   }
 }

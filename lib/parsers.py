@@ -205,7 +205,7 @@ def _finalize_finding(finding: dict) -> dict:
         if _confidence_rank(confidence) > _confidence_rank("weak_signal"):
             confidence = "weak_signal"
         if not str(normalized.get("protection_target") or "").strip():
-            normalized["protection_target"] = "Tool output did not include exact exploit coordinates. Review the raw evidence before remediation."
+            normalized["protection_target"] = "Review the evidence and fix the matching page, plugin, or server setting."
 
     normalized["confidence"] = confidence
     normalized["verification_status"] = verification
@@ -457,9 +457,13 @@ def parse_nikto(results_file: Path) -> list[dict]:
                     path=uri,
                     method=method,
                     matched_evidence=msg,
-                    reproduction=f"Replay {method} {uri}" if uri else f"Review the Nikto result for message: {msg}",
-                    protection_target=uri or "Affected web route or server configuration",
-                    fix_target=uri or "Web server or application route handling",
+                    reproduction=(
+                        f"Open {uri} with method {method} and confirm the same response or header."
+                        if uri
+                        else f"Confirm this Nikto note on the live site: {msg}"
+                    ),
+                    protection_target=uri or "Web server or site configuration",
+                    fix_target=uri or "Web server or hosting panel settings",
                     evidence_kind="headers" if "header" in msg.lower() else "exposure",
                     status="needs_review",
                 )

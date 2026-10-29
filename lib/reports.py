@@ -95,7 +95,10 @@ body {
     .findings-toolbar, .findings-pages, .toc { display: none !important; }
     .findings-index-card { display: none !important; }
     #findingsTableBody tr { display: table-row !important; }
-    details.finding { display: block !important; }
+    details.finding { display: block !important; break-inside: avoid; page-break-inside: avoid; }
+    .card, .fix-block, .coverage-metrics, details.finding > summary {
+        break-inside: avoid; page-break-inside: avoid;
+    }
 }
 </style>
 """.strip()
@@ -198,17 +201,59 @@ def _severity_counts(findings: list[dict]) -> dict[str, int]:
     return counts
 
 
+def _tool_status_label(status: str) -> str:
+    return {
+        "completed": "Finished",
+        "completed_partial": "Limited results",
+        "completed_no_output": "Finished — no issues found",
+        "missing": "Not installed",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "timeout": "Ran out of time",
+        "cancelled": "Cancelled",
+    }.get(str(status or "").strip().lower(), str(status or "unknown").replace("_", " ").title())
+
+
 def _tool_status_badge(status: str) -> str:
+    key = str(status or "").strip().lower()
     cls = {
         "completed": "good",
         "completed_partial": "warn",
-        "completed_no_output": "warn",
+        "completed_no_output": "good",
         "missing": "muted",
         "skipped": "muted",
         "failed": "bad",
         "timeout": "bad",
-    }.get(status, "muted")
-    return f"<span class='pill {cls}'>{html.escape(status.replace('_', ' '))}</span>"
+        "cancelled": "muted",
+    }.get(key, "muted")
+    return f"<span class='pill {cls}'>{html.escape(_tool_status_label(key))}</span>"
+
+
+def _tool_plain_note(run: dict) -> str:
+    status = str(run.get("status", "") or "").strip().lower()
+    raw = str(run.get("note") or run.get("coverage_reason") or "").strip()
+    defaults = {
+        "completed": "Finished normally.",
+        "completed_no_output": "Finished — no issues found for this target.",
+        "completed_partial": "Finished with limited results; review the scan folder if needed.",
+        "timeout": "Stopped because it ran out of time.",
+        "failed": "Did not finish successfully.",
+        "missing": "Tool was not available on this scanner.",
+        "skipped": "Skipped because it does not apply to this site.",
+        "cancelled": "Cancelled before finishing.",
+    }
+    text = raw or defaults.get(status, "-")
+    # Soften leftover jargon in older stored notes.
+    replacements = (
+        ("Completed successfully but did not return actionable output for this target.", defaults["completed_no_output"]),
+        ("Completed with partial evidence; review captured output.", defaults["completed_partial"]),
+        ("Completed with partial evidence; review telemetry before dismissing the result.", defaults["completed_partial"]),
+        ("Timed out after", "Stopped after"),
+        ("Partial output was captured before termination.", "Some results were saved before it stopped."),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return _shorten_text(text, 140)
 
 
 def _assessment_summary(assessment: dict | None) -> dict:
@@ -282,47 +327,73 @@ def _format_report_datetime_myt(value: str | datetime) -> str:
     return malaysia_time.strftime("%Y-%m-%d %H:%M:%S") + " MYT"
 
 
-def _coverage_table_rows_html(coverage: dict) -> str:
-    rows = [
-        ("Total Tool Runs", coverage.get("total_tools", 0)),
-        ("Applicable Tool Runs", coverage.get("applicable_tools", 0)),
-        ("Completed", coverage.get("completed_tools", 0)),
-        ("Failed", coverage.get("failed_tools", 0)),
-        ("Timed Out", coverage.get("timeout_tools", 0)),
-        ("Unavailable / Missing", coverage.get("missing_tools", 0)),
-        ("Skipped as Not Applicable", coverage.get("skipped_not_applicable_tools", 0)),
-        ("Raw Execution Coverage", f"{coverage.get('raw_completion_pct', 0)}%"),
-        ("Coverage Completeness", f"{coverage.get('stakeholder_completion_pct', coverage.get('completion_pct', 0))}%"),
-        ("Stakeholder Target", f"{coverage.get('stakeholder_target_pct', 90)}%"),
-    ]
+def _coverage_kv_rows(rows: list[tuple[str, object]]) -> str:
     return "".join(
         f"<tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>"
         for label, value in rows
     )
 
 
+def _coverage_table_rows_html(coverage: dict) -> str:
+    count_rows = [
+        ("Tools planned", coverage.get("total_tools", 0)),
+        ("Tools needed for this site", coverage.get("applicable_tools", 0)),
+        ("Tools finished", coverage.get("completed_tools", 0)),
+        ("Tools failed", coverage.get("failed_tools", 0)),
+        ("Tools timed out", coverage.get("timeout_tools", 0)),
+        ("Tools missing", coverage.get("missing_tools", 0)),
+        ("Tools skipped (not needed)", coverage.get("skipped_not_applicable_tools", 0)),
+    ]
+    score_rows = [
+        ("All planned tools finished", f"{coverage.get('raw_completion_pct', 0)}%"),
+        ("Coverage score", f"{coverage.get('stakeholder_completion_pct', coverage.get('completion_pct', 0))}%"),
+        ("Target coverage", f"{coverage.get('stakeholder_target_pct', 90)}%"),
+    ]
+    return (
+        '<div class="coverage-metrics">'
+        f"<table>{_coverage_kv_rows(count_rows)}</table>"
+        f"<table>{_coverage_kv_rows(score_rows)}</table>"
+        "</div>"
+    )
+
+
 def _coverage_narrative_lines(coverage: dict, include_manual_assessment: bool) -> list[str]:
     visible_pct = int(coverage.get("stakeholder_completion_pct", coverage.get("completion_pct", 0)) or 0)
-    raw_pct = int(coverage.get("raw_completion_pct", visible_pct) or 0)
     completed = int(coverage.get("completed_tools", 0) or 0)
     applicable = int(coverage.get("applicable_tools", 0) or 0)
     skipped = int(coverage.get("skipped_not_applicable_tools", 0) or 0)
-    total = int(coverage.get("total_tools", 0) or 0)
+    failed = int(coverage.get("failed_tools", 0) or 0)
+    timed_out = int(coverage.get("timeout_tools", 0) or 0)
 
-    scope_phrase = "automated findings and analyst context" if include_manual_assessment else "automated findings"
+    scope = "automated checks and analyst notes" if include_manual_assessment else "automated checks"
     first = (
-        f"This report consolidates {scope_phrase}. Visible coverage completeness is {visible_pct}% "
-        f"({completed} completed of {applicable} applicable tool runs)."
+        f"This report summarizes {scope}. "
+        f"{completed} of {applicable} needed tools finished. Coverage score: {visible_pct}%."
     )
     if skipped:
-        second = (
-            f"The visible coverage score excludes {skipped} intentionally non-applicable skip(s). "
-            f"Raw execution coverage remains {raw_pct}% across {total} planned tool runs for auditability."
-        )
+        second = f"{skipped} tool(s) were skipped because they do not apply to this site."
     else:
-        second = f"Raw execution coverage remains {raw_pct}% across {total} planned tool runs for auditability."
-    third = "Review the appendix for raw evidence, tool telemetry, and detailed findings before using this document as a final remediation closeout record."
+        second = "Every planned tool applied to this site profile."
+    if failed or timed_out:
+        third = f"{failed} tool(s) failed and {timed_out} timed out. Check the tool list below before treating the site as fully checked."
+    else:
+        third = "Use the findings below for fixes. Full technical files stay in the scan folder for engineers."
     return [first, second, third]
+
+
+def _fingerprint_list_block(label: str, items: list | str) -> str:
+    if isinstance(items, str):
+        values = [part.strip() for part in items.split(",") if part.strip()]
+    else:
+        values = [str(item).strip() for item in (items or []) if str(item).strip()]
+    if not values:
+        return ""
+    chips = "".join(f"<span class='fp-chip'>{html.escape(value)}</span>" for value in values[:40])
+    extra = f" <span class='fp-more'>+{len(values) - 40} more</span>" if len(values) > 40 else ""
+    return (
+        f"<div class='fingerprint-block'><div class='fingerprint-label'>{html.escape(label)}</div>"
+        f"<div class='fingerprint-chips'>{chips}{extra}</div></div>"
+    )
 
 
 def _build_executive_summary(payload: dict) -> list[str]:
@@ -341,34 +412,34 @@ def _build_executive_summary(payload: dict) -> list[str]:
     lines = []
     if severity_counts.get("critical", 0) or severity_counts.get("high", 0):
         lines.append(
-            f"{severity_counts.get('critical', 0)} critical and {severity_counts.get('high', 0)} high-severity automated findings require immediate triage."
+            f"{severity_counts.get('critical', 0)} critical and {severity_counts.get('high', 0)} high findings need attention soon."
         )
     elif findings:
-        lines.append(f"No critical or high automated findings were parsed, but {len(findings)} lower-severity issues still require review.")
+        lines.append(f"No critical or high findings were found, but {len(findings)} lower-priority items still need a quick review.")
     else:
-        lines.append("No automated findings were parsed from the available tool outputs. Review coverage and tool failures before assuming the target is clean.")
+        lines.append("No automated findings were found. Still check coverage below before treating the site as fully clear.")
 
     failed = int(coverage.get("failed_tools", 0) or 0) + int(coverage.get("timeout_tools", 0) or 0) + int(coverage.get("missing_tools", 0) or 0)
     if failed:
-        lines.append(f"Applicable tool coverage was incomplete: {failed} tool run(s) failed, timed out, or were unavailable.")
+        lines.append(f"{failed} tool(s) failed, timed out, or were missing, so coverage is incomplete.")
     skipped = int(coverage.get("skipped_not_applicable_tools", 0) or 0)
     if skipped:
-        lines.append(f"Visible coverage completeness excludes {skipped} intentionally non-applicable tool run(s); raw execution telemetry remains available for audit.")
+        lines.append(f"{skipped} tool(s) were skipped because they do not apply to this site.")
     partial = int(coverage.get("partial_tools", 0) or 0)
     if partial:
-        lines.append(f"{partial} tool run(s) produced partial evidence before exiting or timing out; review telemetry before dismissing those findings.")
+        lines.append(f"{partial} tool(s) finished with limited results; review those rows in the tool list.")
 
     if include_manual_assessment and case_status:
         total_cases = sum(case_status.values())
         not_started = case_status.get("not_started", 0)
-        lines.append(f"Guided manual assessment coverage: {total_cases - not_started}/{total_cases} case(s) have at least some analyst activity.")
+        lines.append(f"Manual checklist progress: {total_cases - not_started}/{total_cases} cases have some activity.")
     if include_manual_assessment and verification_status:
         confirmed = verification_status.get("confirmed", 0) + verification_status.get("reproduced", 0)
         fixed = verification_status.get("fixed", 0)
-        lines.append(f"Verification workflow currently records {confirmed} confirmed/reproduced case(s) and {fixed} fixed case(s).")
+        lines.append(f"Verification so far: {confirmed} confirmed/reproduced and {fixed} marked fixed.")
 
     if not lines:
-        lines.append("Automated and manual assessment data are limited. Continue guided testing before drawing strong conclusions.")
+        lines.append("Limited assessment data is available. Continue testing before drawing strong conclusions.")
     return lines
 
 
@@ -560,21 +631,21 @@ def _render_standards_tags(finding: dict) -> str:
 def _structured_detail_rows(finding: dict) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for label, key in [
-        ("Affected Asset", "asset"),
-        ("Exact URL", "url"),
+        ("Affected page / asset", "asset"),
+        ("URL", "url"),
         ("Endpoint", "endpoint"),
         ("Path", "path"),
-        ("HTTP Method", "method"),
+        ("HTTP method", "method"),
         ("Parameter", "parameter"),
         ("Component", "component"),
-        ("Component Version", "component_version"),
+        ("Version found", "component_version"),
         ("Payload", "payload"),
-        ("What Was Detected", "matched_evidence"),
-        ("Request Excerpt", "request_excerpt"),
-        ("Response Excerpt", "response_excerpt"),
-        ("Safe Verification Step", "reproduction"),
-        ("Where To Protect", "protection_target"),
-        ("Fix Target", "fix_target"),
+        ("What we found", "matched_evidence"),
+        ("Request sample", "request_excerpt"),
+        ("Response sample", "response_excerpt"),
+        ("How to check", "reproduction"),
+        ("Where to fix", "protection_target"),
+        ("Fix location", "fix_target"),
     ]:
         value = str(finding.get(key, "") or "").strip()
         if value:
@@ -582,11 +653,23 @@ def _structured_detail_rows(finding: dict) -> list[tuple[str, str]]:
     return rows
 
 
+def _compact_evidence_is_redundant(finding: dict, rows: list[tuple[str, str]]) -> bool:
+    compact = str(finding.get("evidence", "") or "").strip().lower()
+    if not compact:
+        return True
+    joined = " ".join(value.lower() for _, value in rows)
+    tokens = [part.strip() for part in re.split(r"[|;,\n]+", compact) if part.strip()]
+    if not tokens:
+        return True
+    overlap = sum(1 for token in tokens if token in joined or token.split(":", 1)[-1].strip() in joined)
+    return overlap >= max(1, len(tokens) - 1)
+
+
 def _render_structured_details(finding: dict) -> str:
     rows = _structured_detail_rows(finding)
     compact_evidence = str(finding.get("evidence", "") or "").strip()
-    if compact_evidence:
-        rows.append(("Compact Evidence", compact_evidence))
+    if compact_evidence and not _compact_evidence_is_redundant(finding, rows):
+        rows.append(("Extra evidence", compact_evidence))
     if not rows:
         return ""
     html_rows = "".join(
@@ -598,8 +681,8 @@ def _render_structured_details(finding: dict) -> str:
     )
     count_label = f"{len(rows)} item{'s' if len(rows) != 1 else ''}"
     return (
-        "<details class='finding-details-panel'>"
-        f"<summary><span>Detailed Evidence</span><span class='detail-count'>{count_label}</span></summary>"
+        "<details class='finding-details-panel' open>"
+        f"<summary><span>Evidence</span><span class='detail-count'>{count_label}</span></summary>"
         f"<div class='finding-details-grid'>{html_rows}</div>"
         "</details>"
     )
@@ -1006,18 +1089,13 @@ def generate_html_report(payload: dict) -> str:
 
     tools_rows = []
     for run in tool_runs:
-        outputs = run.get("output_files", [])
-        output_html = "<br>".join(html.escape(Path(path).name) for path in outputs[:4]) or "None"
-        command = html.escape(" ".join(run.get("command", []))) or "-"
         tools_rows.append(
             "<tr>"
             f"<td>{html.escape(run.get('label', run.get('name', 'tool')))}</td>"
             f"<td>{html.escape(run.get('phase', ''))}</td>"
             f"<td>{_tool_status_badge(run.get('status', 'unknown'))}</td>"
             f"<td>{run.get('duration_seconds', 0)}</td>"
-            f"<td><code>{command}</code></td>"
-            f"<td>{output_html}</td>"
-            f"<td>{html.escape(str(run.get('note') or run.get('coverage_reason') or '-'))}</td>"
+            f"<td>{html.escape(_tool_plain_note(run))}</td>"
             "</tr>"
         )
 
@@ -1052,11 +1130,34 @@ def generate_html_report(payload: dict) -> str:
         refs = finding.get("references", [])
         ref_html = "".join(f"<li><a href='{html.escape(ref)}' target='_blank'>{html.escape(ref)}</a></li>" for ref in refs)
         structured_html = _render_structured_details(finding)
-        steps = finding.get("fix_steps", [])
-        if steps:
-            fix_html = "<ol>" + "".join(f"<li>{html.escape(str(step))}</li>" for step in steps) + "</ol>"
-        else:
-            fix_html = f"<p>{html.escape(finding.get('fix') or 'Review and remediate based on the evidence above.')}</p>"
+        steps = [str(step).strip() for step in (finding.get("fix_steps") or []) if str(step).strip()]
+        fix_summary = str(finding.get("fix") or "").strip()
+        if not steps:
+            if fix_summary and fix_summary.lower() not in {
+                "review this finding manually and apply appropriate security measures.",
+                "review and remediate based on the evidence above.",
+                "review and remediate this finding.",
+            }:
+                steps = [
+                    fix_summary,
+                    "Confirm the change on a staging copy first if the site is live.",
+                    "Re-scan or retest the same page after the fix.",
+                ]
+            else:
+                where = str(finding.get("protection_target") or finding.get("fix_target") or "the affected page or server setting").strip()
+                steps = [
+                    f"Review the evidence and locate {where}.",
+                    "Apply the matching configuration or software update.",
+                    "Retest the same URL or check to confirm the issue is gone.",
+                ]
+        fix_html = ""
+        if fix_summary and fix_summary.lower() not in {
+            "review this finding manually and apply appropriate security measures.",
+            "review and remediate based on the evidence above.",
+            "review and remediate this finding.",
+        }:
+            fix_html += f"<p>{html.escape(fix_summary)}</p>"
+        fix_html += "<ol>" + "".join(f"<li>{html.escape(step)}</li>" for step in steps) + "</ol>"
 
         finding_rows.append(
             f"<tr data-severity='{html.escape(str(severity))}' data-exploitability='{html.escape(exploitability)}' data-status='{html.escape(status)}'>"
@@ -1089,7 +1190,7 @@ def generate_html_report(payload: dict) -> str:
                     <p>{description}</p>
                     {structured_html}
                     <div class="fix-block">
-                        <h4>Recommended Fix</h4>
+                        <h4>Recommended fix</h4>
                         {fix_html}
                     </div>
                     {'<div class="refs"><h4>References</h4><ul>' + ref_html + '</ul></div>' if ref_html else ''}
@@ -1274,6 +1375,10 @@ def generate_html_report(payload: dict) -> str:
             "COVERAGE_NARRATIVE_PRIMARY": html.escape(coverage_narrative[0]),
             "COVERAGE_NARRATIVE_SECONDARY": html.escape(coverage_narrative[1]),
             "COVERAGE_NARRATIVE_TERTIARY": html.escape(coverage_narrative[2]),
+            "FINGERPRINT_STACK": (
+                _fingerprint_list_block("Technologies", fingerprint.get("technologies", []))
+                + _fingerprint_list_block("WhatWeb plugins", fingerprint.get("whatweb_plugins", []))
+            ),
             "ACTIONS_24H_ROWS": "".join(actions_24h) or "<tr><td colspan='3'>No urgent actions identified.</td></tr>",
             "ACTIONS_7D_ROWS": "".join(actions_7d) or "<tr><td colspan='3'>No medium-priority actions identified.</td></tr>",
             "ACTIONS_30D_ROWS": "".join(actions_30d) or "<tr><td colspan='3'>No deferred actions identified.</td></tr>",
@@ -1290,7 +1395,7 @@ def generate_html_report(payload: dict) -> str:
             "DISCOVERY_FFUF": str(discovery.get("ffuf_count", 0)),
             "DISCOVERY_FEROX": str(discovery.get("feroxbuster_count", 0)),
             "CATEGORY_COVERAGE_ROWS": "".join(category_rows) or "<tr><td colspan='4'>No category coverage data yet.</td></tr>",
-            "TOOLS_ROWS": "".join(tools_rows) or "<tr><td colspan='7'>No tool telemetry captured.</td></tr>",
+            "TOOLS_ROWS": "".join(tools_rows) or "<tr><td colspan='5'>No tool results captured.</td></tr>",
             "DISCOVERY_BLOCKS": "".join(discovery_blocks) or "<div class='card'>No discovery artifacts captured.</div>",
             "CASE_ROWS": "".join(case_rows) or "<tr><td colspan='6'>No guided cases loaded.</td></tr>",
             "NOTES_HTML": notes_html or "<p>No operator notes recorded.</p>",
